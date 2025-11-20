@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: >
+  If you use DSG-JIT in your research, please cite it using the metadata below.
+
+title: "DSG-JIT: A JIT-Compiled, Differentiable 3D Dynamic Scene Graph Engine"
+
+authors:
+  - family-names: "Kocher"
+    given-names: "Tanner"
+    affiliation: "DSG-JIT Project"
+    orcid: "https://orcid.org/0009-0002-8431-7533"
+
+keywords:
+  - scene graphs
+  - SLAM
+  - nonlinear optimization
+  - differentiable programming
+  - robotics
+  - JAX
+  - Gauss-Newton
+  - 3D perception
+  - mapping
+  - neural fields
+
+repository-code: "https://github.com/TannerTorrey3/DSG-JIT"
+
+abstract: >
+  DSG-JIT is a differentiable, JIT-compiled optimization engine for 3D Dynamic
+  Scene Graphs, combining SE(3) SLAM, voxel mapping, neural field integration,
+  and structural reasoning into one unified computational graph. This work
+  introduces a fully differentiable factor-graph backend, learnable factors,
+  and a high-performance manifold Gauss–Newton solver accelerated via JIT
+  compilation.
+
+version: "0.1.0"
+date-released: "2025-11-20"
+license: "MIT"
+
+software-citation:
+  type: software
+  title: "DSG-JIT"
+  version: "0.1.0"
+  authors:
+    - family-names: "Kocher"
+      given-names: "Tanner"
+  doi: ""
+  url: "https://github.com/TannerTorrey3/DSG-JIT"
+  notes: "Cite this software directly until the formal paper is published."

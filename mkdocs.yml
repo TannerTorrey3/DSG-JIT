@@ -1,0 +1,57 @@
+site_name: DSG-JIT
+site_url: https://TannerTorrey3.github.io/DSG-JIT
+repo_name: TannerTorrey3/DSG-JIT
+repo_url: https://github.com/TannerTorrey3/DSG-JIT
+
+theme:
+  name: material
+  features:
+    - navigation.expand
+    - navigation.sections
+    - navigation.tracking
+    - content.code.annotate
+    - content.tabs.link
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Benchmarks: benchmarks.md
+  - Examples: examples.md
+  - Roadmap: roadmap.md
+  - API:
+      - Core: api/core.md
+      - SLAM: api/slam.md
+      - Optimization: api/optimization.md
+      - Scene Graph: api/scene_graph.md
+      - World Model: api/world.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          setup_commands:
+            - import sys
+            - from pathlib import Path
+            - sys.path.insert(0, str(Path("dsg-jit/src").resolve()))
+          paths:
+            - dsg-jit/src
+          options:
+            show_source: true
+            show_signature: true
+            show_root_toc_entry: false
+            heading_level: 2
+            docstring_style: google
+            merge_init_into_class: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

@@ -1,4 +1,26 @@
+<p align="center">
+  <img src="docs/img/logo.png" alt="DSG-JIT Logo" width="280">
+</p>
+
 # DSG-JIT: A JIT‑Compiled, Differentiable 3D Dynamic Scene Graph Engine
+
+<p align="left">
+  <a href="https://github.com/TannerTorrey3/DSG-JIT/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/TannerTorrey3/DSG-JIT/tests.yml?label=tests" alt="Tests Status">
+  </a>
+  <a href="https://github.com/TannerTorrey3/DSG-JIT/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/TannerTorrey3/DSG-JIT" alt="License">
+  </a>
+  <a href="https://TannerTorrey3.github.io/DSG-JIT">
+    <img src="https://img.shields.io/badge/docs-online-brightgreen" alt="Documentation">
+  </a>
+  <a href="https://github.com/TannerTorrey3/DSG-JIT/stargazers">
+    <img src="https://img.shields.io/github/stars/TannerTorrey3/DSG-JIT?style=social" alt="Stars">
+  </a>
+  <a href="https://github.com/TannerTorrey3/DSG-JIT/blob/main/CITATION.cff">
+    <img src="https://img.shields.io/badge/cite%20this-software-blue" alt="Cite this software">
+  </a>
+</p>
 
 ## Overview
 
@@ -24,12 +46,12 @@ This repository serves as the structural roadmap for developing that system.
 
 ### Install
 ```bash
-git clone <repo>
-cd jit-hydra
+git clone https://github.com/TannerTorrey3/DSG-JIT.git
+cd DSG-JIT
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-export PYTHONPATH=src
+export PYTHONPATH=DSG-JIT/src
 ```
 
 ### Run Tests
@@ -328,4 +350,67 @@ To validate performance of the JIT‑compiled nonlinear optimizer, DSG‑JIT inc
 
 ---
 
-These results demonstrate the computational advantage of JIT‑compiled manifold optimization for large‑scale differentiable scene graph systems.
+---
+
+## Contributing
+
+Contributions to **DSG-JIT** are welcome and encouraged.
+
+### How to Contribute
+
+1. **Fork the repository**
+   ```bash
+   git clone https://github.com/<your-username>/DSG-JIT.git
+   ```
+
+2. **Create a new feature or fix branch**
+   ```bash
+   git checkout -b feature/my-enhancement
+   ```
+
+3. **Install development dependencies**
+   ```bash
+   pip install -r requirements.txt
+   export PYTHONPATH=DSG-JIT/src
+   ```
+
+4. **Ensure tests pass**
+   ```bash
+   pytest -q
+   ```
+
+5. **Run style checks (optional)**
+   ```bash
+   ruff check .
+   black .
+   ```
+
+6. **Submit a Pull Request**
+
+   PRs should:
+   - Be focused (one feature/fix per PR)
+   - Include tests when applicable
+   - Update documentation where relevant
+   - Pass continuous integration checks
+
+### Reporting Bugs
+
+Please open an issue using the Bug Report template.  
+Include logs, stack traces, and a minimal reproducible example when possible.
+
+### Feature Requests
+
+Use the Feature Request template and describe:
+- Motivation
+- Proposed API or behavior
+- Alternatives considered
+
+### Documentation Contributions
+
+Documentation lives in `docs/`.  
+Improvements, corrections, or new examples are appreciated.
+
+### Code of Conduct
+
+By contributing to this project, you agree to maintain a professional, respectful, and collaborative environment.
+
