@@ -26,11 +26,11 @@
 
 Modern spatial intelligence systems—SLAM pipelines, neural rendering models, and 3D scene graph frameworks—remain fragmented.
 Each solves part of the perception problem, but none unify:
-	•	Metric accuracy (SLAM)
-	•	High-fidelity geometry & appearance (Neural Fields / Gaussians)
-	•	Semantic structure & reasoning (Scene Graphs)
-	•	Real-time global consistency (Incremental optimization)
-	•	End-to-end differentiability (learning cost models, priors, & structure)
+-	Metric accuracy (SLAM)
+-	High-fidelity geometry & appearance (Neural Fields / Gaussians)
+-	Semantic structure & reasoning (Scene Graphs)
+-	Real-time global consistency (Incremental optimization)
+-	End-to-end differentiability (learning cost models, priors, & structure)
 
 DSG-JIT is a new architecture that merges these into one coherent, JIT-compiled, differentiable system.
 
