@@ -1,0 +1,35 @@
+# OS cruft
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+*.log
+
+# Virtualenvs
+venv/
+.env/
+.venv/
+
+# JAX / cache
+.jax_cache/
+.jax_debug/
+
+# VSCode
+.vscode/
+.history/
+
+# pytest cache
+.pytest_cache/
+
+# build / dist
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
