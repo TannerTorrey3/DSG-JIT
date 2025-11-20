@@ -219,7 +219,7 @@ What it enables:
 
 ---
 
-## Architecture (Text Summary)
+## Architecture (Summary)
 
 - Sensor Frontend
 - JIT‑Compiled SLAM Backend
@@ -280,3 +280,52 @@ Phase 5 work has begun:
 - API cleanup
 - Benchmarks
 - Documentation and examples
+
+---
+
+## Benchmarks
+
+To validate performance of the JIT‑compiled nonlinear optimizer, DSG‑JIT includes three core benchmarks:
+
+### 1. SE3 Gauss–Newton Benchmark
+200‑pose chain, 20 GN iterations.
+
+| Mode     | Time (ms) | Notes |
+|----------|-----------:|-------|
+| **JIT**      | ~51.8 ms  | After compile |
+| **No‑JIT**   | ~376,099 ms | Pure Python/JAX |
+
+**Speedup:** ~7,260×  
+**Trajectory error:** near‑zero, poses optimized to [0 … 199] within floating‑point epsilon.
+
+---
+
+### 2. Voxel Chain Gauss–Newton Benchmark
+500‑voxel smoothness chain, 20 GN iterations.
+
+| Mode     | Time (ms) | Notes |
+|----------|-----------:|-------|
+| **JIT**      | ~96 ms   | Fast, stable |
+| **No‑JIT**   | ~3,045 ms | CPU‑only solve |
+
+**Speedup:** ~31×  
+**Voxel positions:** converge to linear chain with sub‑millimeter error.
+
+---
+
+### 3. Hybrid SE3 + Voxel Benchmark (Hero)
+50 SE3 poses + 500 voxels jointly optimized over mixed manifolds.
+
+| Mode     | Time (ms) | Notes |
+|----------|-----------:|-------|
+| **JIT**      | ~149.8 ms | Includes compile + manifold updates |
+| **No‑JIT**   | ~97,500 ms | Extremely slow without JIT |
+
+**Speedup:** ~650×  
+**Results:**  
+- Poses converge to exact trajectory [0 … 49]  
+- Voxels converge to [0 … 499] with small noise (<1e‑3)
+
+---
+
+These results demonstrate the computational advantage of JIT‑compiled manifold optimization for large‑scale differentiable scene graph systems.
