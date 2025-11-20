@@ -1,3 +1,5 @@
+# Copyright (c) 2025.
+# This file is part of DSG-JIT, released under the MIT License.
 """
 Entity definitions for the Dynamic Scene Graph.
 

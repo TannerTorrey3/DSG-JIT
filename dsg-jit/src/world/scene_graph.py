@@ -1,3 +1,5 @@
+# Copyright (c) 2025.
+# This file is part of DSG-JIT, released under the MIT License.
 """
 Dynamic 3D scene graph utilities built on top of the world model.
 

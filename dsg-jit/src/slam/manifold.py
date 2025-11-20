@@ -1,3 +1,5 @@
+# Copyright (c) 2025.
+# This file is part of DSG-JIT, released under the MIT License.
 """
 Manifold utilities for SE(3) and Euclidean variables in DSG-JIT.
 
