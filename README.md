@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/logo.png" alt="DSG-JIT Logo" width="280">
+  <img src="docs/img/dsg-jit-logo.png" alt="DSG-JIT Logo" width="280">
 </p>
 
 # DSG-JIT: A JIT‑Compiled, Differentiable 3D Dynamic Scene Graph Engine
