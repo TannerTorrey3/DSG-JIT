@@ -1,3 +1,4 @@
 jax
 jaxlib
 pytest
+numpy

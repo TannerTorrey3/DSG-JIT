@@ -33,3 +33,5 @@ dist/
 
 # Jupyter
 .ipynb_checkpoints/
+
+site/
