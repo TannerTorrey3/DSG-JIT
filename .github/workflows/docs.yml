@@ -1,0 +1,44 @@
+# .github/workflows/docs.yml
+name: Docs
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'mkdocs.yml'
+      - 'docs/**'
+      - 'requirements.txt'
+      - 'dsg-jit/src/**'
+  workflow_dispatch: {}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for mkdocs gh-deploy to push to gh-pages
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install project / docs deps (mkdocs, mkdocs-material, mkdocstrings, etc.)
+          pip install -r requirements.txt
+
+      - name: Build docs
+        run: mkdocs build --strict
+
+      - name: Deploy docs to GitHub Pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdocs gh-deploy --force --clean --remote-branch gh-pages
