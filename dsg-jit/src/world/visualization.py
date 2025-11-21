@@ -38,6 +38,7 @@ Example usage is provided in:
 - `experiments/exp17_visual_factor_graph.py` (basic 2D + 3D factor graph)
 - `experiments/exp18_scenegraph_3d.py` (HYDRA-style multi-level scene graph)
 - `experiments/exp18_scenegraph_demo.py` (HYDRA-style 2D + 3D scene graph)
+- `experiments/exp19_dynamic_scene_graph_demo.py` (dynamic agent trajectories)
 
 Module contents:
     - `VisNode`: Lightweight typed node container for visualization.
@@ -47,6 +48,8 @@ Module contents:
     - `export_factor_graph_for_vis()`: Converts a FactorGraph → vis nodes & edges.
     - `plot_factor_graph_2d()`: Renders a 2D top-down view of the graph.
     - `plot_factor_graph_3d()`: Renders a full 3D scene graph with semantic layers.
+    - `plot_scenegraph_3d()`: Renders a scene graph with semantic layers and (optionally) agent trajectories.
+    - `plot_dynamic_trajectories_3d()`: Renders 3D agent trajectories with time-encoded color.
 
 This module is designed to be extendable—for example:
 - Additional node types can be added via `_infer_node_type`.
@@ -58,10 +61,13 @@ This module is designed to be extendable—for example:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Tuple, Union, Optional
+
+import numpy as np
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 from core.types import NodeId
 from core.factor_graph import FactorGraph
@@ -375,4 +381,347 @@ def plot_factor_graph_3d(fg: FactorGraph, show_labels: bool = True) -> None:
         ax.set_ylim(mid_y - max_range * 1.1, mid_y + max_range * 1.1)
         ax.set_zlim(mid_z - max_range * 1.1, mid_z + max_range * 1.1)
 
+    plt.show()
+
+def plot_scenegraph_3d(
+    sg: Any,
+    x_opt: Any,
+    index: Dict[Any, Union[slice, tuple]],
+    title: str = "Scene Graph 3D",
+    dsg: Optional[Any] = None,
+) -> None:
+    """
+    Render a 3D scene graph with rooms, places, objects, place attachments,
+    and (optionally) agent trajectories.
+
+    Parameters
+    ----------
+    sg : SceneGraphWorld-like
+        Scene graph world instance. Expected to expose:
+        - sg.rooms: Dict[str, NodeId]
+        - sg.places: Dict[str, NodeId]
+        - sg.objects: Dict[str, NodeId]
+        - sg.place_parents: Dict[NodeId, NodeId] (place -> room)
+        - sg.object_parents: Dict[NodeId, NodeId] (object -> place)
+        - sg.place_attachments: List[Tuple[NodeId, NodeId]] (pose -> place)
+    x_opt : array-like
+        Optimized flat state vector (e.g. from FactorGraph.pack_state()).
+    index : dict
+        Mapping NodeId -> slice or (start, dim) giving the block in x_opt.
+    title : str, optional
+        Figure title.
+    dsg : DynamicSceneGraph-like, optional
+        If provided, used to overlay agent trajectories. Expected to expose:
+        - dsg.agents: Iterable[str]
+        - dsg.get_agent_trajectory(agent, x_opt, index) -> (T, 6) array
+    """
+    # Convert state to numpy array
+    x = np.asarray(x_opt)
+
+    def _slice_for(nid: Any) -> slice:
+        """Normalize index[nid] to a Python slice."""
+        idx = index[nid]
+        if isinstance(idx, slice):
+            return idx
+        start, length = idx
+        return slice(start, start + length)
+
+    def _vec(nid: Any) -> np.ndarray:
+        """Return 1D vector for node nid from x."""
+        sl = _slice_for(nid)
+        v = x[sl]
+        return np.asarray(v).reshape(-1)
+
+    # Safely grab scene-graph structures (with defaults if missing)
+    rooms = getattr(sg, "rooms", {}) or {}
+    places = getattr(sg, "places", {}) or {}
+    objects = getattr(sg, "objects", {}) or {}
+    place_parents = getattr(sg, "place_parents", {}) or {}
+    object_parents = getattr(sg, "object_parents", {}) or {}
+    attachments = getattr(sg, "place_attachments", []) or []
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_title(title)
+
+    all_pts = []
+
+    # ------------------------------
+    # Rooms: large semi-transparent markers
+    # ------------------------------
+    first_room = next(iter(rooms), None)
+    for name, nid in rooms.items():
+        p = _vec(nid)
+        if p.shape[0] < 3:
+            # If we only have 1D, pad to 3D for visualization
+            p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
+        all_pts.append(p[:3])
+        label = "room" if name == first_room else ""
+        ax.scatter(
+            p[0],
+            p[1],
+            p[2],
+            s=200,
+            marker="s",
+            alpha=0.3,
+            edgecolor="k",
+            label=label,
+        )
+
+    # ------------------------------
+    # Places: medium spheres
+    # ------------------------------
+    first_place = next(iter(places), None)
+    for name, nid in places.items():
+        p = _vec(nid)
+        if p.shape[0] < 3:
+            p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
+        all_pts.append(p[:3])
+        label = "place" if name == first_place else ""
+        ax.scatter(
+            p[0],
+            p[1],
+            p[2],
+            s=60,
+            marker="o",
+            alpha=0.8,
+            label=label,
+        )
+
+    # ------------------------------
+    # Objects: small pyramids/triangles
+    # ------------------------------
+    first_obj = next(iter(objects), None)
+    for name, nid in objects.items():
+        p = _vec(nid)
+        if p.shape[0] < 3:
+            p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
+        all_pts.append(p[:3])
+        label = "object" if name == first_obj else ""
+        ax.scatter(
+            p[0],
+            p[1],
+            p[2],
+            s=40,
+            marker="^",
+            alpha=0.9,
+            label=label,
+        )
+
+    # ------------------------------
+    # Hierarchical edges: room -> place, place -> object
+    # ------------------------------
+    for place_nid, room_nid in place_parents.items():
+        if place_nid not in index or room_nid not in index:
+            continue
+        p = _vec(place_nid)
+        r = _vec(room_nid)
+        if p.shape[0] < 3:
+            p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
+        if r.shape[0] < 3:
+            r = np.pad(r, (0, 3 - r.shape[0]), mode="constant")
+        ax.plot(
+            [p[0], r[0]],
+            [p[1], r[1]],
+            [p[2], r[2]],
+            linestyle="-",
+            linewidth=1.0,
+            alpha=0.5,
+        )
+
+    for obj_nid, place_nid in object_parents.items():
+        if obj_nid not in index or place_nid not in index:
+            continue
+        o = _vec(obj_nid)
+        p = _vec(place_nid)
+        if o.shape[0] < 3:
+            o = np.pad(o, (0, 3 - o.shape[0]), mode="constant")
+        if p.shape[0] < 3:
+            p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
+        ax.plot(
+            [o[0], p[0]],
+            [o[1], p[1]],
+            [o[2], p[2]],
+            linestyle="-",
+            linewidth=1.0,
+            alpha=0.5,
+        )
+
+    # ------------------------------
+    # Place attachments: pose -> place (dashed)
+    # ------------------------------
+    for pose_nid, place_nid in attachments:
+        if pose_nid not in index or place_nid not in index:
+            continue
+        pose = _vec(pose_nid)
+        plc = _vec(place_nid)
+        if pose.shape[0] < 3:
+            pose = np.pad(pose, (0, 3 - pose.shape[0]), mode="constant")
+        if plc.shape[0] < 3:
+            plc = np.pad(plc, (0, 3 - plc.shape[0]), mode="constant")
+        ax.plot(
+            [pose[0], plc[0]],
+            [pose[1], plc[1]],
+            [pose[2], plc[2]],
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.7,
+        )
+
+    # ------------------------------
+    # Optional: agent trajectories from DynamicSceneGraph
+    # ------------------------------
+    if dsg is not None and hasattr(dsg, "agents"):
+        for agent in dsg.agents:
+            traj = dsg.get_agent_trajectory(agent, x_opt, index)
+            traj = np.asarray(traj)
+            if traj.ndim != 2 or traj.shape[1] < 3:
+                continue
+            xs, ys, zs = traj[:, 0], traj[:, 1], traj[:, 2]
+            all_pts.extend(traj[:, :3])
+            ax.plot(xs, ys, zs, linewidth=2.0, alpha=0.9, label=f"{agent}_traj")
+
+    # ------------------------------
+    # Autoscale axes to fit everything
+    # ------------------------------
+    if all_pts:
+        all_pts_arr = np.vstack(all_pts)
+        mins = all_pts_arr.min(axis=0)
+        maxs = all_pts_arr.max(axis=0)
+        center = 0.5 * (mins + maxs)
+        extent = float((maxs - mins).max())
+        if extent <= 0.0:
+            extent = 1.0
+        scale = 0.6 * extent
+        ax.set_xlim(center[0] - scale, center[0] + scale)
+        ax.set_ylim(center[1] - scale, center[1] + scale)
+        ax.set_zlim(center[2] - scale, center[2] + scale)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+
+    # Deduplicate legend entries
+    handles, labels = ax.get_legend_handles_labels()
+    if labels:
+        uniq = {}
+        for h, l in zip(handles, labels):
+            if l and l not in uniq:
+                uniq[l] = h
+        ax.legend(uniq.values(), uniq.keys(), loc="best")
+
+    plt.tight_layout()
+    plt.show()
+
+
+# ------------------------------------------------------
+# Dynamic Scene Graph: 4D-style agent trajectory visualization
+# ------------------------------------------------------
+def plot_dynamic_trajectories_3d(
+    dsg: Any,
+    x_opt: Any,
+    index: Dict[Any, Union[slice, tuple]],
+    title: str = "Dynamic 3D Scene Graph",
+    color_by_time: bool = True,
+) -> None:
+    """Render 3D agent trajectories with time encoded as color.
+
+    This helper is intended for DynamicSceneGraph-style structures where
+    agents move through time. It treats time as an implicit fourth dimension
+    and projects it via a color gradient along each trajectory.
+
+    Parameters
+    ----------
+    dsg : DynamicSceneGraph-like
+        Object exposing an iterable ``agents`` attribute and a
+        ``get_agent_trajectory(agent, x_opt, index)`` method that returns
+        an array of shape (T, 6) or (T, 3). Only the translational
+        components (x, y, z) are visualized.
+    x_opt : array-like
+        Optimized flat state vector used to decode agent poses.
+    index : dict
+        Mapping from node id to slice or (start, dim) describing the
+        layout of ``x_opt``. This is passed through to
+        ``dsg.get_agent_trajectory``.
+    title : str, optional
+        Figure title.
+    color_by_time : bool, optional
+        If True, time is encoded as a colormap gradient along each
+        agent trajectory. If False, a single solid color is used per
+        agent, similar to a standard 3D polyline.
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_title(title)
+
+    all_pts: List[np.ndarray] = []
+
+    if not hasattr(dsg, "agents"):
+        raise ValueError("Dynamic scene graph object must expose an 'agents' attribute")
+
+    # Use a base list of colors when not color-coding by time.
+    base_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", ["C0", "C1", "C2", "C3"])  # type: ignore[index]
+
+    for i, agent in enumerate(dsg.agents):
+        traj = dsg.get_agent_trajectory(agent, x_opt, index)
+        traj = np.asarray(traj)
+        if traj.ndim != 2 or traj.shape[1] < 3:
+            continue
+
+        xyz = traj[:, :3]
+        all_pts.append(xyz)
+
+        if color_by_time and xyz.shape[0] > 1:
+            # Encode time as a gradient along the trajectory
+            t = np.linspace(0.0, 1.0, xyz.shape[0])
+            cmap = plt.get_cmap("viridis")
+            for j in range(xyz.shape[0] - 1):
+                c = cmap(t[j])
+                ax.plot(
+                    xyz[j : j + 2, 0],
+                    xyz[j : j + 2, 1],
+                    xyz[j : j + 2, 2],
+                    color=c,
+                    linewidth=2.0,
+                )
+        else:
+            color = base_colors[i % len(base_colors)]
+            ax.plot(
+                xyz[:, 0],
+                xyz[:, 1],
+                xyz[:, 2],
+                linewidth=2.0,
+                label=f"{agent}_traj",
+                color=color,
+            )
+
+    # Autoscale axes to include all trajectories
+    if all_pts:
+        stacked = np.vstack(all_pts)
+        mins = stacked.min(axis=0)
+        maxs = stacked.max(axis=0)
+        center = 0.5 * (mins + maxs)
+        extent = float((maxs - mins).max())
+        if extent <= 0.0:
+            extent = 1.0
+        scale = 0.6 * extent
+        ax.set_xlim(center[0] - scale, center[0] + scale)
+        ax.set_ylim(center[1] - scale, center[1] + scale)
+        ax.set_zlim(center[2] - scale, center[2] + scale)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+
+    # Only show legend entries when not using per-segment colors.
+    if not color_by_time:
+        handles, labels = ax.get_legend_handles_labels()
+        if labels:
+            uniq = {}
+            for h, l in zip(handles, labels):
+                if l and l not in uniq:
+                    uniq[l] = h
+            ax.legend(uniq.values(), uniq.keys(), loc="best")
+
+    plt.tight_layout()
     plt.show()

@@ -104,10 +104,19 @@ class SceneGraphWorld:
     wm: WorldModel
     pose_trajectory: Dict[Tuple[str, int], int] = field(default_factory=dict)
     noise: SceneGraphNoiseConfig
+    # --- Named semantic node indexes ---
+    room_nodes: Dict[str, int]
+    place_nodes: Dict[str, int]
+    object_nodes: Dict[str, int]
     def __init__(self) -> None:
         self.wm = WorldModel()
         self.pose_trajectory = {}
         self.noise = SceneGraphNoiseConfig()
+
+        # --- Named semantic node indexes ---
+        self.room_nodes = {}
+        self.place_nodes = {}
+        self.object_nodes = {}
 
         # --- Global residuals registry ---
         self.wm.fg.register_residual("prior", prior_residual)
@@ -133,6 +142,43 @@ class SceneGraphWorld:
     def add_room1d(self, x: float) -> int:
         # identical type to place1d for now, but semantically different
         return self.wm.add_variable("place1d", jnp.array([x]))
+
+    def add_place3d(self, name: str, xyz) -> int:
+        """Add a 3D place node (R^3) with a human-readable name.
+
+        This is a semantic helper for dynamic scene-graph style usage.
+
+        Args:
+            name: Identifier for the place (e.g. "place_A").
+            xyz: Iterable of length 3, world-frame position.
+
+        Returns:
+            Integer node id of the created variable.
+        """
+        value = jnp.array(xyz, dtype=jnp.float32).reshape(3,)
+        nid = self.wm.add_variable("place3d", value)
+        nid_int = int(nid)
+        self.place_nodes[name] = nid_int
+        return nid_int
+
+    def add_room(self, name: str, center) -> int:
+        """Add a 3D room node (R^3 center) with a semantic name.
+
+        This is a thin wrapper around a Euclidean variable, but exposes a
+        room-level abstraction for dynamic scene-graph experiments.
+
+        Args:
+            name: Identifier for the room (e.g. "room_A").
+            center: Iterable of length 3, approximate room centroid in world coordinates.
+
+        Returns:
+            Integer node id of the created room variable.
+        """
+        value = jnp.array(center, dtype=jnp.float32).reshape(3,)
+        nid = self.wm.add_variable("room3d", value)
+        nid_int = int(nid)
+        self.room_nodes[name] = nid_int
+        return nid_int
     
     def add_object3d(self, xyz) -> int:
         """
@@ -142,6 +188,20 @@ class SceneGraphWorld:
         xyz = jnp.array(xyz, dtype=jnp.float32).reshape(3,)
         nid = self.wm.add_variable("object3d", xyz)
         return int(nid)
+
+    def add_named_object3d(self, name: str, xyz) -> int:
+        """Add a 3D object and register it under a semantic name.
+
+        Args:
+            name: Identifier for the object (e.g. "chair_1").
+            xyz: Iterable of length 3, world-frame position.
+
+        Returns:
+            Integer node id of the created object variable.
+        """
+        obj_id = self.add_object3d(xyz)
+        self.object_nodes[name] = obj_id
+        return obj_id
     
     def add_agent_pose_se3(self, agent: str, t: int, value: jnp.ndarray) -> int:
         """
@@ -261,6 +321,60 @@ class SceneGraphWorld:
             self.wm.add_factor(
                 "pose_place_attachment",
                 (pose_id, room_id),
+                {
+                    "pose_dim": pose_dim,
+                    "place_dim": place_dim,
+                    "pose_coord_index": pose_coord_index,
+                    "weight": weight,
+                },
+            )
+        )
+
+    def add_place_attachment(
+        self,
+        pose_id: int,
+        place_id: int,
+        coord_index: int = 0,
+        sigma: float | None = None,
+    ) -> int:
+        """Attach a SE(3) pose to a place node (1D or 3D) via a generic
+        pose–place attachment factor.
+
+        This is a higher-level, dimension-aware wrapper around the
+        ``pose_place_attachment`` residual, and is intended for scene-graph
+        style experiments where places may be either 1D (topological) or
+        3D (metric positions).
+
+        Args:
+            pose_id: Node id of the SE(3) pose variable.
+            place_id: Node id of the place variable. The underlying state
+                dimension is inferred at runtime from the factor graph
+                (e.g. 1 for place1d, 3 for place3d).
+            coord_index: Index of the pose coordinate to tie to the place
+                (typically 0 for x, 1 for y, etc.). Defaults to 0.
+            sigma: Optional noise standard deviation. If ``None``, falls
+                back to :attr:`SceneGraphNoiseConfig.pose_place_sigma`.
+
+        Returns:
+            The integer id of the newly added factor.
+        """
+        # Infer place dimensionality from the underlying variable.
+        place_nid = NodeId(place_id)
+        place_var = self.wm.fg.variables[place_nid]
+        place_dim_val = place_var.value.shape[0]
+
+        pose_dim = jnp.array(6)
+        place_dim = jnp.array(place_dim_val)
+        pose_coord_index = jnp.array(coord_index)
+
+        if sigma is None:
+            sigma = self.noise.pose_place_sigma
+        weight = sigma_to_weight(sigma)
+
+        return int(
+            self.wm.add_factor(
+                "pose_place_attachment",
+                (pose_id, place_id),
                 {
                     "pose_dim": pose_dim,
                     "place_dim": place_dim,

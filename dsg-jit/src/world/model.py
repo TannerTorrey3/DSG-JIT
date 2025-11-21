@@ -45,7 +45,7 @@ Design goals
 """
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 import jax.numpy as jnp
 
@@ -63,20 +63,126 @@ from optimization.jit_wrappers import JittedGN
 
 @dataclass
 class WorldModel:
+    """High-level world model built on top of :class:`FactorGraph`.
+
+    In addition to wrapping the core factor graph, this class keeps simple
+    bookkeeping dictionaries that make it easier to build static and dynamic
+    scene graphs on top of DSG-JIT. These maps are deliberately lightweight
+    and optional: if you never pass a name when adding variables, the
+    underlying optimization behavior is unchanged.
+    """
+
     fg: FactorGraph
+    # Optional semantic maps for higher-level layers (scene graphs, DSG, etc.).
+    pose_ids: Dict[str, NodeId]
+    room_ids: Dict[str, NodeId]
+    place_ids: Dict[str, NodeId]
+    object_ids: Dict[str, NodeId]
+    agent_pose_ids: Dict[str, Dict[int, NodeId]]
 
     def __init__(self) -> None:
+        # Core factor graph
         self.fg = FactorGraph()
+        # Semantic maps; these are purely for convenience and do not affect
+        # the underlying optimization.
+        self.pose_ids = {}
+        self.room_ids = {}
+        self.place_ids = {}
+        self.object_ids = {}
+        # Mapping: agent_id -> {timestep -> NodeId}
+        self.agent_pose_ids = {}
 
     def add_variable(self, var_type: str, value: jnp.ndarray) -> NodeId:
         """
         Allocate a new variable id, create the Variable, add it to the graph,
         and return its NodeId.
+
+        Higher-level helpers may register semantic names in bookkeeping maps.
         """
         nid_int = len(self.fg.variables)
         nid = NodeId(nid_int)
         v = Variable(id=nid, type=var_type, value=value)
         self.fg.add_variable(v)
+        return nid
+
+    def add_pose(self, value: jnp.ndarray, name: Optional[str] = None) -> NodeId:
+        """Add an SE(3) pose variable.
+
+        This is a thin wrapper around :meth:`add_variable`. If ``name`` is
+        provided, the pose is also registered in :attr:`pose_ids`, which can
+        be useful for scene-graph style code that wants stable, human-readable
+        handles.
+
+        :param value: Initial pose value, typically a 6D se(3) vector.
+        :param name: Optional semantic name used as a key in :attr:`pose_ids`.
+        :returns: The :class:`NodeId` of the newly created pose variable.
+        """
+        nid = self.add_variable("pose", value)
+        if name is not None:
+            self.pose_ids[name] = nid
+        return nid
+
+    def add_room(self, center: jnp.ndarray, name: Optional[str] = None) -> NodeId:
+        """Add a room center variable (3D point).
+
+        :param center: 3D position of the room center.
+        :param name: Optional semantic name to register in :attr:`room_ids`.
+        :returns: The :class:`NodeId` of the new room variable.
+        """
+        nid = self.add_variable("room", center)
+        if name is not None:
+            self.room_ids[name] = nid
+        return nid
+
+    def add_place(self, center: jnp.ndarray, name: Optional[str] = None) -> NodeId:
+        """Add a place / waypoint variable (3D point).
+
+        :param center: 3D position of the place/waypoint.
+        :param name: Optional semantic name to register in :attr:`place_ids`.
+        :returns: The :class:`NodeId` of the new place variable.
+        """
+        nid = self.add_variable("place", center)
+        if name is not None:
+            self.place_ids[name] = nid
+        return nid
+
+    def add_object(self, center: jnp.ndarray, name: Optional[str] = None) -> NodeId:
+        """Add an object centroid variable (3D point).
+
+        :param center: 3D position of the object centroid.
+        :param name: Optional semantic name to register in :attr:`object_ids`.
+        :returns: The :class:`NodeId` of the new object variable.
+        """
+        nid = self.add_variable("object", center)
+        if name is not None:
+            self.object_ids[name] = nid
+        return nid
+
+    def add_agent_pose(
+        self,
+        agent_id: str,
+        t: int,
+        value: jnp.ndarray,
+        var_type: str = "pose",
+    ) -> NodeId:
+        """Add (and register) a pose for a particular agent at a timestep.
+
+        This convenience helper is meant for dynamic scene graphs where you
+        track multiple agents over time. It simply delegates to
+        :meth:`add_variable` and then records the mapping ``(agent_id, t)``.
+
+        :param agent_id: String identifier for the agent (e.g. ``"robot_0"``).
+        :param t: Discrete timestep index.
+        :param value: Initial pose value for this agent at time ``t``.
+        :param var_type: Underlying variable type to use (defaults to
+            ``"pose"``; you can change this to ``"pose_se3"`` in advanced
+            use-cases).
+        :returns: The :class:`NodeId` of the new agent pose variable.
+        """
+        nid = self.add_variable(var_type, value)
+        if agent_id not in self.agent_pose_ids:
+            self.agent_pose_ids[agent_id] = {}
+        self.agent_pose_ids[agent_id][t] = nid
         return nid
 
     def add_factor(self, f_type: str, var_ids, params: Dict) -> FactorId:
@@ -151,3 +257,27 @@ class WorldModel:
         values = self.fg.unpack_state(x_opt, index)
         for nid, val in values.items():
             self.fg.variables[nid].value = val
+
+    def get_variable_value(self, nid: NodeId) -> jnp.ndarray:
+        """Return the current value of a variable.
+
+        This is a thin convenience wrapper over the underlying
+        :class:`FactorGraph` variable storage and is useful when building
+        dynamic scene graphs that want to query individual nodes.
+
+        :param nid: Identifier of the variable.
+        :returns: A JAX array holding the variable's current value.
+        """
+        return self.fg.variables[nid].value
+
+    def snapshot_state(self) -> Dict[int, jnp.ndarray]:
+        """Capture a shallow snapshot of the current world state.
+
+        The snapshot maps integer node ids to their current values. This is
+        intentionally simple and serialization-friendly, and is meant to be
+        consumed by higher-level dynamic scene graph structures that want to
+        record the evolution of the world over time.
+
+        :returns: A dictionary mapping ``int(NodeId)`` to JAX arrays.
+        """
+        return {int(nid): jnp.array(var.value) for nid, var in self.fg.variables.items()}
