@@ -25,3 +25,7 @@ This section documents the high-level world model, scene-graph integration, voxe
 ## `world.training`
 
 ::: world.training
+
+## `world.visualization`
+
+::: world.vizualization
