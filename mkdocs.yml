@@ -5,6 +5,19 @@ repo_url: https://github.com/TannerTorrey3/DSG-JIT
 
 theme:
   name: material
+  palette:
+    - scheme: slate         # default = dark
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default       # optional light mode
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
   features:
     - navigation.expand
     - navigation.sections
