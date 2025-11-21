@@ -214,6 +214,25 @@ def odom_se3_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.nda
     r = (pose_j - pose_i) - meas
     return r
 
+
+# Alias for SE(3) chain / odometry residual used in visualization experiments.
+def se3_chain_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """Alias for SE(3) chain / odometry residual used in visualization experiments.
+
+    This is a thin wrapper around :func:`odom_se3_residual`, so that experiments
+    and visualization code can refer to a more semantically descriptive name
+    ("se3_chain") without duplicating logic.
+
+    Args:
+        x: Stacked 12D state vector ``[pose_i(6), pose_j(6)]``.
+        params: Dictionary containing at least ``"measurement"`` with the
+            desired relative pose in se(3).
+
+    Returns:
+        The SE(3) odometry residual as produced by :func:`odom_se3_residual`.
+    """
+    return odom_se3_residual(x, params)
+
 def odom_se3_geodesic_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
     Experimental: true SE(3) geodesic residual using relative_pose_se3.
