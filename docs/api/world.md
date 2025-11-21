@@ -28,4 +28,4 @@ This section documents the high-level world model, scene-graph integration, voxe
 
 ## `world.visualization`
 
-::: world.vizualization
+::: world.visualization
