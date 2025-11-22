@@ -93,11 +93,19 @@ class WorldModel:
         self.agent_pose_ids = {}
 
     def add_variable(self, var_type: str, value: jnp.ndarray) -> NodeId:
-        """
-        Allocate a new variable id, create the Variable, add it to the graph,
-        and return its NodeId.
+        """Add a new variable to the underlying factor graph.
 
-        Higher-level helpers may register semantic names in bookkeeping maps.
+        This allocates a fresh :class:`NodeId`, constructs a
+        :class:`core.types.Variable` with the given type and initial value,
+        registers it in :attr:`fg`, and returns the newly created id.
+
+        :param var_type: String describing the variable type (e.g. ``"pose"``,
+            ``"room"``, ``"place"``, ``"object"``). This is used by
+            residual functions and manifold metadata to interpret the state.
+        :param value: Initial value for the variable, represented as a
+            1D JAX array. The dimensionality is inferred from
+            ``value.shape[0]``.
+        :returns: The :class:`NodeId` of the newly added variable.
         """
         nid_int = len(self.fg.variables)
         nid = NodeId(nid_int)
@@ -186,9 +194,20 @@ class WorldModel:
         return nid
 
     def add_factor(self, f_type: str, var_ids, params: Dict) -> FactorId:
-        """
-        Allocate a new factor id, create the Factor, add it to the graph,
-        and return its FactorId.
+        """Add a new factor to the underlying factor graph.
+
+        This allocates a fresh :class:`FactorId`, normalizes the input
+        variable identifiers to :class:`NodeId` instances, constructs a
+        :class:`core.types.Factor`, and registers it in :attr:`fg`.
+
+        :param f_type: String identifying the factor type. This must match a
+            key in :attr:`FactorGraph.residual_fns` so that the appropriate
+            residual function can be looked up during optimization.
+        :param var_ids: Iterable of variable identifiers (ints or
+            :class:`NodeId` instances) that this factor connects.
+        :param params: Dictionary of factor parameters passed through to the
+            residual function (e.g. measurements, noise models, weights).
+        :returns: The :class:`FactorId` of the newly added factor.
         """
         fid_int = len(self.fg.factors)
         fid = FactorId(fid_int)
@@ -213,14 +232,36 @@ class WorldModel:
         damping: float = 1e-3,
         max_step_norm: float = 1.0,
     ) -> None:
-        """
-        Optimize the current factor graph in-place.
+        """Run a local optimizer on the current world state.
 
-        method:
-          - "gd"          : gradient descent
-          - "newton"      : damped Newton
-          - "gn"          : Gauss-Newton on stacked state
-          - "manifold_gn" : manifold-aware GN (SE(3) poses etc.)
+        This method packs the current variables into a flat state vector,
+        constructs an appropriate objective or residual function, runs one
+        of the supported optimizers, and writes the optimized state back
+        into :attr:`fg.variables`.
+
+        Supported methods:
+
+        - ``"gd"``: vanilla gradient descent on the scalar objective
+          :math:`\|r(x)\|^2`.
+        - ``"newton"``: damped Newton on the same scalar objective.
+        - ``"gn"``: Gauss--Newton on the stacked residual vector assuming
+          Euclidean variables.
+        - ``"manifold_gn"``: manifold-aware Gauss--Newton that uses
+          :func:`slam.manifold.build_manifold_metadata` to handle SE(3)
+          and Euclidean blocks differently.
+        - ``"gn_jit"``: JIT-compiled Gauss--Newton using
+          :class:`optimization.jit_wrappers.JittedGN`.
+
+        :param lr: Learning rate for gradient-descent-based methods
+            (currently used when ``method == "gd"``).
+        :param iters: Maximum number of iterations for the chosen optimizer.
+        :param method: Name of the optimization method to use. See the list
+            above for supported values.
+        :param damping: Damping / regularization parameter used by the
+            Newton and Gauss--Newton variants.
+        :param max_step_norm: Maximum allowed step norm for Gauss--Newton
+            methods; steps larger than this are clamped to improve stability.
+        :returns: ``None``. The world model is updated in place.
         """
         x_init, index = self.fg.pack_state()
         residual_fn = self.fg.build_residual_function()

@@ -135,10 +135,24 @@ def _apply_weight(residual: jnp.ndarray, params: dict, key: str = "weight") -> j
     """
     Optional weighting of residuals.
 
-    If params[key] is:
-      - missing: no change
-      - scalar:  r' = sqrt(w) * r          (scalar weight)
-      - vector:  r' = w * r                (per-component sqrt-info)
+    Interprets an optional weight entry in ``params`` and rescales the
+    residual accordingly:
+
+    * If ``params[key]`` is missing, the residual is returned unchanged.
+    * If ``params[key]`` is a scalar ``w``, the residual is scaled as
+      ``sqrt(w) * residual`` (scalar square-root information).
+    * If ``params[key]`` is a vector, it is treated as a per-component
+      square-root information vector and applied elementwise.
+
+    :param residual: Raw residual vector.
+    :type residual: jnp.ndarray
+    :param params: Factor parameter dictionary, optionally containing a
+        weight entry under ``key``.
+    :type params: dict
+    :param key: Dictionary key under which the weight is stored.
+    :type key: str
+    :return: Reweighted residual vector.
+    :rtype: jnp.ndarray
     """
     w = params.get(key, None)
     if w is None:
@@ -155,23 +169,33 @@ def _apply_weight(residual: jnp.ndarray, params: dict, key: str = "weight") -> j
     
 def sigma_to_weight(sigma):
     """
-    Convert standard deviation sigma (or vector of sigmas) to a weight usable
-    by _apply_weight.
+    Convert standard deviation(s) to an information-style weight.
 
-    For scalar sigma:
-        w = 1 / sigma^2
+    For a scalar standard deviation ``sigma``, this returns ``1 / sigma**2``.
+    For a vector of standard deviations, it returns the elementwise
+    inverse-variance ``1 / sigma[i]**2``.
 
-    For vector sigma (per-component std devs):
-        w[i] = 1 / sigma[i]^2
+    :param sigma: Scalar or vector of standard deviations.
+    :type sigma: Union[float, jnp.ndarray]
+    :return: Scalar or vector of weights ``1 / sigma**2``.
+    :rtype: jnp.ndarray
     """
     s = jnp.asarray(sigma)
     return 1.0 / (s * s)
 
 def prior_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
-    Simple prior on a single variable:
-        residual = x - target
-    Works for any vector dimension.
+    Simple prior on a single variable.
+
+    Computes ``residual = x - target`` for any vector dimension.
+
+    :param x: Current variable value (flattened state block).
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"target"`` and
+        optionally a weight understood by :func:`_apply_weight`.
+    :type params: Dict[str, jnp.ndarray]
+    :return: Prior residual ``x - target`` (possibly reweighted).
+    :rtype: jnp.ndarray
     """
     target = params["target"]
     r = x - target
@@ -180,12 +204,20 @@ def prior_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarra
 
 def odom_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
-    Original 1D/nd odometry-style residual:
+    Simple odometry-style residual in Euclidean space.
 
-        x = [pose0, pose1]
-        residual = (pose1 - pose0) - measurement
+    Interprets ``x`` as a concatenation of two poses ``pose0`` and
+    ``pose1`` in R^d and enforces an additive odometry relation
 
-    This is still used by your existing 1D tests.
+    ``(pose1 - pose0) - measurement = 0``.
+
+    :param x: Stacked pose vector ``[pose0, pose1]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"measurement"`` with
+        the desired relative displacement.
+    :type params: Dict[str, jnp.ndarray]
+    :return: Euclidean odometry residual.
+    :rtype: jnp.ndarray
     """
     dim = x.shape[0] // 2
     pose0 = x[:dim]
@@ -196,14 +228,23 @@ def odom_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray
 
 def odom_se3_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
-    True SE(3) odometry residual:
+    SE(3)-style odometry residual in a 6D vector parameterization.
 
-        pose0, pose1 in R^6: [tx, ty, tz, wx, wy, wz]
-        measurement in R^6: desired relative pose from 0 -> 1
+    Treats each pose as a 6-vector ``[tx, ty, tz, wx, wy, wz]`` and a
+    6D measurement in the same parameterization. The residual is
 
-    We compute:
-      xi_est = relative_pose_se3(pose0, pose1)
-      residual = xi_est - measurement
+    ``(pose_j - pose_i) - measurement``.
+
+    This is a simple additive model in R^6 and is used as the workhorse
+    SE(3) chain factor in many experiments.
+
+    :param x: Stacked pose vector ``[pose_i(6), pose_j(6)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"measurement"`` with
+        the desired relative pose in R^6.
+    :type params: Dict[str, jnp.ndarray]
+    :return: SE(3) odometry residual in R^6.
+    :rtype: jnp.ndarray
     """
     #residual true Newton Solver for pure SE(3)
     #TODO replace with true Newton Solver
@@ -217,35 +258,39 @@ def odom_se3_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.nda
 
 # Alias for SE(3) chain / odometry residual used in visualization experiments.
 def se3_chain_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-    """Alias for SE(3) chain / odometry residual used in visualization experiments.
+    """
+    Alias for SE(3) chain / odometry residual used in visualization.
 
-    This is a thin wrapper around :func:`odom_se3_residual`, so that experiments
-    and visualization code can refer to a more semantically descriptive name
-    ("se3_chain") without duplicating logic.
+    This is a thin wrapper around :func:`odom_se3_residual`, so that
+    experiments and visualization code can refer to a semantically
+    descriptive name ("se3_chain") without duplicating logic.
 
-    Args:
-        x: Stacked 12D state vector ``[pose_i(6), pose_j(6)]``.
-        params: Dictionary containing at least ``"measurement"`` with the
-            desired relative pose in se(3).
-
-    Returns:
-        The SE(3) odometry residual as produced by :func:`odom_se3_residual`.
+    :param x: Stacked pose vector ``[pose_i(6), pose_j(6)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"measurement"`` with
+        the desired relative pose in R^6.
+    :type params: Dict[str, jnp.ndarray]
+    :return: SE(3) chain residual produced by :func:`odom_se3_residual`.
+    :rtype: jnp.ndarray
     """
     return odom_se3_residual(x, params)
 
 def odom_se3_geodesic_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
-    Experimental: true SE(3) geodesic residual using relative_pose_se3.
+    Experimental SE(3) geodesic residual using ``relative_pose_se3``.
 
-    pose0, pose1 in R^6: [tx, ty, tz, wx, wy, wz]
-    measurement in R^6: desired relative pose from 0 -> 1 (in se(3))
+    Interprets ``x`` as two 6D poses in se(3) and uses
+    :func:`core.math3d.relative_pose_se3` to compute the estimated
+    relative pose before subtracting the provided measurement.
 
-    residual = relative_pose_se3(pose0, pose1) - measurement
-
-    NOTE:
-      - This is NOT yet used in the main pipeline because don't
-        have a robust manifold-aware optimizer wired in.
-      - here for future Gauss–Newton-on-Lie-group work.
+    :param x: Stacked pose vector ``[pose0(6), pose1(6)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"measurement"`` with
+        the desired relative pose in se(3), and optionally a weight
+        understood by :func:`_apply_weight`.
+    :type params: Dict[str, jnp.ndarray]
+    :return: Geodesic SE(3) odometry residual in se(3).
+    :rtype: jnp.ndarray
     """
     assert x.shape[0] == 12, "odom_se3_geodesic_residual expects two 6D poses stacked."
 
@@ -261,18 +306,19 @@ def pose_place_attachment_residual(x: jnp.ndarray, params: dict) -> jnp.ndarray:
     """
     Residual tying a scalar place variable to one coordinate of a pose.
 
-    x: stacked vector [pose, place]
-       - pose_dim:  length of pose block (e.g. 6 for SE(3))
-       - place_dim: length of place block (e.g. 1)
+    Interprets ``x`` as ``[pose, place]`` and enforces that the place
+    value tracks a particular coordinate of the pose (e.g., x-position).
 
-    params:
-        "pose_dim"          : jnp.array(int)
-        "place_dim"         : jnp.array(int)
-        "pose_coord_index"  : jnp.array(int)   # which coordinate of pose to use
-
-    Returns:
-        r: shape (1,) so it concatenates cleanly with other residuals.
-           r[0] = place[0] - pose[pose_coord_index]
+    :param x: Stacked state block ``[pose, place]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary with integer entries
+        ``"pose_dim"``, ``"place_dim"``, and ``"pose_coord_index"``
+        indicating the layout of ``x`` and which pose coordinate to
+        attach to. May also contain a weight handled by
+        :func:`_apply_weight`.
+    :type params: dict
+    :return: 1D residual enforcing ``place[0] ≈ pose[pose_coord_index]``.
+    :rtype: jnp.ndarray
     """
     pose_dim = int(params["pose_dim"])
     place_dim = int(params["place_dim"])
@@ -289,19 +335,20 @@ def pose_place_attachment_residual(x: jnp.ndarray, params: dict) -> jnp.ndarray:
 
 def object_at_pose_residual(x: jnp.ndarray, params: dict) -> jnp.ndarray:
     """
-    Tie a 3D object position to a pose translation (optionally with a fixed offset).
+    Residual tying a 3D object position to a pose translation.
 
-    x: stacked [pose, object]
-       pose_dim: 6 => [tx, ty, tz, wx, wy, wz]
-       obj_dim:  3 => [ox, oy, oz]
+    Interprets ``x`` as ``[pose(6), object(3)]`` and encourages the
+    object position to coincide with the pose translation plus an
+    optional fixed offset.
 
-    params:
-        "pose_dim" : jnp.array(int)
-        "obj_dim"  : jnp.array(int)
-        "offset"   : jnp.array(3,)  (optional, default zeros)
-
-    residual:
-        r = obj - (pose_t + offset)   in R^3
+    :param x: Stacked state block ``[pose(6), object(3)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing integer fields
+        ``"pose_dim"`` and ``"obj_dim"``, and optionally ``"offset"``
+        (a 3D vector) and a weight handled by :func:`_apply_weight`.
+    :type params: dict
+    :return: 3D residual ``object - (pose_translation + offset)``.
+    :rtype: jnp.ndarray
     """
     pose_dim = int(params["pose_dim"])
     obj_dim = int(params["obj_dim"])
@@ -320,13 +367,18 @@ def object_at_pose_residual(x: jnp.ndarray, params: dict) -> jnp.ndarray:
 
 def pose_temporal_smoothness_residual(x: jnp.ndarray, params: dict) -> jnp.ndarray:
     """
-    Simple temporal smoothness between two SE(3) poses in R^6.
+    Temporal smoothness residual between two SE(3) poses.
 
-    x: stacked [pose_t, pose_t1] with each in R^6.
-    params: ignored for now, placeholder for future weights.
+    Interprets ``x`` as ``[pose_t, pose_t1]`` in R^6 and penalizes the
+    difference ``pose_t1 - pose_t``.
 
-    residual:
-        r = pose_t1 - pose_t    (in R^6)
+    :param x: Stacked state block ``[pose_t(6), pose_t1(6)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary, optionally containing a weight
+        handled by :func:`_apply_weight`.
+    :type params: dict
+    :return: 6D temporal smoothness residual.
+    :rtype: jnp.ndarray
     """
     dim = x.shape[0] // 2
     pose_t = x[:dim]
@@ -339,24 +391,20 @@ def pose_landmark_relative_residual(
     params: dict,
 ) -> jnp.ndarray:
     """
-    Residual for a relative pose–landmark measurement in SE(3).
+    Relative pose–landmark residual in SE(3).
 
-    x is a flat vector formed by concatenating:
-      - pose in se(3): [tx, ty, tz, wx, wy, wz]
-      - landmark in R^3: [lx, ly, lz]
+    Interprets ``x`` as ``[pose(6), landmark(3)]`` and enforces that the
+    landmark, expressed in the pose frame, matches a measured 3D point.
 
-    params:
-      - "measurement": expected landmark position in the *pose frame* (R^3)
-      - "weight" (optional): scalar or vector, applied by _apply_weight upstream.
-
-    We compute:
-        T = se3_exp(pose)          # world_T_pose
-        R, t = T[:3,:3], T[:3,3]
-        landmark_world = landmark
-
-        landmark_pose = R^T (landmark_world - t)
-
-        residual_raw = landmark_pose - measurement
+    :param x: Stacked state block ``[pose(6), landmark(3)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"measurement"``
+        (a 3D point in the pose frame). Any weighting is applied
+        upstream by :func:`_apply_weight`.
+    :type params: dict
+    :return: 3D residual between predicted and measured landmark
+        positions in the pose frame.
+    :rtype: jnp.ndarray
     """
     pose = x[:6]
     landmark = x[6:9]
@@ -379,23 +427,18 @@ def pose_landmark_bearing_residual(
     """
     Bearing-only residual between a pose and a 3D landmark.
 
-    x: concatenated [pose(6), landmark(3)]
+    Interprets ``x`` as ``[pose(6), landmark(3)]`` and compares the
+    predicted bearing from the pose to the landmark against a measured
+    bearing vector.
 
-    params:
-      - "bearing_meas": measured bearing in pose frame, R^3
-                        (will be treated as unit vector)
-      - "weight": handled upstream in FactorGraph
-
-    We compute:
-      T = se3_exp(pose)
-      R, t = T[:3,:3], T[:3,3]
-      landmark_world = landmark
-
-      landmark_pose = R^T (landmark_world - t)
-      bearing_pred = normalize(landmark_pose)
-      bearing_meas = normalize(bearing_meas)
-
-      residual = bearing_pred - bearing_meas
+    :param x: Stacked state block ``[pose(6), landmark(3)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"bearing_meas"``
+        (a 3D bearing vector in the pose frame). Any weighting is
+        applied upstream.
+    :type params: dict
+    :return: 3D residual ``bearing_pred - bearing_meas``.
+    :rtype: jnp.ndarray
     """
     pose = x[:6]
     landmark = x[6:9]
@@ -423,14 +466,20 @@ def pose_voxel_point_residual(
     params: dict,
 ) -> jnp.ndarray:
     """
-    Residual between a pose and a voxel center, given a 3D point measurement
-    in the pose frame.
+    Residual between a pose and a voxel center given a point measurement.
 
-    x: [pose(6), voxel_center(3)]
+    Interprets ``x`` as ``[pose(6), voxel_center(3)]``. The measurement
+    is a point expressed in the pose frame; it is projected into the
+    world frame and compared against the voxel center.
 
-    params:
-      - "point_meas": R^3 point in the pose frame
-      - "weight": handled upstream in FactorGraph
+    :param x: Stacked state block ``[pose(6), voxel_center(3)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"point_meas"``
+        (a 3D point in the pose frame). Any weighting is applied
+        upstream by :func:`_apply_weight`.
+    :type params: dict
+    :return: 3D residual ``voxel_center - predicted_world_point``.
+    :rtype: jnp.ndarray
     """
     pose = x[:6]
     voxel = x[6:9]  # voxel center in world frame
@@ -453,11 +502,17 @@ def voxel_smoothness_residual(
     """
     Smoothness / grid regularity constraint between two voxel centers.
 
-    x: [voxel_i(3), voxel_j(3)]
+    Interprets ``x`` as ``[voxel_i(3), voxel_j(3)]`` and penalizes the
+    deviation from an expected offset between neighboring voxels.
 
-    params:
-      - "offset": R^3, expected offset from voxel_i to voxel_j (e.g. [dx, 0, 0])
-      - "weight": handled upstream
+    :param x: Stacked state block ``[voxel_i(3), voxel_j(3)]``.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"offset"`` (a 3D
+        expected difference ``voxel_j - voxel_i``) and optionally a
+        weight handled by :func:`_apply_weight`.
+    :type params: dict
+    :return: 3D residual ``(voxel_j - voxel_i) - offset``.
+    :rtype: jnp.ndarray
     """
     voxel_i = x[:3]
     voxel_j = x[3:6]
@@ -472,14 +527,19 @@ def voxel_point_observation_residual(
     params: dict,
 ) -> jnp.ndarray:
     """
-    Observation factor tying a voxel center to a 3D point in *world* coordinates.
+    Observation factor tying a voxel center to a world-frame point.
 
-    x: [voxel_center(3)]
-    params:
-      - "point_world": R^3, observed point in world frame
-      - "weight": handled upstream in FactorGraph (if present)
+    Interprets ``x`` as ``[voxel_center(3)]`` and encourages it to match
+    an observed point in world coordinates.
 
-    residual = voxel_center - point_world
+    :param x: State block containing a single voxel center.
+    :type x: jnp.ndarray
+    :param params: Parameter dictionary containing ``"point_world"``
+        (a 3D point in the world frame). Any weighting is applied
+        upstream by :func:`_apply_weight`.
+    :type params: dict
+    :return: 3D residual ``voxel_center - point_world``.
+    :rtype: jnp.ndarray
     """
     voxel = x[:3]
     point_world = params["point_world"]  # (3,)

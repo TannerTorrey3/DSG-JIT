@@ -92,7 +92,14 @@ class VisEdge:
 
 
 def _infer_node_type(var_type: str) -> NodeType:
-    """Map internal variable.type strings to coarse visualization types."""
+    """
+    Map internal ``Variable.type`` strings to coarse visualization node types.
+
+    :param var_type: The low-level variable type string (e.g. ``"pose_se3"``,
+        ``"voxel_cell"``, ``"place1d"``, ``"room1d"``).
+    :return: A normalized node type label used by the visualization layer
+        (``"pose"``, ``"voxel"``, ``"place"``, ``"room"``, or ``"other"``).
+    """
     if var_type == "pose_se3":
         return "pose"
     if var_type == "voxel_cell":
@@ -108,12 +115,19 @@ def _extract_position(var_type: str, value: jnp.ndarray) -> jnp.ndarray:
     """
     Heuristic: try to get a 3D position for visualization.
 
-    - pose_se3: take translation (first 3 elements)
-    - voxel_cell: assume first 3 are position
-    - place1d/room1d:
-        * if len(value) >= 3: treat first 3 entries as 3D position
-        * else: embed scalar along x-axis, with y offset for rooms
-    - fallback: origin
+    - ``pose_se3``: take translation (first 3 elements)
+    - ``voxel_cell``: assume first 3 entries are the position
+    - ``place1d`` / ``room1d``:
+      * if ``len(value) >= 3``: treat first 3 entries as a 3D position
+      * else: embed the scalar along the x-axis, with a y-offset for rooms
+    - fallback: origin ``[0, 0, 0]``
+
+    :param var_type: Low-level variable type string indicating how ``value``
+        should be interpreted.
+    :param value: State vector for the variable; may be 1D (e.g. a scalar)
+        or higher dimensional.
+    :return: A length-3 JAX array representing the 3D position used for
+        plotting.
     """
     v = jnp.asarray(value)
 
@@ -174,13 +188,16 @@ def export_factor_graph_for_vis(fg: FactorGraph) -> Tuple[List[VisNode], List[Vi
 
 def _classify_edge_kind(a_type: NodeType, b_type: NodeType) -> str:
     """
-    Classify an edge based on endpoint node types.
+    Classify an edge based on the node types at its endpoints.
 
-    Returns one of:
-        - "room-place"
-        - "place-object"
-        - "pose-edge"
-        - "other"
+    The returned label is used to select line style and color in the
+    visualization.
+
+    :param a_type: Node type label for the first endpoint (e.g. ``"pose"``,
+        ``"voxel"``, ``"place"``, ``"room"``, or ``"other"``).
+    :param b_type: Node type label for the second endpoint.
+    :return: A string identifying the edge category, one of
+        ``"room-place"``, ``"place-object"``, ``"pose-edge"``, or ``"other"``.
     """
     types = {a_type, b_type}
 
@@ -392,28 +409,24 @@ def plot_scenegraph_3d(
 ) -> None:
     """
     Render a 3D scene graph with rooms, places, objects, place attachments,
-    and (optionally) agent trajectories.
+    and optional agent trajectories.
 
-    Parameters
-    ----------
-    sg : SceneGraphWorld-like
-        Scene graph world instance. Expected to expose:
-        - sg.rooms: Dict[str, NodeId]
-        - sg.places: Dict[str, NodeId]
-        - sg.objects: Dict[str, NodeId]
-        - sg.place_parents: Dict[NodeId, NodeId] (place -> room)
-        - sg.object_parents: Dict[NodeId, NodeId] (object -> place)
-        - sg.place_attachments: List[Tuple[NodeId, NodeId]] (pose -> place)
-    x_opt : array-like
-        Optimized flat state vector (e.g. from FactorGraph.pack_state()).
-    index : dict
-        Mapping NodeId -> slice or (start, dim) giving the block in x_opt.
-    title : str, optional
-        Figure title.
-    dsg : DynamicSceneGraph-like, optional
-        If provided, used to overlay agent trajectories. Expected to expose:
-        - dsg.agents: Iterable[str]
-        - dsg.get_agent_trajectory(agent, x_opt, index) -> (T, 6) array
+    :param sg: Scene-graph world instance. It is expected to expose
+        attributes such as ``rooms``, ``places``, ``objects``,
+        ``place_parents``, ``object_parents``, and ``place_attachments``,
+        following the conventions used by :class:`SceneGraphWorld`.
+    :param x_opt: Optimized flat state vector (e.g. from
+        :meth:`FactorGraph.pack_state`), containing the current estimates
+        of all node states.
+    :param index: Mapping from node identifier to either a slice or
+        ``(start, dim)`` tuple describing where that node’s state lives
+        inside ``x_opt``.
+    :param title: Optional figure title for the Matplotlib 3D axes.
+    :param dsg: Optional dynamic scene graph used to overlay agent
+        trajectories. It should expose an iterable ``agents`` attribute
+        and a ``get_agent_trajectory(agent, x_opt, index)`` method that
+        returns an array of shape ``(T, 6)`` or ``(T, 3)``.
+    :return: None. The function creates and displays a Matplotlib 3D figure.
     """
     # Convert state to numpy array
     x = np.asarray(x_opt)
@@ -624,31 +637,28 @@ def plot_dynamic_trajectories_3d(
     title: str = "Dynamic 3D Scene Graph",
     color_by_time: bool = True,
 ) -> None:
-    """Render 3D agent trajectories with time encoded as color.
+    """
+    Render 3D agent trajectories with time encoded as color.
 
-    This helper is intended for DynamicSceneGraph-style structures where
-    agents move through time. It treats time as an implicit fourth dimension
-    and projects it via a color gradient along each trajectory.
+    This helper is intended for ``DynamicSceneGraph``-style structures where
+    agents move through time. It treats time as an implicit fourth
+    dimension and visualizes it via either a color gradient or a solid
+    color per agent.
 
-    Parameters
-    ----------
-    dsg : DynamicSceneGraph-like
-        Object exposing an iterable ``agents`` attribute and a
+    :param dsg: Dynamic scene graph object exposing an iterable
+        ``agents`` attribute and a
         ``get_agent_trajectory(agent, x_opt, index)`` method that returns
-        an array of shape (T, 6) or (T, 3). Only the translational
-        components (x, y, z) are visualized.
-    x_opt : array-like
-        Optimized flat state vector used to decode agent poses.
-    index : dict
-        Mapping from node id to slice or (start, dim) describing the
-        layout of ``x_opt``. This is passed through to
-        ``dsg.get_agent_trajectory``.
-    title : str, optional
-        Figure title.
-    color_by_time : bool, optional
-        If True, time is encoded as a colormap gradient along each
-        agent trajectory. If False, a single solid color is used per
-        agent, similar to a standard 3D polyline.
+        an array of shape ``(T, 6)`` or ``(T, 3)``. Only the translational
+        components ``(x, y, z)`` are visualized.
+    :param x_opt: Optimized flat state vector used to decode agent poses.
+    :param index: Mapping from node identifier to slice or ``(start, dim)``
+        describing how to extract each node’s state from ``x_opt``. This is
+        passed through to ``dsg.get_agent_trajectory``.
+    :param title: Optional figure title for the 3D plot.
+    :param color_by_time: If ``True``, encode time as a colormap gradient
+        along each trajectory; if ``False``, use a single solid color per
+        agent.
+    :return: None. The function creates and displays a Matplotlib 3D figure.
     """
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")

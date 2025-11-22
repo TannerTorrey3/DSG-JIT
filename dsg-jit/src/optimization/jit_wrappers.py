@@ -88,19 +88,30 @@ from .solvers import gauss_newton, GNConfig
 
 @dataclass
 class JittedGN:
-    """
-    Simple wrapper holding a jitted Gauss-Newton solver for a fixed factor graph.
+    """JIT-compiled Gauss–Newton solver for a fixed factor graph.
 
-    Usage:
+    This lightweight wrapper stores a jitted solve function and the
+    configuration used to build it. Typical usage:
+
         residual_fn = fg.build_residual_function()
         cfg = GNConfig(...)
         jgn = JittedGN.from_residual(residual_fn, cfg)
         x_opt = jgn(x0)
+
+    :param fn: JIT-compiled function that maps an initial state
+               vector ``x0`` to an optimized state ``x_opt``.
+    :param cfg: Gauss–Newton configuration used when building
+                the jitted solver.
     """
     fn: Callable[[jnp.ndarray], jnp.ndarray]
     cfg: GNConfig
 
     def __call__(self, x0: jnp.ndarray) -> jnp.ndarray:
+        """Run the jitted Gauss–Newton solve on an initial state.
+
+        :param x0: Initial flat state vector to optimize.
+        :return: Optimized state vector after running Gauss–Newton.
+        """
         return self.fn(x0)
 
     @staticmethod
@@ -108,6 +119,17 @@ class JittedGN:
         residual_fn: Callable[[jnp.ndarray], jnp.ndarray],
         cfg: GNConfig,
     ) -> "JittedGN":
+        """Construct a :class:`JittedGN` from a residual function.
+
+        This wraps :func:`gauss_newton` with the provided configuration
+        and JIT-compiles the resulting ``solve(x0)`` function.
+
+        :param residual_fn: Residual function ``r(x)`` returning the stacked
+                            residual vector for a fixed factor graph.
+        :param cfg: Gauss–Newton configuration (step limits, damping, etc.).
+        :return: A :class:`JittedGN` instance whose ``__call__`` method
+                 runs the jitted Gauss–Newton solve.
+        """
         # Wrap existing gauss_newton. cfg is closed over and treated as static.
         def solve(x0: jnp.ndarray) -> jnp.ndarray:
             return gauss_newton(residual_fn, x0, cfg)

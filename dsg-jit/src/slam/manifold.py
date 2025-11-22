@@ -80,23 +80,50 @@ TYPE_TO_MANIFOLD: Dict[str, str] = {
 
 
 def get_manifold_for_var_type(var_type: str) -> str:
+    """Return the manifold model name for a given variable type.
+
+    This is a thin helper around :data:`TYPE_TO_MANIFOLD` that maps a
+    high-level variable type tag (e.g. ``"pose_se3"``, ``"place1d"``)
+    to the underlying manifold model used by manifold-aware solvers.
+
+    :param var_type: Variable type string, such as ``"pose_se3"``,
+        ``"place1d"``, ``"room1d"``, ``"landmark3d"`` or
+        ``"voxel_cell"``.
+    :return: The manifold model name (for example ``"se3"`` or
+        ``"euclidean"``). If the type is unknown, ``"euclidean"`` is
+        returned by default.
+    """
     return TYPE_TO_MANIFOLD.get(var_type, "euclidean")
 
 
 def build_manifold_metadata(
     fg: FactorGraph,
 ) -> Tuple[Dict[NodeId, slice], Dict[NodeId, str]]:
-    """
-    Build metadata for manifold-aware solvers:
+    """Build manifold metadata for a factor graph.
 
-      - block_slices: NodeId -> slice in the flat state vector
-      - manifold_types: NodeId -> 'se3' or 'euclidean'
+    This function inspects the variables in a :class:`~core.factor_graph.FactorGraph`
+    and constructs two lookup tables that are consumed by
+    manifold-aware solvers such as
+    :func:`optimization.solvers.gauss_newton_manifold`:
 
-    FactorGraph.pack_state() may store indices as either:
-      - slice objects, or
-      - (start, length) tuples.
+    * ``block_slices`` maps each :class:`~core.types.NodeId` to a
+      :class:`slice` in the packed state vector.
+    * ``manifold_types`` maps each :class:`~core.types.NodeId` to a
+      short string describing the manifold model (e.g. ``"se3"`` or
+      ``"euclidean"``).
 
-    We normalize these into proper Python slices.
+    The indices produced by :meth:`core.factor_graph.FactorGraph.pack_state`
+    may be stored either as slices or as ``(start, length)`` tuples;
+    this helper normalizes everything to proper Python ``slice``
+    objects so the solver does not need to handle multiple formats.
+
+    :param fg: The factor graph whose variables should be analyzed to
+        construct manifold metadata.
+    :return: A tuple ``(block_slices, manifold_types)`` where
+        ``block_slices`` is a mapping from :class:`~core.types.NodeId`
+        to :class:`slice` in the flat state vector, and
+        ``manifold_types`` is a mapping from :class:`~core.types.NodeId`
+        to a manifold model name string.
     """
     _, index = fg.pack_state()
 

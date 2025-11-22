@@ -68,11 +68,19 @@ GridIndex = Tuple[int, int, int]
 @dataclass
 class VoxelGridSpec:
     """
-    Simple regular voxel grid description.
+    Specification for constructing a regular voxel grid.
 
-    origin: world-space origin of voxel (0,0,0) center
-    dims:   (nx, ny, nz) number of voxels along each axis
-    resolution: size of a voxel cell (edge length), in world units
+    This lightweight container defines the spatial layout of a voxel grid,
+    including its world-space origin, discrete grid dimensions, and the
+    physical resolution of each voxel cell.
+
+    :param origin: A 3-element array giving the world-space center of voxel
+        coordinate (0, 0, 0). This is the reference point from which all voxel
+        centers are computed.
+    :param dims: A tuple ``(nx, ny, nz)`` representing the number of voxels
+        along the x-, y-, and z-axes respectively.
+    :param resolution: The edge length of each voxel cell in world units.
+        The spacing between voxel centers is equal to this resolution.
     """
     origin: jnp.ndarray
     dims: Tuple[int, int, int]
@@ -84,10 +92,25 @@ def build_voxel_grid(
     spec: VoxelGridSpec,
 ) -> Dict[GridIndex, int]:
     """
-    Allocate a regular grid of voxel_cell variables in the SceneGraphWorld.
+    Construct a regular voxel grid inside the SceneGraphWorld.
 
-    Returns:
-        index_to_id: mapping from (ix, iy, iz) -> voxel node id
+    This allocates one `voxel_cell` variable per grid coordinate `(ix, iy, iz)`
+    using the voxel resolution and origin defined in `spec`. Each voxel is
+    positioned at:
+
+        center = origin + [ix * res, iy * res, iz * res]
+
+    The resulting mapping enables downstream creation of voxel smoothness
+    constraints and scene-graph integration.
+
+    :param sg: The active `SceneGraphWorld` instance where voxel nodes will be
+        created. Must expose `add_voxel_cell(center)` which returns a node ID.
+    :param spec: Voxel grid specification containing:
+        - `spec.origin`: 3D world origin of the grid.
+        - `spec.dims`: Tuple `(nx, ny, nz)` specifying grid dimensions.
+        - `spec.resolution`: Edge length of each voxel cell.
+    :return: A dictionary mapping each grid index `(ix, iy, iz)` to the
+        corresponding voxel node ID allocated within the scene graph.
     """
     origin = jnp.array(spec.origin, dtype=jnp.float32).reshape(3,)
     nx, ny, nz = spec.dims
@@ -113,13 +136,29 @@ def connect_grid_neighbors_1d_x(
     sigma: float | None = None,
 ) -> None:
     """
-    Connect neighboring voxels along +x with voxel_smoothness constraints.
+    Connect 3D voxel grid nodes along the +x direction using smoothness factors.
 
-    For each (ix, iy, iz) with ix+1 < nx, we enforce:
+    This function iterates over all voxel indices `(ix, iy, iz)` such that
+    `ix + 1 < nx`, and adds a voxel smoothness constraint between each voxel
+    and its +x neighbor. The enforced residual encourages:
 
         voxel(ix+1, iy, iz) - voxel(ix, iy, iz) ≈ [resolution, 0, 0]
 
-    This is enough to make a 1D chain behave like a regular grid.
+    This is sufficient to enforce a 1D chain structure along the x-axis
+    and is used when constructing structured voxel grids for optimization.
+
+    :param sg: The active `SceneGraphWorld` instance to which smoothness
+        factors will be added. Must expose `add_voxel_smoothness(i, j, offset, sigma)`.
+    :param index_to_id: Mapping from grid index `(ix, iy, iz)` to the corresponding
+        node ID in the scene graph or factor graph.
+    :param spec: Voxel grid specification containing dimensions and voxel resolution.
+        Expected to provide:
+            - `spec.dims`: Tuple `(nx, ny, nz)` with number of voxels.
+            - `spec.resolution`: Voxel edge length in world units.
+    :param sigma: Optional noise standard deviation for the smoothness factor.
+        If `None`, the default sigma inside `sg.add_voxel_smoothness` is used.
+    :return: None. This function mutates the scene graph world in-place by
+        adding smoothness edges between neighboring x-axis voxels.
     """
     nx, ny, nz = spec.dims
     res = float(spec.resolution)

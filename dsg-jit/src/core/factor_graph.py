@@ -66,12 +66,21 @@ system both flexible and extremely fast when JIT-compiled.
 
 This module is the mathematical heart of DSG-JIT: all SLAM, voxel grid,
 and hybrid scene-graph optimization flows through the functions defined here.
+
+API Overview
+------------
+- ``add_variable`` / ``add_factor``: Build up the graph structure.
+- ``pack_state`` / ``unpack_state``: Convert between dict-of-nodes and flat JAX arrays.
+- ``build_residual_function`` / ``build_objective``: Produce JIT-compiled residuals and objectives.
+- ``build_residual_function_with_type_weights``: Add learnable log-scales per factor type.
+- ``build_residual_function_se3_odom_param_multi``: Treat SE(3) odometry as learnable parameters.
+- ``build_residual_function_voxel_point_param_multi``: Treat voxel observation points as learnable parameters.
 """
 
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Callable, Tuple
+from typing import Dict, Callable, Tuple, List
 
 import jax
 import jax.numpy as jnp
@@ -85,36 +94,74 @@ ResidualFn = Callable[[jnp.ndarray, Dict[str, jnp.ndarray]], jnp.ndarray]
 
 @dataclass
 class FactorGraph:
-    """
-    Abstract factor graph.
+    """Abstract factor graph for DSG-JIT.
 
-    - variables: mapping from NodeId -> Variable
-    - factors: mapping from FactorId -> Factor
-    - residual_fns: mapping factor.type -> callable that computes residuals
+    This class stores variables, factors, and residual functions and exposes
+    helpers to pack/unpack the global state vector and to build JIT-compiled
+    residual/objective functions.
 
-    We maintain a single flattened state vector for optimization.
+    :param variables: Mapping from :class:`NodeId` to :class:`Variable` instances
+        representing nodes in the factor graph.
+    :type variables: Dict[NodeId, Variable]
+    :param factors: Mapping from :class:`FactorId` to :class:`Factor` instances
+        encoding constraints between variables.
+    :type factors: Dict[FactorId, Factor]
+    :param residual_fns: Registry mapping factor ``type`` strings to residual
+        functions of the form ``fn(stacked_state, params) -> residual``.
+    :type residual_fns: Dict[str, ResidualFn]
     """
     variables: Dict[NodeId, Variable] = field(default_factory=dict)
     factors: Dict[FactorId, Factor] = field(default_factory=dict)
     residual_fns: Dict[str, ResidualFn] = field(default_factory=dict)
 
     def add_variable(self, var: Variable) -> None:
+        """Register a new variable in the factor graph.
+
+        This does *not* modify any existing factors; it simply makes the
+        variable available to be referenced by factors.
+
+        :param var: Variable to add to the graph. Its ``id`` must be unique.
+        :type var: Variable
+        """
         assert var.id not in self.variables
         self.variables[var.id] = var
 
     def add_factor(self, factor: Factor) -> None:
+        """Register a new factor in the factor graph.
+
+        The factor must only reference variables that already exist in
+        :attr:`variables`.
+
+        :param factor: Factor to add to the graph. Its ``id`` must be unique.
+        :type factor: Factor
+        """
         assert factor.id not in self.factors
         self.factors[factor.id] = factor
 
     def register_residual(self, factor_type: str, fn: ResidualFn) -> None:
+        """Register a residual function for a given factor type.
+
+        :param factor_type: String identifier for the factor type
+            (e.g. ``"odom_se3"``, ``"voxel_point_obs"``).
+        :type factor_type: str
+        :param fn: Residual function implementing the measurement model.
+            It must accept ``(stacked_state, params)`` and return a residual
+            vector.
+        :type fn: ResidualFn
+        """
         self.residual_fns[factor_type] = fn
 
     # --- State packing/unpacking ---
 
     def _build_state_index(self) -> Dict[NodeId, Tuple[int, int]]:
-        """
-        Returns a mapping: NodeId -> (start_index, dim)
-        For now we assume all variable.value are 1D arrays.
+        """Build a contiguous index for the global state vector.
+
+        Each variable is assumed to be a 1D array. The method assigns a
+        contiguous block ``(start_index, dim)`` to every :class:`NodeId`.
+
+        :return: Mapping from node id to ``(start_index, dimension)`` in the
+            flattened state vector.
+        :rtype: Dict[NodeId, Tuple[int, int]]
         """
         index: Dict[NodeId, Tuple[int, int]] = {}
         offset = 0
@@ -126,6 +173,16 @@ class FactorGraph:
         return index
 
     def pack_state(self) -> jnp.ndarray:
+        """Pack all variable values into a single flat JAX array.
+
+        The variables are ordered by sorted :class:`NodeId` to ensure stable
+        indexing across calls.
+
+        :return: Tuple of ``(x, index)`` where ``x`` is the concatenated
+            state vector and ``index`` is the mapping produced by
+            :meth:`_build_state_index`.
+        :rtype: Tuple[jnp.ndarray, Dict[NodeId, Tuple[int, int]]]
+        """
         index = self._build_state_index()
         chunks = []
         for node_id in sorted(self.variables.keys()):
@@ -134,6 +191,17 @@ class FactorGraph:
         return jnp.concatenate(chunks), index
 
     def unpack_state(self, x: jnp.ndarray, index: Dict[NodeId, Tuple[int, int]]) -> Dict[NodeId, jnp.ndarray]:
+        """Unpack a flat state vector back into per-variable arrays.
+
+        :param x: Flattened state vector produced by :meth:`pack_state` or
+            produced by an optimizer.
+        :type x: jnp.ndarray
+        :param index: Mapping from :class:`NodeId` to ``(start, dim)`` blocks
+            as returned by :meth:`_build_state_index`.
+        :type index: Dict[NodeId, Tuple[int, int]]
+        :return: Mapping from node id to its corresponding slice of ``x``.
+        :rtype: Dict[NodeId, jnp.ndarray]
+        """
         result: Dict[NodeId, jnp.ndarray] = {}
         for node_id, (start, dim) in index.items():
             result[node_id] = x[start:start+dim]
@@ -142,11 +210,15 @@ class FactorGraph:
     # --- Objective ---
 
     def build_residual_function(self):
-        """
-        Returns a JIT-able function r(x) -> residual vector,
-        where x is the packed state.
+        """Construct a fused residual function for the entire graph.
 
-        This is the core for Gauss-Newton: we can compute J = dr/dx.
+        The returned function has signature ``r(x) -> residual`` where ``x``
+        is the packed state vector. It concatenates the residuals of all
+        registered factors in a fixed order.
+
+        :return: JIT-compiled residual function ``r(x)`` mapping a flat state
+            vector to the stacked residuals.
+        :rtype: Callable[[jnp.ndarray], jnp.ndarray]
         """
         # Freeze index and factor list inside the closure
         _, index = self.pack_state()
@@ -176,9 +248,13 @@ class FactorGraph:
         return jax.jit(residual)
 
     def build_objective(self):
-        """
-        Returns a JIT-able function f(x) -> scalar loss = ||r(x)||^2,
-        where r(x) is the stacked residual vector.
+        """Construct a scalar objective ``f(x) = ||r(x)||^2``.
+
+        This wraps :meth:`build_residual_function` and returns a function
+        that computes the squared L2 norm of the residual vector.
+
+        :return: JIT-compiled objective function ``f(x)``.
+        :rtype: Callable[[jnp.ndarray], jnp.ndarray]
         """
         residual = self.build_residual_function()
 
@@ -195,6 +271,19 @@ class FactorGraph:
     def build_residual_function_with_type_weights(
         self, factor_type_order: List[str]
     ):
+        """Build a residual function that supports learnable type weights.
+
+        The returned function has signature ``r(x, log_scales)`` where
+        ``log_scales[i]`` is the log-weight associated with
+        ``factor_type_order[i]``. Missing types default to unit weight.
+
+        :param factor_type_order: Ordered list of factor type strings for
+            which log-scales will be provided.
+        :type factor_type_order: List[str]
+        :return: Residual function ``r(x, log_scales)`` that scales each
+            factor's residual by ``exp(log_scale)`` according to its type.
+        :rtype: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+        """
         factors = list(self.factors.values())
         residual_fns = self.residual_fns
         _, index = self.pack_state()
@@ -232,19 +321,17 @@ class FactorGraph:
         return residual
     
     def build_residual_function_se3_odom_param_multi(self):
-        """
-        Build a residual function that treats ALL odom_se3_geodesic 'measurement'
-        as explicit parameters.
+        """Build a residual function with learnable SE(3) odometry.
 
-        Assumptions:
-          - There are K odom_se3_geodesic factors in this graph.
-          - The parameter 'theta' passed to residual(x, theta) has shape (K, 6),
-            where theta[k] is the se(3) measurement for the k-th odom factor
-            encountered in self.factors.values() order.
+        All factors of type ``"odom_se3"`` are treated as depending on a
+        parameter array ``theta`` of shape ``(K, 6)``, where ``K`` is the
+        number of odometry factors. Each row of ``theta`` represents a
+        perturbable se(3) measurement.
 
-        Returns:
-            residual_fn(x, theta): (n_vars,),(K,6) -> (n_residuals,)
-            index: NodeId -> index info used by pack_state
+        :return: Tuple ``(residual_fn, index)`` where ``residual_fn`` has
+            signature ``residual_fn(x, theta)`` and ``index`` is the pack
+            index mapping from :meth:`pack_state`.
+        :rtype: Tuple[Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray], Dict[NodeId, Tuple[int, int]]]
         """
         factors = list(self.factors.values())
         residual_fns = self.residual_fns
@@ -288,13 +375,15 @@ class FactorGraph:
         return residual, index
     
     def build_residual_function_voxel_point_param(self):
-        """
-        Build a residual function that treats voxel_point_obs 'point_world'
-        as an explicit parameter.
+        """Build a residual function with a shared voxel observation point.
 
-        Returns:
-            residual_fn(x, point_world): jnp.ndarray x, jnp.ndarray point_world -> residual vector
-            index: NodeId -> slice/tuple used by pack_state (for consistency)
+        All factors of type ``"voxel_point_obs"`` will use a dynamic
+        ``point_world`` argument passed at call time, rather than a fixed
+        value stored in the factor params.
+
+        :return: Tuple ``(residual_fn, index)`` where ``residual_fn`` has
+            signature ``residual_fn(x, point_world)``.
+        :rtype: Tuple[Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray], Dict[NodeId, Tuple[int, int]]]
         """
         # Capture factors, residual fns, and index at build time
         factors = list(self.factors.values())
@@ -337,19 +426,15 @@ class FactorGraph:
         return residual, index
     
     def build_residual_function_voxel_point_param_multi(self):
-        """
-        Build a residual function that treats ALL voxel_point_obs 'point_world'
-        as explicit parameters.
+        """Build a residual function with per-factor voxel observation points.
 
-        We assume:
-          - There are K voxel_point_obs factors in this graph.
-          - The parameter 'theta' passed to residual(x, theta) has shape (K, 3),
-            where theta[k] is the point_world for the k-th voxel_point_obs
-            encountered in self.factors.values() order.
+        Each ``"voxel_point_obs"`` factor consumes a row of the parameter
+        array ``theta`` of shape ``(K, 3)``, where ``K`` is the number of
+        such factors.
 
-        Returns:
-            residual_fn(x, theta): (n_vars,),(K,3) -> (n_residuals,)
-            index: NodeId -> index info used by pack_state
+        :return: Tuple ``(residual_fn, index)`` where ``residual_fn`` has
+            signature ``residual_fn(x, theta)``.
+        :rtype: Tuple[Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray], Dict[NodeId, Tuple[int, int]]]
         """
         factors = list(self.factors.values())
         residual_fns = self.residual_fns

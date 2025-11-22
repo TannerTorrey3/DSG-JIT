@@ -67,15 +67,33 @@ import jax.numpy as jnp
 
 def room_centroid_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
-    Residual enforcing that a room's position matches
-    the centroid of its member places.
+    Compute a residual enforcing that a room's position matches the centroid of its member places.
 
-    x is a flat vector containing:
-        [room_pos, place0_pos, place1_pos, ..., placeN_pos]
+    The input state vector ``x`` is assumed to contain a concatenation of the room
+    position followed by the positions of its member places::
 
-    All positions are in R^d. We pass `dim` in params to know d.
+        x = [room_pos, place0_pos, place1_pos, ..., placeN_pos]
 
-    residual = room_pos - mean(place_positions)
+    All positions live in :math:`\\mathbb{R}^d`, and ``d`` is provided via
+    ``params["dim"]``.
+
+    The residual is defined as::
+
+        r = room_pos - mean(place_positions)
+
+    If no member places are provided, the residual is a zero vector of the same
+    shape as ``room_pos``.
+
+    :param x: Flat state vector containing the room position followed by the
+              positions of its member places. Shape ``(dim * (N + 1),)`` where
+              ``dim`` is the position dimension and ``N`` is the number of
+              member places.
+    :param params: Dictionary of parameters. Must contain:
+                   ``"dim"`` (int or scalar array) indicating the dimension
+                   of each position vector.
+    :return: Residual vector ``r`` with shape ``(dim,)`` enforcing that the room
+             lies at the centroid of its member places.
+    :rtype: jax.numpy.ndarray
     """
 
     dim = int(params["dim"])  # e.g. 1 or 3
@@ -96,21 +114,37 @@ def room_centroid_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jn
 
 def pose_place_attachment_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
-    Tie a place's position to a pose's translation component.
+    Residual tying a place's position to a pose's translation component.
 
-    x contains: [pose_vec, place_vec]
-    - pose_vec is length pose_dim (6 for SE(3))
-    - place_vec is length place_dim (1 for now)
+    The input state vector ``x`` is assumed to be the concatenation of a pose
+    vector and a place vector::
 
-    params:
-      - "pose_dim": int, dimension of pose vector (default 6)
-      - "place_dim": int, dimension of place vector (default 1)
-      - "pose_coord_index": int, which component of pose to use (default 0: tx)
-      - "offset": shape (place_dim,), optional, default 0
+        x = [pose_vec, place_vec]
 
-    We compute:
-      target_place = pose[pose_coord_index] + offset
-      residual = place - target_place
+    By default, the pose is represented in ``se(3)`` as a 6D vector
+    ``[tx, ty, tz, rx, ry, rz]`` and the place is a 1D scalar.
+
+    The constraint enforces that the place coordinate tracks one component of the
+    pose translation plus an optional offset::
+
+        pose_val     = pose_vec[pose_coord_index]
+        target_place = pose_val + offset
+        r            = place_vec - target_place
+
+    :param x: Flat state vector containing the pose and place variables,
+              ``[pose_vec, place_vec]``. The first ``pose_dim`` entries are the
+              pose, followed by ``place_dim`` entries for the place.
+    :param params: Dictionary of parameters controlling the attachment:
+                   ``"pose_dim"`` (int, default ``6``), the dimension of the
+                   pose vector; ``"place_dim"`` (int, default ``1``), the
+                   dimension of the place vector; ``"pose_coord_index"`` (int,
+                   default ``0``), index of the pose component used to attach
+                   the place; ``"offset"`` (array-like of shape ``(place_dim,)``,
+                   optional), additive offset applied to the selected pose
+                   component before comparison.
+    :return: Residual vector ``r`` with shape ``(place_dim,)`` enforcing the
+             attachment between pose and place.
+    :rtype: jax.numpy.ndarray
     """
     pose_dim = int(params.get("pose_dim", 6))
     place_dim = int(params.get("place_dim", 1))

@@ -69,8 +69,12 @@ from .types import Pose3  # still here
 
 def pose_vec_to_rt(v: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
-    Split a 6D pose vector into translation and rotation-vector (axis-angle).
-    v: [tx, ty, tz, wx, wy, wz]
+    Split a 6D pose vector into translation and rotation components.
+
+    :param v: 6D pose vector ``[tx, ty, tz, wx, wy, wz]``.
+    :type v: jnp.ndarray
+    :return: Tuple ``(t, w)`` where ``t`` is translation ``(3,)`` and ``w`` is axis-angle rotation ``(3,)``.
+    :rtype: tuple[jnp.ndarray, jnp.ndarray]
     """
     v = jnp.asarray(v)
     t = v[0:3]
@@ -79,7 +83,14 @@ def pose_vec_to_rt(v: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
 
 
 def hat(v: jnp.ndarray) -> jnp.ndarray:
-    """so(3) hat operator: R^3 -> 3x3 skew-symmetric matrix."""
+    """
+    Compute the so(3) hat operator.
+
+    :param v: 3‑vector.
+    :type v: jnp.ndarray
+    :return: 3×3 skew‑symmetric matrix such that ``hat(v) @ w = v × w``.
+    :rtype: jnp.ndarray
+    """
     x, y, z = v[0], v[1], v[2]
     return jnp.array(
         [
@@ -92,9 +103,12 @@ def hat(v: jnp.ndarray) -> jnp.ndarray:
 
 def so3_exp(w: jnp.ndarray) -> jnp.ndarray:
     """
-    Exponential map from so(3) (rotation vector) to SO(3).
+    Exponential map from so(3) to SO(3).
 
-    Uses Rodrigues' formula with a small-angle fallback.
+    :param w: Rotation vector in axis‑angle form ``(3,)``.
+    :type w: jnp.ndarray
+    :return: Rotation matrix in SO(3) with shape ``(3, 3)``.
+    :rtype: jnp.ndarray
     """
     w = jnp.asarray(w)
     theta = jnp.linalg.norm(w)
@@ -113,18 +127,12 @@ def so3_exp(w: jnp.ndarray) -> jnp.ndarray:
 
 def se3_exp(xi: jnp.ndarray) -> jnp.ndarray:
     """
-    Exponential map from se(3) -> SE(3).
+    Exponential map from se(3) to SE(3).
 
-    xi = [v_x, v_y, v_z, w_x, w_y, w_z]
-      - v: translation vector in R^3
-      - w: rotation vector in R^3 (axis-angle)
-
-    Returns 4×4 homogeneous SE(3) matrix.
-
-    Uses the standard closed-form left-Jacobian J for SE(3).
-
-        T = [ R, J*v ]
-            [ 0, 1   ]
+    :param xi: 6‑vector twist ``[v_x, v_y, v_z, w_x, w_y, w_z]``.
+    :type xi: jnp.ndarray
+    :return: 4×4 homogeneous SE(3) transform matrix.
+    :rtype: jnp.ndarray
     """
     v = xi[:3]
     w = xi[3:]
@@ -161,8 +169,12 @@ def se3_exp(xi: jnp.ndarray) -> jnp.ndarray:
 
 def vee(R: jnp.ndarray) -> jnp.ndarray:
     """
-    vee: so(3) -> R^3, inverse of hat.
-    Assumes R is a 3x3 skew-symmetric-like matrix.
+    Inverse of the hat operator.
+
+    :param R: 3×3 skew‑symmetric matrix.
+    :type R: jnp.ndarray
+    :return: Corresponding 3‑vector.
+    :rtype: jnp.ndarray
     """
     return jnp.array([
         R[2, 1] - R[1, 2],
@@ -173,13 +185,12 @@ def vee(R: jnp.ndarray) -> jnp.ndarray:
 
 def so3_log(R: jnp.ndarray) -> jnp.ndarray:
     """
-    Numerically stable logarithm map for SO(3).
+    Logarithm map from SO(3) to so(3).
 
-    Handles:
-      - small angles via first-order approximation
-      - trace slightly outside [-1, 3] via clamping
-
-    Returns w in R^3 such that Exp(w) ~ R.
+    :param R: Rotation matrix in SO(3) with shape ``(3, 3)``.
+    :type R: jnp.ndarray
+    :return: Rotation vector ``(3,)`` in axis‑angle form.
+    :rtype: jnp.ndarray
     """
     R = jnp.asarray(R)
     # Compute cos(theta) with clamping
@@ -222,10 +233,14 @@ def so3_log(R: jnp.ndarray) -> jnp.ndarray:
 
 def compose_pose_se3(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """
-    Compose two SE(3) poses in 6D vector form.
+    Compose two SE(3) poses in 6D vector representation.
 
-    a, b: [tx, ty, tz, wx, wy, wz]
-    Returns: 6D vector for a ∘ b
+    :param a: 6D pose vector.
+    :type a: jnp.ndarray
+    :param b: 6D pose vector.
+    :type b: jnp.ndarray
+    :return: Composed pose ``a ∘ b`` in 6D vector form.
+    :rtype: jnp.ndarray
     """
     ta, wa = pose_vec_to_rt(a)
     tb, wb = pose_vec_to_rt(b)
@@ -242,14 +257,14 @@ def compose_pose_se3(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
 
 def relative_pose_se3(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """
-    Compute relative pose from a to b in 6D vector form.
+    Compute relative pose from ``a`` to ``b`` in 6D coordinates.
 
-      a, b: [tx, ty, tz, wx, wy, wz]
-    Returns xi in R^6 such that exp(xi) ≈ T_a^{-1} T_b:
-
-      T_rel = T_a^{-1} T_b
-      t_rel = R_a^T (t_b - t_a)
-      w_rel = log(R_a^T R_b)
+    :param a: First pose ``(6,)``.
+    :type a: jnp.ndarray
+    :param b: Second pose ``(6,)``.
+    :type b: jnp.ndarray
+    :return: Relative twist such that ``Exp(xi) ≈ T_a^{-1} T_b``.
+    :rtype: jnp.ndarray
     """
     ta, wa = pose_vec_to_rt(a)
     tb, wb = pose_vec_to_rt(b)
@@ -265,26 +280,14 @@ def relative_pose_se3(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
 
 def se3_retract_left(pose: jnp.ndarray, delta: jnp.ndarray) -> jnp.ndarray:
     """
-    Left-multiplicative SE(3) retraction:
+    Left‑multiplicative SE(3) retraction.
 
-        pose, delta: R^6, [tx, ty, tz, wx, wy, wz]
-
-    Interprets `delta` as a twist in se(3), constructs Exp(delta) and applies:
-
-        T_new = Exp(delta) * T_old
-
-    in matrix form:
-
-        Exp(delta) = [ R_d  t_d ]
-                     [  0    1  ]
-
-        T_old      = [ R    t   ]
-                     [  0    1  ]
-
-        T_new      = [ R_d R      R_d t + t_d ]
-                     [   0             1     ]
-
-    Then convert T_new back to 6D vector [t_new, w_new] using so3_log.
+    :param pose: Base pose in 6D coordinates.
+    :type pose: jnp.ndarray
+    :param delta: Incremental twist in 6D.
+    :type delta: jnp.ndarray
+    :return: Updated pose ``Exp(delta) * pose`` in 6D vector form.
+    :rtype: jnp.ndarray
     """
     pose = jnp.asarray(pose)
     delta = jnp.asarray(delta)
@@ -306,6 +309,9 @@ def se3_retract_left(pose: jnp.ndarray, delta: jnp.ndarray) -> jnp.ndarray:
 
 def se3_identity() -> jnp.ndarray:
     """
-    Convenience: return the identity SE(3) pose in 6D vector form.
+    Return the identity SE(3) pose.
+
+    :return: Zero 6‑vector representing identity rotation and translation.
+    :rtype: jnp.ndarray
     """
     return jnp.zeros(6, dtype=jnp.float32)

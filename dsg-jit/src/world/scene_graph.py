@@ -101,6 +101,12 @@ class SceneGraphNoiseConfig:
 
 
 class SceneGraphWorld:
+    """
+    World-level dynamic scene graph wrapper that manages typed nodes and semantic relationships,
+    built atop the WorldModel. Provides ergonomic helpers for creating and connecting SE(3) poses,
+    places, rooms, objects, and agents, and maintains convenient indexing for scene-graph
+    experiments. All optimization and factor-graph math is delegated to the underlying WorldModel.
+    """
     wm: WorldModel
     pose_trajectory: Dict[Tuple[str, int], int] = field(default_factory=dict)
     noise: SceneGraphNoiseConfig
@@ -134,26 +140,45 @@ class SceneGraphWorld:
     # --- Variable helpers ---
 
     def add_pose_se3(self, value: jnp.ndarray) -> int:
+        """
+        Add a generic SE(3) pose variable.
+
+        :param value: Length-6 array-like se(3) vector [tx, ty, tz, rx, ry, rz].
+        :return: Integer node id of the created pose variable.
+        """
         return self.wm.add_variable("pose_se3", value)
 
     def add_place1d(self, x: float) -> int:
+        """
+        Add a 1D place variable.
+
+        :param x: Scalar position along a 1D axis (e.g. corridor coordinate).
+        :return: Integer node id of the created place variable.
+        """
         return self.wm.add_variable("place1d", jnp.array([x]))
 
     def add_room1d(self, x: float) -> int:
+        """
+        Add a 1D room variable.
+
+        This currently uses the same underlying type as a 1D place but is
+        kept semantically distinct for higher-level reasoning.
+
+        :param x: Scalar position along a 1D axis.
+        :return: Integer node id of the created room variable.
+        """
         # identical type to place1d for now, but semantically different
         return self.wm.add_variable("place1d", jnp.array([x]))
 
     def add_place3d(self, name: str, xyz) -> int:
-        """Add a 3D place node (R^3) with a human-readable name.
+        """
+        Add a 3D place node (R^3) with a human-readable name.
 
         This is a semantic helper for dynamic scene-graph style usage.
 
-        Args:
-            name: Identifier for the place (e.g. "place_A").
-            xyz: Iterable of length 3, world-frame position.
-
-        Returns:
-            Integer node id of the created variable.
+        :param name: Identifier for the place (for example, ``"place_A"``).
+        :param xyz: Iterable of length 3 giving the world-frame position.
+        :return: Integer node id of the created place variable.
         """
         value = jnp.array(xyz, dtype=jnp.float32).reshape(3,)
         nid = self.wm.add_variable("place3d", value)
@@ -162,17 +187,16 @@ class SceneGraphWorld:
         return nid_int
 
     def add_room(self, name: str, center) -> int:
-        """Add a 3D room node (R^3 center) with a semantic name.
+        """
+        Add a 3D room node (R^3 center) with a semantic name.
 
         This is a thin wrapper around a Euclidean variable, but exposes a
         room-level abstraction for dynamic scene-graph experiments.
 
-        Args:
-            name: Identifier for the room (e.g. "room_A").
-            center: Iterable of length 3, approximate room centroid in world coordinates.
-
-        Returns:
-            Integer node id of the created room variable.
+        :param name: Identifier for the room (for example, ``"room_A"``).
+        :param center: Iterable of length 3 giving the approximate room
+            centroid in world coordinates.
+        :return: Integer node id of the created room variable.
         """
         value = jnp.array(center, dtype=jnp.float32).reshape(3,)
         nid = self.wm.add_variable("room3d", value)
@@ -183,21 +207,22 @@ class SceneGraphWorld:
     def add_object3d(self, xyz) -> int:
         """
         Add an object with 3D position (R^3).
-        xyz can be list/tuple/array length 3.
+
+        :param xyz: Iterable of length 3 giving the object position in
+            world coordinates.
+        :return: Integer node id of the created object variable.
         """
         xyz = jnp.array(xyz, dtype=jnp.float32).reshape(3,)
         nid = self.wm.add_variable("object3d", xyz)
         return int(nid)
 
     def add_named_object3d(self, name: str, xyz) -> int:
-        """Add a 3D object and register it under a semantic name.
+        """
+        Add a 3D object and register it under a semantic name.
 
-        Args:
-            name: Identifier for the object (e.g. "chair_1").
-            xyz: Iterable of length 3, world-frame position.
-
-        Returns:
-            Integer node id of the created object variable.
+        :param name: Identifier for the object (for example, ``"chair_1"``).
+        :param xyz: Iterable of length 3 giving the world-frame position.
+        :return: Integer node id of the created object variable.
         """
         obj_id = self.add_object3d(xyz)
         self.object_nodes[name] = obj_id
@@ -205,9 +230,12 @@ class SceneGraphWorld:
     
     def add_agent_pose_se3(self, agent: str, t: int, value: jnp.ndarray) -> int:
         """
-        Add a SE(3) pose for a given agent at timestep t.
+        Add an SE(3) pose for a given agent at a specific timestep.
 
-        Returns the underlying node id (int).
+        :param agent: Agent identifier (for example, a robot name).
+        :param t: Integer timestep index.
+        :param value: Length-6 array-like se(3) vector for the pose.
+        :return: Integer node id of the created pose variable.
         """
         nid = self.wm.add_variable("pose_se3", value)
         nid_int = int(nid)
@@ -239,10 +267,16 @@ class SceneGraphWorld:
         sigma: float | None = None,
     ) -> int:
         """
-        Add an additive SE(3) odom factor in R^6.
+        Add an additive SE(3) odometry factor in R^6.
 
-        dx: translation along x (m)
-        sigma: optional override for odom noise; if None, use config.
+        The measurement is a translation along the x-axis plus zero rotation.
+
+        :param pose_i: Node id of the source pose.
+        :param pose_j: Node id of the destination pose.
+        :param dx: Translation along the x-axis in meters.
+        :param sigma: Optional standard deviation for the odometry noise. If
+            ``None``, :attr:`SceneGraphNoiseConfig.odom_se3_sigma` is used.
+        :return: Integer factor id of the created odometry constraint.
         """
         meas = jnp.array([dx, 0.0, 0.0, 0.0, 0.0, 0.0])
 
@@ -270,6 +304,19 @@ class SceneGraphWorld:
         yaw: float = 0.0,
         sigma: float | None = None,
     ) -> int:
+        """
+        Add a geodesic SE(3) odometry factor.
+
+        The measurement is parameterized as translation + yaw in se(3).
+
+        :param pose_i: Node id of the source pose.
+        :param pose_j: Node id of the destination pose.
+        :param dx: Translation along the x-axis in meters.
+        :param yaw: Heading change around the z-axis in radians.
+        :param sigma: Optional standard deviation for the odometry noise. If
+            ``None``, :attr:`SceneGraphNoiseConfig.odom_se3_sigma` is used.
+        :return: Integer factor id of the created odometry constraint.
+        """
         meas = jnp.array([dx, 0.0, 0.0, 0.0, 0.0, yaw])
 
         if sigma is None:
@@ -289,6 +336,15 @@ class SceneGraphWorld:
         )
 
     def attach_pose_to_place_x(self, pose_id: int, place_id: int) -> int:
+        """
+        Attach a pose to a 1D place along the x-coordinate.
+
+        This is a low-level helper that assumes a 6D pose and 1D place.
+
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param place_id: Node id of the 1D place variable.
+        :return: Integer factor id of the created attachment constraint.
+        """
         pose_dim = jnp.array(6)
         place_dim = jnp.array(1)
         pose_coord_index = jnp.array(0)
@@ -310,6 +366,16 @@ class SceneGraphWorld:
         )
 
     def attach_pose_to_room_x(self, pose_id: int, room_id: int) -> int:
+        """
+        Attach a pose to a 1D room along the x-coordinate.
+
+        This is analogous to :meth:`attach_pose_to_place_x` but uses a room
+        node instead of a place node.
+
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param room_id: Node id of the 1D room variable.
+        :return: Integer factor id of the created attachment constraint.
+        """
         pose_dim = jnp.array(6)
         place_dim = jnp.array(1)
         pose_coord_index = jnp.array(0)
@@ -337,26 +403,23 @@ class SceneGraphWorld:
         coord_index: int = 0,
         sigma: float | None = None,
     ) -> int:
-        """Attach a SE(3) pose to a place node (1D or 3D) via a generic
-        pose–place attachment factor.
+        """
+        Attach a SE(3) pose to a place node (1D or 3D).
 
         This is a higher-level, dimension-aware wrapper around the
         ``pose_place_attachment`` residual, and is intended for scene-graph
         style experiments where places may be either 1D (topological) or
         3D (metric positions).
 
-        Args:
-            pose_id: Node id of the SE(3) pose variable.
-            place_id: Node id of the place variable. The underlying state
-                dimension is inferred at runtime from the factor graph
-                (e.g. 1 for place1d, 3 for place3d).
-            coord_index: Index of the pose coordinate to tie to the place
-                (typically 0 for x, 1 for y, etc.). Defaults to 0.
-            sigma: Optional noise standard deviation. If ``None``, falls
-                back to :attr:`SceneGraphNoiseConfig.pose_place_sigma`.
-
-        Returns:
-            The integer id of the newly added factor.
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param place_id: Node id of the place variable. The underlying state
+            dimension is inferred at runtime from the factor graph (for
+            example, 1 for ``place1d`` or 3 for ``place3d``).
+        :param coord_index: Index of the pose coordinate to tie to the place
+            (typically 0 for x, 1 for y, etc.). Defaults to 0.
+        :param sigma: Optional noise standard deviation. If ``None``, falls
+            back to :attr:`SceneGraphNoiseConfig.pose_place_sigma`.
+        :return: Integer factor id of the created attachment constraint.
         """
         # Infer place dimensionality from the underlying variable.
         place_nid = NodeId(place_id)
@@ -391,6 +454,17 @@ class SceneGraphWorld:
         offset=(0.0, 0.0, 0.0),
         sigma: float | None = None,
     ) -> int:
+        """
+        Attach an object to a pose with an optional 3D offset.
+
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param obj_id: Node id of the 3D object variable.
+        :param offset: Iterable of length 3 giving the offset from the pose
+            frame to the object in pose coordinates.
+        :param sigma: Optional noise standard deviation. If ``None``, falls
+            back to :attr:`SceneGraphNoiseConfig.object_at_pose_sigma`.
+        :return: Integer factor id of the created object-at-pose constraint.
+        """
         pose_dim = jnp.array(6)
         obj_dim = jnp.array(3)
         offset_arr = jnp.array(offset, dtype=jnp.float32).reshape(3,)
@@ -413,6 +487,12 @@ class SceneGraphWorld:
         )
 
     def get_object3d(self, obj_id: int) -> jnp.ndarray:
+        """
+        Return the current 3D position of an object.
+
+        :param obj_id: Integer node id of the object variable.
+        :return: JAX array of shape ``(3,)`` giving the object position.
+        """
         from core.types import NodeId
         nid = NodeId(obj_id)
         return self.wm.fg.variables[nid].value
@@ -426,7 +506,12 @@ class SceneGraphWorld:
         """
         Enforce smoothness between successive poses.
 
-        sigma: std dev of pose difference; larger sigma => weaker smoothness.
+        :param pose_id_t: Node id of the pose at time ``t``.
+        :param pose_id_t1: Node id of the pose at time ``t+1``.
+        :param sigma: Optional standard deviation of the pose difference; a
+            larger value gives weaker smoothness. If ``None``,
+            :attr:`SceneGraphNoiseConfig.smooth_pose_sigma` is used.
+        :return: Integer factor id of the created smoothness constraint.
         """
         if sigma is None:
             sigma = self.noise.smooth_pose_sigma
@@ -450,11 +535,15 @@ class SceneGraphWorld:
         """
         Add a relative measurement between a pose and a 3D landmark.
 
-        measurement: 3D vector in the *pose frame* that we expect for this landmark.
-                     (e.g., ground truth landmark position expressed in pose frame.)
+        The measurement is expressed in the pose frame.
 
-        residual enforces:
-            se3_exp(pose)^(-1) * landmark  ≈ measurement
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param landmark_id: Node id of the 3D landmark variable.
+        :param measurement: Iterable of length 3 giving the expected landmark
+            position in the pose frame.
+        :param sigma: Optional noise standard deviation. If ``None``,
+            :attr:`SceneGraphNoiseConfig.pose_landmark_sigma` is used.
+        :return: Integer factor id of the created relative landmark constraint.
         """
         meas = jnp.array(measurement, dtype=jnp.float32).reshape(3,)
 
@@ -478,7 +567,8 @@ class SceneGraphWorld:
         """
         Add a 3D landmark node (R^3).
 
-        xyz: iterable of length 3, world coordinates.
+        :param xyz: Iterable of length 3 giving world coordinates.
+        :return: Integer node id of the created landmark variable.
         """
         value = jnp.array(xyz, dtype=jnp.float32).reshape(3,)
         nid = self.wm.add_variable("landmark3d", value)
@@ -492,9 +582,17 @@ class SceneGraphWorld:
         sigma: float | None = None,
     ) -> int:
         """
-        Relative pose-landmark constraint in pose frame (XYZ).
+        Add a relative measurement between a pose and a 3D landmark.
 
-        measurement: R^3, landmark position in the pose frame.
+        The measurement is expressed in the pose frame.
+
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param landmark_id: Node id of the 3D landmark variable.
+        :param measurement: Iterable of length 3 giving the expected landmark
+            position in the pose frame.
+        :param sigma: Optional noise standard deviation. If ``None``,
+            :attr:`SceneGraphNoiseConfig.pose_landmark_sigma` is used.
+        :return: Integer factor id of the created relative landmark constraint.
         """
         meas = jnp.array(measurement, dtype=jnp.float32).reshape(3,)
 
@@ -520,9 +618,15 @@ class SceneGraphWorld:
         sigma: float | None = None,
     ) -> int:
         """
-        Bearing-only constraint from pose to landmark.
+        Add a bearing-only constraint from pose to landmark.
 
-        bearing: R^3 vector in the pose frame (will be normalized).
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param landmark_id: Node id of the 3D landmark variable.
+        :param bearing: Iterable of length 3 giving the bearing vector in the
+            pose frame (will be normalized internally).
+        :param sigma: Optional noise standard deviation. If ``None``,
+            :attr:`SceneGraphNoiseConfig.pose_landmark_bearing_sigma` is used.
+        :return: Integer factor id of the created bearing constraint.
         """
         b = jnp.array(bearing, dtype=jnp.float32).reshape(3,)
         b = b / (jnp.linalg.norm(b) + 1e-8)
@@ -546,6 +650,9 @@ class SceneGraphWorld:
     def add_voxel_cell(self, xyz) -> int:
         """
         Add a voxel cell center in world coordinates (R^3).
+
+        :param xyz: Iterable of length 3 giving the voxel center position.
+        :return: Integer node id of the created voxel variable.
         """
         value = jnp.array(xyz, dtype=jnp.float32).reshape(3,)
         nid = self.wm.add_variable("voxel_cell", value)
@@ -561,7 +668,13 @@ class SceneGraphWorld:
         """
         Constrain a voxel cell to align with a point measurement seen from a pose.
 
-        point_meas: R^3 point in the pose frame (e.g. back-projected depth).
+        :param pose_id: Node id of the SE(3) pose variable.
+        :param voxel_id: Node id of the voxel cell variable.
+        :param point_meas: Iterable of length 3 giving a point in the pose
+            frame (for example, a back-projected depth sample).
+        :param sigma: Optional noise standard deviation. If ``None``,
+            :attr:`SceneGraphNoiseConfig.pose_voxel_point_sigma` is used.
+        :return: Integer factor id of the created voxel-point constraint.
         """
         point_meas = jnp.array(point_meas, dtype=jnp.float32).reshape(3,)
 
@@ -589,7 +702,13 @@ class SceneGraphWorld:
         """
         Enforce grid-like spacing between two voxel centers.
 
-        offset: expected vector from voxel_i to voxel_j (e.g. [dx, 0, 0]).
+        :param voxel_i_id: Node id of the first voxel cell.
+        :param voxel_j_id: Node id of the second voxel cell.
+        :param offset: Iterable of length 3 giving the expected vector from
+            voxel ``i`` to voxel ``j`` (for example, ``[dx, 0, 0]``).
+        :param sigma: Optional noise standard deviation. If ``None``,
+            :attr:`SceneGraphNoiseConfig.voxel_smoothness_sigma` is used.
+        :return: Integer factor id of the created smoothness constraint.
         """
         offset = jnp.array(offset, dtype=jnp.float32).reshape(3,)
 
@@ -616,11 +735,14 @@ class SceneGraphWorld:
         sigma: float | None = None,
     ) -> int:
         """
-        Add an observation tying a voxel center to a 3D point in *world* coordinates.
+        Add an observation tying a voxel center to a 3D point in world coordinates.
 
-        voxel_id: id of a voxel_cell variable
-        point_world: length-3 array-like, world-frame point (e.g. from fused depth)
-        sigma: optional noise std; if None, use config.voxel_point_obs_sigma
+        :param voxel_id: Node id of the voxel cell variable.
+        :param point_world: Iterable of length 3 giving a world-frame point
+            (for example, from fused depth or a point cloud).
+        :param sigma: Optional noise standard deviation. If ``None``,
+            :attr:`SceneGraphNoiseConfig.voxel_point_obs_sigma` is used.
+        :return: Integer factor id of the created observation constraint.
         """
         point_world = jnp.array(point_world, dtype=jnp.float32).reshape(3,)
 
@@ -641,15 +763,40 @@ class SceneGraphWorld:
     # --- Optimization / access ---
 
     def optimize(self, method: str = "gn", iters: int = 40) -> None:
+        """
+        Run nonlinear optimization over the current factor graph.
+
+        :param method: Optimization method name (currently ``"gn"`` for
+            Gauss–Newton).
+        :param iters: Maximum number of iterations to run.
+        :return: ``None``. The internal world model state is updated in-place.
+        """
         self.wm.optimize(method=method, iters=iters, damping=1e-3, max_step_norm=0.5)
 
     def get_pose(self, pose_id: int) -> jnp.ndarray:
+        """
+        Return the current SE(3) pose value.
+
+        :param pose_id: Integer node id of the pose variable.
+        :return: JAX array of shape ``(6,)`` containing the se(3) vector.
+        """
         nid = NodeId(pose_id)
         return self.wm.fg.variables[nid].value
 
     def get_place(self, place_id: int) -> float:
+        """
+        Return the current scalar value of a 1D place.
+
+        :param place_id: Integer node id of the place variable.
+        :return: Floating-point scalar position.
+        """
         nid = NodeId(place_id)
         return float(self.wm.fg.variables[nid].value[0])
 
     def dump_state(self) -> Dict[int, jnp.ndarray]:
+        """
+        Return a snapshot of all variable values in the world.
+
+        :return: Dictionary mapping integer node ids to JAX arrays of values.
+        """
         return {int(nid): v.value for nid, v in self.wm.fg.variables.items()}

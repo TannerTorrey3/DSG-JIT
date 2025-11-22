@@ -94,16 +94,23 @@ class GDConfig:
 
 
 def gradient_descent(objective: ObjectiveFn, x0: jnp.ndarray, cfg: GDConfig) -> jnp.ndarray:
-    """
-    Very simple gradient descent loop, enough for tests.
+    """Simple gradient descent optimizer.
 
-    Args:
-        objective: f(x) -> scalar loss
-        x0: initial state vector
-        cfg: hyperparameters
+    Performs iterative updates of the form::
 
-    Returns:
-        x_opt: optimized state vector
+        x_{k+1} = x_k - learning_rate * 
+abla f(x_k)
+
+    until ``max_iters`` is reached.
+
+    :param objective: Objective function ``f(x)`` that maps a state vector to a scalar loss.
+    :type objective: Callable[[jnp.ndarray], jnp.ndarray]
+    :param x0: Initial state vector.
+    :type x0: jnp.ndarray
+    :param cfg: Gradient-descent configuration (learning rate and number of iterations).
+    :type cfg: GDConfig
+    :return: Optimized state vector after gradient descent.
+    :rtype: jnp.ndarray
     """
     grad_fn = jax.grad(objective)
 
@@ -120,12 +127,24 @@ class NewtonConfig:
 
 
 def damped_newton(objective: ObjectiveFn, x0: jnp.ndarray, cfg: NewtonConfig) -> jnp.ndarray:
-    """
-    Simple damped Newton / Gauss-Newton-like optimizer.
+    """Damped Newton optimizer for small problems.
 
-    For small problems, we can afford full Hessian:
-       delta = (H + λ I)^-1 g
-       x_new = x - delta
+    Uses a Levenberg–Marquardt-style update::
+
+        (H + λ I) \delta = 
+abla f(x)
+        x_{k+1} = x_k - \delta
+
+    where ``H`` is the Hessian of the objective and ``λ`` is a damping factor.
+
+    :param objective: Objective function ``f(x)`` that maps a state vector to a scalar loss.
+    :type objective: Callable[[jnp.ndarray], jnp.ndarray]
+    :param x0: Initial state vector.
+    :type x0: jnp.ndarray
+    :param cfg: Newton solver configuration (number of iterations and damping).
+    :type cfg: NewtonConfig
+    :return: Optimized state vector after damped Newton iterations.
+    :rtype: jnp.ndarray
     """
     grad_fn = jax.grad(objective)
     hess_fn = jax.hessian(objective)
@@ -153,14 +172,23 @@ class GNConfig:
 
 
 def gauss_newton(residual_fn: ObjectiveFn, x0: jnp.ndarray, cfg: GNConfig) -> jnp.ndarray:
-    """
-    Gauss-Newton on residual function r(x): R^n -> R^m.
+    """Gauss–Newton on a residual function ``r(x): R^n -> R^m``.
 
-    residual_fn: x -> r, with shapes:
-        x.shape == (n,)
-        r.shape == (m,)
+    The algorithm forms the normal equations::
 
-    J = dr/dx has shape (m, n), matching math convention.
+        J^T J \delta = J^T r
+        x_{k+1} = x_k - \delta
+
+    with optional diagonal damping and step-size clamping for stability.
+
+    :param residual_fn: Residual function ``r(x)`` returning a 1D array of shape ``(m,)``.
+    :type residual_fn: Callable[[jnp.ndarray], jnp.ndarray]
+    :param x0: Initial state vector of shape ``(n,)``.
+    :type x0: jnp.ndarray
+    :param cfg: Gauss–Newton configuration (iterations, damping, step-norm clamp).
+    :type cfg: GNConfig
+    :return: Optimized state vector after Gauss–Newton iterations.
+    :rtype: jnp.ndarray
     """
     J_fn = jax.jacobian(residual_fn)  # J: (m, n)
 
@@ -194,17 +222,27 @@ def gauss_newton_manifold(
     manifold_types: Dict,   # NodeId -> "se3" / "euclidean"
     cfg: GNConfig,
 ) -> jnp.ndarray:
-    """
-    Manifold-aware Gauss-Newton:
+    """Manifold-aware Gauss–Newton solver.
 
-      - residual_fn: x -> r(x), with x in R^n, r in R^m
-      - block_slices: maps each NodeId to a slice in x
-      - manifold_types: maps each NodeId to a manifold label, currently:
-            - "se3": updated via SE(3) retraction
-            - "euclidean": updated via simple subtraction
+    This variant still solves in a flat parameter space, but applies updates
+    block-wise using the appropriate manifold retraction. In particular:
 
-    Still solve in the global flat space, but apply updates per-variable
-    using the appropriate retraction.
+    * Blocks marked as ``"se3"`` are updated via ``se3_retract_left`` in the
+      Lie algebra ``se(3)``.
+    * Blocks marked as ``"euclidean"`` are updated additively.
+
+    :param residual_fn: Residual function ``r(x)`` returning a 1D array of shape ``(m,)``.
+    :type residual_fn: Callable[[jnp.ndarray], jnp.ndarray]
+    :param x0: Initial flat state vector of shape ``(n,)``.
+    :type x0: jnp.ndarray
+    :param block_slices: Mapping from node identifier to slice in ``x`` defining that variable's block.
+    :type block_slices: Dict
+    :param manifold_types: Mapping from node identifier to manifold label (e.g. ``"se3"`` or ``"euclidean"``).
+    :type manifold_types: Dict
+    :param cfg: Gauss–Newton configuration (iterations, damping, step-norm clamp).
+    :type cfg: GNConfig
+    :return: Optimized state vector after manifold-aware Gauss–Newton iterations.
+    :rtype: jnp.ndarray
     """
     # J: (m, n), r: (m,)
     J_fn = jax.jacobian(residual_fn)

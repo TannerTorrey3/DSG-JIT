@@ -62,6 +62,13 @@ from world.model import WorldModel
 
 @dataclass
 class InnerGDConfig:
+    """
+    Configuration for the inner gradient–descent solver.
+
+    :param learning_rate: Step size used for each inner GD update on the state.
+    :param max_iters: Maximum number of inner GD iterations.
+    :param max_step_norm: Maximum allowed L2 norm of a single GD step; used to clamp overly large updates for numerical stability.
+    """
     learning_rate: float = 1e-2
     max_iters: int = 40
     max_step_norm: float = 1.0  # simple safety clamp
@@ -69,11 +76,28 @@ class InnerGDConfig:
 
 @dataclass
 class DSGTrainer:
+    """
+    High-level trainer for differentiable DSG experiments.
+
+    This class encapsulates a simple bi-level optimization pattern where:
+    an inner loop solves for the scene graph state x, and an outer loop
+    optimizes meta-parameters such as factor-type weights.
+
+    :param wm: World model containing the factor graph and scene graph.
+    :param factor_type_order: Ordered list of factor type names; each entry corresponds to a log-scale entry in the weight vector.
+    :param inner_cfg: Configuration for the inner gradient–descent solver applied to the state.
+    """
     wm: WorldModel
     factor_type_order: List[str]
     inner_cfg: InnerGDConfig
 
     def __post_init__(self):
+        """
+        Post-initialization hook.
+
+        This method caches the underlying factor graph from the world model
+        and builds a residual function that accepts per-factor-type log-scales.
+        """
         self.fg: FactorGraph = self.wm.fg
         self.residual_w = self.fg.build_residual_function_with_type_weights(
             self.factor_type_order
@@ -81,9 +105,17 @@ class DSGTrainer:
 
     def solve_state(self, log_scales: jnp.ndarray) -> jnp.ndarray:
         """
-        Inner optimization: given log_scales for factor types,
-        solve for x* = argmin 0.5 ||r(x, log_scales)||^2 using a
-        very simple, explicit gradient descent loop (no extra helpers).
+        Run the inner optimization to solve for the state vector.
+
+        Given a vector of log-scales for factor types, this method performs
+        explicit gradient descent on the objective
+
+            0.5 * || r(x, log_scales) ||^2,
+
+        where r is the weighted residual function built from the factor graph.
+
+        :param log_scales: Array of shape ``(T,)`` containing per-factor-type log-scale weights.
+        :return: Optimized flat state vector ``x`` after the inner GD loop.
         """
         x0, _ = self.fg.pack_state()
 
@@ -119,5 +151,14 @@ class DSGTrainer:
         return x
 
     def unpack_state(self, x: jnp.ndarray):
+        """
+        Unpack a flat state vector into a NodeId-keyed dictionary.
+
+        This is a thin wrapper around the factor graph's ``unpack_state``
+        that uses the index structure implied by the current world model.
+
+        :param x: Flat state vector to be unpacked.
+        :return: Mapping from ``NodeId`` to the corresponding slice of ``x`` as a JAX array.
+        """
         _, index = self.fg.pack_state()
         return self.fg.unpack_state(x, index)

@@ -94,16 +94,10 @@ class DynamicSceneGraph:
         This does not create any variables by itself; it simply tracks the
         identifier so you can discover which agents exist in the graph.
 
-        Parameters
-        ----------
-        agent_id:
-            A hashable identifier for the agent (e.g., ``"robot0"`` or an
-            integer ID).
-
-        Returns
-        -------
-        Hashable
-            The same ``agent_id`` that was passed in, for convenience.
+        :param agent_id: Hashable identifier for the agent (for example, ``"robot0"``).
+        :type agent_id: Hashable
+        :return: The same ``agent_id`` that was passed in, for convenience.
+        :rtype: Hashable
         """
 
         self.agents.add(agent_id)
@@ -118,19 +112,14 @@ class DynamicSceneGraph:
         This delegates directly to :meth:`SceneGraphWorld.add_agent_pose_se3`
         and records the agent identifier in :attr:`agents`.
 
-        Parameters
-        ----------
-        agent_id:
-            Identifier for the agent.
-        t:
-            Discrete time index (e.g., frame or step index).
-        pose_se3:
-            6D se(3) vector ``[tx, ty, tz, rx, ry, rz]``.
-
-        Returns
-        -------
-        NodeId
-            The node identifier of the newly created pose variable.
+        :param agent_id: Identifier for the agent.
+        :type agent_id: Hashable
+        :param t: Discrete time index (for example, frame or step index).
+        :type t: int
+        :param pose_se3: 6D se(3) vector ``[tx, ty, tz, rx, ry, rz]``.
+        :type pose_se3: jax.numpy.ndarray
+        :return: The node identifier of the newly created pose variable.
+        :rtype: NodeId
         """
 
         self.agents.add(agent_id)
@@ -145,38 +134,32 @@ class DynamicSceneGraph:
         default_dx: float | None = None,
         weight: float = 1.0,
     ) -> List[NodeId]:
-        """Add a contiguous trajectory for one agent and (optionally) wire odometry.
+        """Add a contiguous trajectory for one agent and optionally wire odometry.
 
         This is a convenience helper that repeatedly calls :meth:`add_agent_pose`
-        and, if ``add_odom`` is true, :meth:`add_odom_tx` between consecutive
+        and, if ``add_odom`` is ``True``, :meth:`add_odom_tx` between consecutive
         time steps.
 
-        Parameters
-        ----------
-        agent_id:
-            Identifier for the agent.
-        poses_se3:
-            Iterable of se(3) pose vectors. The first element is placed at
-            ``t = start_t``, the next at ``t = start_t + 1``, and so on.
-        start_t:
-            Integer time index to use for the first pose in ``poses_se3``.
-        add_odom:
-            If ``True``, automatically connect consecutive poses with a
-            1D odometry factor along ``x`` via :meth:`add_odom_tx`.
-        default_dx:
-            If not ``None``, use this value as the expected displacement in
-            ``x`` between each consecutive pair of poses. If ``None``, and
-            ``add_odom`` is true, the displacement is inferred as
+        :param agent_id: Identifier for the agent.
+        :type agent_id: Hashable
+        :param poses_se3: Iterable of se(3) pose vectors. The first element is
+            placed at ``t = start_t``, the next at ``t = start_t + 1``, and so on.
+        :type poses_se3: Iterable[jax.numpy.ndarray]
+        :param start_t: Time index to use for the first pose.
+        :type start_t: int
+        :param add_odom: If ``True``, automatically connect consecutive poses with
+            a 1D odometry factor along ``x`` via :meth:`add_odom_tx`.
+        :type add_odom: bool
+        :param default_dx: If not ``None``, use this value as the expected
+            displacement in ``x`` between each consecutive pair of poses. If
+            ``None`` and ``add_odom`` is ``True``, the displacement is inferred as
             ``poses_se3[k+1][0] - poses_se3[k][0]``.
-        weight:
-            Scalar weight used for each odometry factor when ``add_odom`` is
-            enabled.
-
-        Returns
-        -------
-        list of NodeId
-            The node identifiers of all created pose variables, in temporal
-            order.
+        :type default_dx: float | None
+        :param weight: Scalar weight used for each odometry factor when
+            ``add_odom`` is enabled.
+        :type weight: float
+        :return: Node identifiers of all created pose variables, in temporal order.
+        :rtype: list[NodeId]
         """
 
         node_ids: List[NodeId] = []
@@ -217,23 +200,22 @@ class DynamicSceneGraph:
         """Connect two consecutive poses with a 1D odometry factor in ``x``.
 
         This is a convenience wrapper around
-        :meth:`SceneGraphWorld.add_odom_se3_additive`, which interprets
-        ``dx`` as a translation along the ``x`` axis and assumes identity
-        rotation.
+        :meth:`SceneGraphWorld.add_odom_se3_additive`, which interprets ``dx`` as a
+        translation along the ``x`` axis and assumes identity rotation.
 
-        Parameters
-        ----------
-        agent_id:
-            Agent identifier.
-        t0:
-            Time index of the *from* pose.
-        t1:
-            Time index of the *to* pose.
-        dx:
-            Expected displacement in ``x`` from pose ``(agent_id, t0)`` to
+        :param agent_id: Agent identifier.
+        :type agent_id: Hashable
+        :param t0: Time index of the *from* pose.
+        :type t0: int
+        :param t1: Time index of the *to* pose.
+        :type t1: int
+        :param dx: Expected displacement in ``x`` from pose ``(agent_id, t0)`` to
             pose ``(agent_id, t1)``.
-        weight:
-            Scalar weight applied to the odometry residual.
+        :type dx: float
+        :param weight: Scalar weight applied to the odometry residual.
+        :type weight: float
+        :return: ``None``.
+        :rtype: None
         """
 
         pose_i = self.world.pose_trajectory[(agent_id, t0)]
@@ -247,16 +229,11 @@ class DynamicSceneGraph:
     def get_agent_times(self, agent_id: Hashable) -> List[int]:
         """Return the sorted list of time indices for which this agent has poses.
 
-        Parameters
-        ----------
-        agent_id:
-            Agent identifier.
-
-        Returns
-        -------
-        list of int
-            Sorted time indices where ``(agent_id, t)`` exists in the
-            underlying :attr:`SceneGraphWorld.pose_trajectory` mapping.
+        :param agent_id: Agent identifier.
+        :type agent_id: Hashable
+        :return: Sorted time indices where ``(agent_id, t)`` exists in
+            :attr:`SceneGraphWorld.pose_trajectory`.
+        :rtype: list[int]
         """
 
         times = [t for (a, t) in self.world.pose_trajectory.keys() if a == agent_id]
@@ -265,15 +242,10 @@ class DynamicSceneGraph:
     def get_agent_pose_nodes(self, agent_id: Hashable) -> List[NodeId]:
         """Return the sequence of pose node IDs for an agent, ordered by time.
 
-        Parameters
-        ----------
-        agent_id:
-            Agent identifier.
-
-        Returns
-        -------
-        list of NodeId
-            Pose node IDs for the given agent, sorted by their time index.
+        :param agent_id: Agent identifier.
+        :type agent_id: Hashable
+        :return: Pose node IDs for the given agent, sorted by their time index.
+        :rtype: list[NodeId]
         """
 
         times = self.get_agent_times(agent_id)
@@ -287,22 +259,18 @@ class DynamicSceneGraph:
     ) -> jnp.ndarray:
         """Extract an optimized trajectory for one agent from a flat state vector.
 
-        Parameters
-        ----------
-        agent_id:
-            Agent identifier.
-        x_opt:
-            Optimized flat state vector produced by one of the Gauss–Newton
-            solvers (e.g., :func:`optimization.solvers.gauss_newton_manifold`).
-        index:
-            Mapping from :class:`NodeId` to ``(start, dim)`` tuples as returned
-            by :meth:`core.factor_graph.FactorGraph.pack_state`.
-
-        Returns
-        -------
-        jax.numpy.ndarray
-            Array of shape ``(T, 6)`` containing the se(3) vectors for each
+        :param agent_id: Agent identifier.
+        :type agent_id: Hashable
+        :param x_opt: Optimized flat state vector produced by one of the
+            Gauss–Newton solvers, such as
+            :func:`optimization.solvers.gauss_newton_manifold`.
+        :type x_opt: jax.numpy.ndarray
+        :param index: Mapping from :class:`NodeId` to ``(start, dim)`` tuples as
+            returned by :meth:`core.factor_graph.FactorGraph.pack_state`.
+        :type index: Mapping[NodeId, Tuple[int, int]]
+        :return: Array of shape ``(T, 6)`` containing the se(3) vectors for each
             time step in chronological order.
+        :rtype: jax.numpy.ndarray
         """
 
         nodes = self.get_agent_pose_nodes(agent_id)
@@ -323,20 +291,15 @@ class DynamicSceneGraph:
         iterates over :attr:`agents` and returns a mapping from agent identifier
         to a ``(T_i, 6)`` array of se(3) poses.
 
-        Parameters
-        ----------
-        x_opt:
-            Optimized flat state vector produced by one of the Gauss–Newton
-            solvers (e.g., :func:`optimization.solvers.gauss_newton_manifold`).
-        index:
-            Mapping from :class:`NodeId` to ``(start, dim)`` tuples as returned
-            by :meth:`core.factor_graph.FactorGraph.pack_state`.
-
-        Returns
-        -------
-        dict
-            A dictionary mapping each agent identifier to its optimized
-            trajectory as a ``jax.numpy.ndarray`` of shape ``(T_i, 6)``.
+        :param x_opt: Optimized flat state vector produced by one of the
+            Gauss–Newton solvers.
+        :type x_opt: jax.numpy.ndarray
+        :param index: Mapping from :class:`NodeId` to ``(start, dim)`` tuples as
+            returned by :meth:`core.factor_graph.FactorGraph.pack_state`.
+        :type index: Mapping[NodeId, Tuple[int, int]]
+        :return: Dictionary mapping each agent identifier to its optimized
+            trajectory as an array of shape ``(T_i, 6)``.
+        :rtype: dict[Hashable, jax.numpy.ndarray]
         """
 
         trajectories: Dict[Hashable, jnp.ndarray] = {}
@@ -351,13 +314,12 @@ class DynamicSceneGraph:
     def all_pose_time_keys(self) -> List[TimeKey]:
         """Return all ``(agent, t)`` keys present in the underlying world.
 
-        This is mainly useful for debugging or for building custom
-        visualizations / exporters.
+        This is mainly useful for debugging or for building custom visualizations
+        and exporters.
 
-        Returns
-        -------
-        list of (Hashable, int)
-            All time-index keys found in :attr:`SceneGraphWorld.pose_trajectory`.
+        :return: All time-index keys found in
+            :attr:`SceneGraphWorld.pose_trajectory`.
+        :rtype: list[TimeKey]
         """
 
         return list(self.world.pose_trajectory.keys())

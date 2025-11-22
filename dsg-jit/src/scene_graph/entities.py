@@ -79,13 +79,21 @@ import jax.numpy as jnp
 
 @dataclass
 class RoomNode:
-    """Scene graph room centroid represented as a 3D point."""
+    """Scene graph room centroid represented as a 3D point.
+
+    :param id: Integer identifier for this room node.
+    :param position: 3D position of the room centroid as a JAX array of shape (3,).
+    """
     id: int
     position: jnp.ndarray  # shape (3,)
 
 
 @dataclass
 class ObjectNode:
-    """Scene graph object node: 3D position only for now."""
+    """Scene graph object node with a 3D position.
+
+    :param id: Integer identifier for this object node.
+    :param position: 3D position of the object as a JAX array of shape (3,).
+    """
     id: int
     position: jnp.ndarray  # shape (3,)
