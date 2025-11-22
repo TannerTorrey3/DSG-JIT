@@ -125,6 +125,7 @@ class DynamicSceneGraph:
         self.agents.add(agent_id)
         return self.world.add_agent_pose_se3(agent_id, t, pose_se3)
 
+
     def add_agent_trajectory(
         self,
         agent_id: Hashable,
@@ -184,6 +185,34 @@ class DynamicSceneGraph:
             t += 1
 
         return node_ids
+    
+    def add_range_obs(
+        self,
+        agent: str,
+        t: int,
+        target_nid: int,
+        measured_range: float,
+        sigma: float | None = 0.1,
+    ) -> None:
+        """
+        Add a range measurement from an agent's pose at time t to a target node.
+
+        This wraps :meth:`SceneGraphWorld.add_range_measurement`, using the
+        pose node from ``pose_trajectory[(agent, t)]``.
+
+        :param agent: Agent key, e.g. ``"robot0"``.
+        :param t: Integer time step.
+        :param target_nid: NodeId of the target (place3d, voxel_cell, object3d, etc.).
+        :param measured_range: Observed distance.
+        :param sigma: Optional measurement noise standard deviation.
+        """
+        pose_nid = self.world.pose_trajectory[(agent, t)]
+        self.world.add_range_measurement(
+            pose_nid=pose_nid,
+            target_nid=target_nid,
+            measured_range=measured_range,
+            sigma=sigma,
+        )
 
     # ------------------------------------------------------------------
     # Odometry helpers

@@ -58,11 +58,11 @@ Design goals
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 import jax.numpy as jnp
 
-from core.types import NodeId
+from core.types import NodeId, FactorId, Factor
 from world.model import WorldModel
 from slam.measurements import (
     prior_residual,
@@ -76,7 +76,8 @@ from slam.measurements import (
     pose_landmark_bearing_residual,
     pose_voxel_point_residual,
     voxel_smoothness_residual,
-    voxel_point_observation_residual
+    voxel_point_observation_residual,
+    range_residual
 )
 
 @dataclass
@@ -114,6 +115,7 @@ class SceneGraphWorld:
     room_nodes: Dict[str, int]
     place_nodes: Dict[str, int]
     object_nodes: Dict[str, int]
+    room_place_edges: List[Tuple[int, int]]
     def __init__(self) -> None:
         self.wm = WorldModel()
         self.pose_trajectory = {}
@@ -123,6 +125,9 @@ class SceneGraphWorld:
         self.room_nodes = {}
         self.place_nodes = {}
         self.object_nodes = {}
+
+        # --- Semantic adjacency (for visualization / topology) ---
+        self.room_place_edges = []
 
         # --- Global residuals registry ---
         self.wm.fg.register_residual("prior", prior_residual)
@@ -136,6 +141,7 @@ class SceneGraphWorld:
         self.wm.fg.register_residual("pose_voxel_point", pose_voxel_point_residual)
         self.wm.fg.register_residual("voxel_smoothness", voxel_smoothness_residual)
         self.wm.fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+        self.wm.fg.register_residual("range", range_residual)
 
     # --- Variable helpers ---
 
@@ -157,18 +163,31 @@ class SceneGraphWorld:
         """
         return self.wm.add_variable("place1d", jnp.array([x]))
 
-    def add_room1d(self, x: float) -> int:
+    def add_room1d(self, x: jnp.ndarray) -> int:
         """
-        Add a 1D room variable.
+        Add a 1D 'room' variable (just a scalar, wrapped as a length-1 vector).
 
-        This currently uses the same underlying type as a 1D place but is
-        kept semantically distinct for higher-level reasoning.
+        The room is stored in :attr:`room_nodes` using an auto-generated
+        string key of the form ``"room1d_{k}"`` where ``k`` is the current
+        number of rooms.
 
-        :param x: Scalar position along a 1D axis.
+        :param x: 1D coordinate, shape ``(1,)`` or a scalar float.
         :return: Integer node id of the created room variable.
         """
-        # identical type to place1d for now, but semantically different
-        return self.wm.add_variable("place1d", jnp.array([x]))
+        # Normalize to a length-1 float32 vector.
+        if isinstance(x, float) or (hasattr(x, "ndim") and x.ndim == 0):
+            x = jnp.array([float(x)], dtype=jnp.float32)
+
+        x = jnp.array(x, dtype=jnp.float32).reshape((1,))
+
+        nid = self.wm.add_variable("room1d", x)  # scalar room variable
+        nid_int = int(nid)
+
+        # Auto-generate a name for bookkeeping, e.g. "room1d_0", "room1d_1", ...
+        name = f"room1d_{len(self.room_nodes)}"
+        self.room_nodes[name] = nid_int
+
+        return nid_int
 
     def add_place3d(self, name: str, xyz) -> int:
         """
@@ -334,6 +353,271 @@ class SceneGraphWorld:
                 },
             )
         )
+    
+    def add_range_measurement(
+        self,
+        pose_nid: int,
+        target_nid: int,
+        measured_range: float,
+        sigma: float | None = None,
+        weight: float | None = None,
+    ) -> int:
+        """
+        Add a range-only sensor factor between a pose and a 3D target.
+
+        This creates a factor of type ``"range"`` whose residual is:
+
+            r = ||target - pose|| - measured_range
+
+        The underlying residual is implemented in ``slam.measurements.range_residual``.
+
+        :param pose_nid: NodeId of the pose (pose_se3) variable.
+        :param target_nid: NodeId of the target variable (e.g. place3d, voxel_cell, object3d).
+        :param measured_range: Observed distance (same units as world coordinates).
+        :param sigma: Optional standard deviation of the measurement noise. If provided,
+                      it will be converted to a weight as 1 / sigma^2.
+        :param weight: Optional explicit weight. If both ``sigma`` and ``weight`` are given,
+                       ``weight`` takes precedence.
+        :return: Integer factor id of the created range factor.
+        """
+        if weight is not None:
+            w = float(weight)
+        elif sigma is not None:
+            w = sigma_to_weight(sigma)
+        else:
+            w = 1.0
+
+        meas = jnp.array([float(measured_range)], dtype=jnp.float32)
+        fid = self.wm.add_factor(
+            "range",
+            (pose_nid, target_nid),
+            {"range": meas, "weight": w},
+        )
+        return int(fid)
+
+    def add_agent_range_measurement(
+        self,
+        agent: str,
+        t: int,
+        target_nid: int,
+        measured_range: float,
+        sigma: float | None = None,
+        weight: float | None = None,
+    ) -> int:
+        """
+        Add a range-only factor using an agent's pose at a given timestep.
+
+        This is a convenience wrapper around :meth:`add_range_measurement`
+        that looks up the pose node id from :attr:`pose_trajectory` using
+        ``(agent, t)`` and then creates a ``"range"`` factor to a target node.
+
+        :param agent: Agent identifier (for example, a robot name).
+        :param t: Integer timestep index for the agent pose.
+        :param target_nid: NodeId of the target variable (for example, ``place3d``,
+            ``voxel_cell`` or ``object3d``).
+        :param measured_range: Observed distance (same units as the world coordinates).
+        :param sigma: Optional standard deviation of the measurement noise. If
+            provided (and ``weight`` is ``None``), it is converted to a weight via
+            :func:`slam.measurements.sigma_to_weight`.
+        :param weight: Optional explicit weight. If both ``sigma`` and ``weight``
+            are given, ``weight`` takes precedence.
+        :return: Integer factor id of the created range factor.
+        :raises KeyError: If no pose has been registered for ``(agent, t)``.
+        """
+        pose_key = (agent, t)
+        if pose_key not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t}")
+
+        pose_nid = self.pose_trajectory[pose_key]
+        return self.add_range_measurement(
+            pose_nid=pose_nid,
+            target_nid=target_nid,
+            measured_range=measured_range,
+            sigma=sigma,
+            weight=weight,
+        )
+
+    def add_agent_pose_place_attachment(
+        self,
+        agent: str,
+        t: int,
+        place_id: int,
+        coord_index: int = 0,
+        sigma: float | None = None,
+    ) -> int:
+        """
+        Attach an agent pose at time ``t`` to a place node.
+
+        This is a higher-level wrapper around :meth:`add_place_attachment`
+        which resolves the pose id via :attr:`pose_trajectory`.
+
+        :param agent: Agent identifier.
+        :param t: Integer timestep index.
+        :param place_id: Node id of the place variable (1D or 3D).
+        :param coord_index: Index of the pose coordinate to tie to the place
+            (typically 0 for x, 1 for y, etc.). Defaults to 0.
+        :param sigma: Optional noise standard deviation. If ``None``, falls back
+            to :attr:`SceneGraphNoiseConfig.pose_place_sigma`.
+        :return: Integer factor id of the created attachment constraint.
+        :raises KeyError: If no pose has been registered for ``(agent, t)``.
+        """
+        pose_key = (agent, t)
+        if pose_key not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t}")
+
+        pose_id = self.pose_trajectory[pose_key]
+        return self.add_place_attachment(
+            pose_id=pose_id,
+            place_id=place_id,
+            coord_index=coord_index,
+            sigma=sigma,
+        )
+
+    def add_agent_temporal_smoothness(
+        self,
+        agent: str,
+        t: int,
+        sigma: float | None = None,
+    ) -> int:
+        """
+        Enforce temporal smoothness between successive poses of a given agent.
+
+        This enforces a smoothness constraint between the poses at timesteps
+        ``t`` and ``t+1`` for the specified agent, using
+        :meth:`add_temporal_smoothness` internally.
+
+        :param agent: Agent identifier.
+        :param t: Timestep index for the first pose in the pair.
+        :param sigma: Optional standard deviation controlling smoothness. If
+            ``None``, falls back to :attr:`SceneGraphNoiseConfig.smooth_pose_sigma`.
+        :return: Integer factor id of the created smoothness constraint.
+        :raises KeyError: If either pose ``(agent, t)`` or ``(agent, t+1)`` has
+            not been registered.
+        """
+        key_t = (agent, t)
+        key_t1 = (agent, t + 1)
+
+        if key_t not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t}")
+        if key_t1 not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t+1}")
+
+        pose_id_t = self.pose_trajectory[key_t]
+        pose_id_t1 = self.pose_trajectory[key_t1]
+        return self.add_temporal_smoothness(
+            pose_id_t=pose_id_t,
+            pose_id_t1=pose_id_t1,
+            sigma=sigma,
+        )
+
+    def add_agent_pose_landmark_relative(
+        self,
+        agent: str,
+        t: int,
+        landmark_id: int,
+        measurement,
+        sigma: float | None = None,
+    ) -> int:
+        """
+        Add a relative pose–landmark constraint for an agent at time ``t``.
+
+        This is a small ergonomic wrapper around
+        :meth:`add_pose_landmark_relative` that resolves the pose id using
+        :attr:`pose_trajectory`.
+
+        :param agent: Agent identifier.
+        :param t: Timestep index for the pose.
+        :param landmark_id: Node id of the 3D landmark variable.
+        :param measurement: Iterable of length 3 giving the expected landmark
+            position in the pose frame.
+        :param sigma: Optional noise standard deviation. If ``None``, falls back
+            to :attr:`SceneGraphNoiseConfig.pose_landmark_sigma`.
+        :return: Integer factor id of the created relative landmark constraint.
+        :raises KeyError: If no pose has been registered for ``(agent, t)``.
+        """
+        key = (agent, t)
+        if key not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t}")
+
+        pose_id = self.pose_trajectory[key]
+        return self.add_pose_landmark_relative(
+            pose_id=pose_id,
+            landmark_id=landmark_id,
+            measurement=measurement,
+            sigma=sigma,
+        )
+
+    def add_agent_pose_landmark_bearing(
+        self,
+        agent: str,
+        t: int,
+        landmark_id: int,
+        bearing,
+        sigma: float | None = None,
+    ) -> int:
+        """
+        Add a bearing-only pose–landmark constraint for an agent at time ``t``.
+
+        This wraps :meth:`add_pose_landmark_bearing` and resolves the pose id
+        from :attr:`pose_trajectory`.
+
+        :param agent: Agent identifier.
+        :param t: Timestep index for the pose.
+        :param landmark_id: Node id of the 3D landmark variable.
+        :param bearing: Iterable of length 3 giving the bearing vector in the
+            pose frame (it will be normalized internally).
+        :param sigma: Optional noise standard deviation. If ``None``, falls back
+            to :attr:`SceneGraphNoiseConfig.pose_landmark_bearing_sigma`.
+        :return: Integer factor id of the created bearing constraint.
+        :raises KeyError: If no pose has been registered for ``(agent, t)``.
+        """
+        key = (agent, t)
+        if key not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t}")
+
+        pose_id = self.pose_trajectory[key]
+        return self.add_pose_landmark_bearing(
+            pose_id=pose_id,
+            landmark_id=landmark_id,
+            bearing=bearing,
+            sigma=sigma,
+        )
+
+    def add_agent_pose_voxel_point(
+        self,
+        agent: str,
+        t: int,
+        voxel_id: int,
+        point_meas,
+        sigma: float | None = None,
+    ) -> int:
+        """
+        Constrain a voxel cell using a point measurement from an agent pose.
+
+        This wraps :meth:`add_pose_voxel_point` and resolves the pose id from
+        :attr:`pose_trajectory`.
+
+        :param agent: Agent identifier.
+        :param t: Timestep index for the pose.
+        :param voxel_id: Node id of the voxel cell variable.
+        :param point_meas: Iterable of length 3 giving a point in the pose
+            frame (for example, a back-projected LiDAR or depth sample).
+        :param sigma: Optional noise standard deviation. If ``None``, falls
+            back to :attr:`SceneGraphNoiseConfig.pose_voxel_point_sigma`.
+        :return: Integer factor id of the created voxel-point constraint.
+        :raises KeyError: If no pose has been registered for ``(agent, t)``.
+        """
+        key = (agent, t)
+        if key not in self.pose_trajectory:
+            raise KeyError(f"No pose registered for agent={agent!r}, t={t}")
+
+        pose_id = self.pose_trajectory[key]
+        return self.add_pose_voxel_point(
+            pose_id=pose_id,
+            voxel_id=voxel_id,
+            point_meas=point_meas,
+            sigma=sigma,
+        )
 
     def attach_pose_to_place_x(self, pose_id: int, place_id: int) -> int:
         """
@@ -446,6 +730,21 @@ class SceneGraphWorld:
                 },
             )
         )
+    
+    def add_room_place_edge(self, room_id: int, place_id: int) -> None:
+        """
+        Register a semantic edge between a room node and a place node.
+
+        This helper is intentionally lightweight: it does *not* add a numeric
+        factor to the underlying factor graph. Instead it records topological
+        connectivity for visualization and higher-level reasoning, similar to
+        classic dynamic scene-graph frameworks.
+
+        :param room_id: Integer node id of the room variable.
+        :param place_id: Integer node id of the place variable.
+        :return: None.
+        """
+        self.room_place_edges.append((int(room_id), int(place_id)))
     
     def attach_object_to_pose(
         self,

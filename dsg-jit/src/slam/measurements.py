@@ -544,3 +544,50 @@ def voxel_point_observation_residual(
     voxel = x[:3]
     point_world = params["point_world"]  # (3,)
     return voxel - point_world
+
+def range_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """
+    Range-only residual between a pose and a 3D target.
+
+    This residual assumes that ``x`` is the concatenation of a 6D SE(3)
+    pose (in se(3) vector form) and a 3D target position::
+
+        x = [pose_se3(6), target(3)]
+
+    Only the translational part of the pose is used. The residual is::
+
+        r = ||target - t|| - r_meas
+
+    where ``t`` is the pose translation and ``r_meas`` is the measured
+    range. A scalar weight is applied in the same way as other residuals
+    via :func:`_apply_weight`.
+
+    :param x: Concatenated pose and target state, shape ``(9,)``.
+    :param params: Parameter dictionary with keys:
+        - ``"range"``: scalar or length-1 array containing the
+          measured range.
+        - ``"weight"`` (optional): scalar weight to apply. If omitted,
+          a weight of ``1.0`` is used by :func:`_apply_weight`.
+    :return: Residual vector of shape ``(1,)`` (after weighting).
+    """
+    # Split state: first 6 are se(3) (pose), last 3 are 3D target position.
+    pose = x[:6]
+    target = x[6:9]
+
+    # Translation component of the pose.
+    t = pose[:3]
+
+    # Euclidean distance between pose translation and target.
+    diff = target - t
+    dist = jnp.linalg.norm(diff)
+
+    # Measured range can be a scalar or length-1 array.
+    r_meas = params["range"]
+    r_meas = jnp.array(r_meas, dtype=jnp.float32).reshape(())
+
+    # Residual: predicted - measured.
+    r = dist - r_meas
+
+    # Wrap as 1D vector and apply weight.
+    r_vec = jnp.array([r], dtype=jnp.float32)
+    return _apply_weight(r_vec, params)

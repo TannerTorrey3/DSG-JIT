@@ -224,6 +224,150 @@ class WorldModel:
         self.fg.add_factor(f)
         return fid
 
+    def add_camera_bearings(
+        self,
+        pose_id: NodeId,
+        landmark_ids: list[NodeId],
+        bearings: jnp.ndarray,
+        weight: float | None = None,
+        factor_type: str = "pose_landmark_bearing",
+    ) -> FactorId:
+        """Add one or more camera bearing factors for a single pose.
+
+        This is a thin convenience wrapper for camera-like measurements that
+        observe known landmarks via bearing (direction) only. It assumes that
+        the underlying factor type is implemented by a residual such as
+        :func:`slam.measurements.pose_landmark_bearing_residual`.
+
+        Each row of :param:`bearings` is expected to correspond to one
+        landmark in :param:`landmark_ids`. The dimensionality (e.g. 2D angle
+        or 3D unit vector) is left to the residual function.
+
+        :param pose_id: Identifier of the pose variable from which all
+            bearings are taken.
+        :param landmark_ids: List of landmark node identifiers, one per row
+            in ``bearings``.
+        :param bearings: Array of shape ``(N, D)`` containing bearing
+            measurements in the sensor or camera frame.
+        :param weight: Optional scalar weight or inverse noise level applied
+            uniformly to all bearings in this call. If ``None``, the default
+            inside the residual is used.
+        :param factor_type: Factor type string to register in the underlying
+            :class:`FactorGraph`. Defaults to ``"pose_landmark_bearing"``.
+        :returns: The :class:`FactorId` of the last factor added. One factor
+            is added per (pose, landmark) pair.
+        """
+        if bearings.shape[0] != len(landmark_ids):
+            raise ValueError(
+                "add_camera_bearings expected len(landmark_ids) == bearings.shape[0], "
+                f"got {len(landmark_ids)} vs {bearings.shape[0]}"
+            )
+
+        last_fid: FactorId | None = None
+        for lm_id, b in zip(landmark_ids, bearings):
+            params: Dict[str, object] = {"bearing": jnp.asarray(b)}
+            if weight is not None:
+                params["weight"] = float(weight)
+            last_fid = self.add_factor(factor_type, [pose_id, lm_id], params)
+
+        # mypy/linters: last_fid will never be None if bearings is non-empty.
+        if last_fid is None:
+            raise ValueError("add_camera_bearings called with empty bearings array.")
+        return last_fid
+
+
+    def add_lidar_ranges(
+        self,
+        pose_id: NodeId,
+        landmark_ids: list[NodeId],
+        ranges: jnp.ndarray,
+        directions: Optional[jnp.ndarray] = None,
+        weight: float | None = None,
+        factor_type: str = "pose_lidar_range",
+    ) -> FactorId:
+        """Add LiDAR-style range factors for a single pose.
+
+        This helper is intended for simple range-only or range-with-direction
+        measurements to known landmarks, coming from a LiDAR or depth sensor.
+
+        The interpretation of ``directions`` depends on the chosen residual
+        implementation, but a common convention is that each row is a unit
+        vector in the sensor frame pointing toward the target.
+
+        :param pose_id: Identifier of the pose variable from which ranges
+            are measured.
+        :param landmark_ids: List of landmark node identifiers, one per range
+            sample.
+        :param ranges: Array of shape ``(N,)`` holding range values in meters.
+        :param directions: Optional array of shape ``(N, 3)`` with unit
+            direction vectors associated with each range measurement.
+        :param weight: Optional scalar weight applied to all range factors.
+        :param factor_type: Factor type string to register; by default this is
+            ``"pose_lidar_range"``. The residual function for this type is
+            expected to consume ``"range"`` and optionally ``"direction"`` in
+            ``params``.
+        :returns: The :class:`FactorId` of the last factor added.
+        """
+        if ranges.shape[0] != len(landmark_ids):
+            raise ValueError(
+                "add_lidar_ranges expected len(landmark_ids) == ranges.shape[0], "
+                f"got {len(landmark_ids)} vs {ranges.shape[0]}"
+            )
+        if directions is not None and directions.shape[0] != ranges.shape[0]:
+            raise ValueError(
+                "add_lidar_ranges expected directions.shape[0] == ranges.shape[0], "
+                f"got {directions.shape[0]} vs {ranges.shape[0]}"
+            )
+
+        last_fid: FactorId | None = None
+        for i, lm_id in enumerate(landmark_ids):
+            params: Dict[str, object] = {"range": float(ranges[i])}
+            if directions is not None:
+                params["direction"] = jnp.asarray(directions[i])
+            if weight is not None:
+                params["weight"] = float(weight)
+            last_fid = self.add_factor(factor_type, [pose_id, lm_id], params)
+
+        if last_fid is None:
+            raise ValueError("add_lidar_ranges called with empty ranges array.")
+        return last_fid
+
+
+    def add_imu_preintegration_factor(
+        self,
+        pose_i: NodeId,
+        pose_j: NodeId,
+        delta: Dict[str, jnp.ndarray],
+        weight: float | None = None,
+        factor_type: str = "pose_imu_preintegration",
+    ) -> FactorId:
+        """Add an IMU preintegration-style factor between two poses.
+
+        This is intended to work with a preintegrated IMU summary (e.g. as
+        produced by :mod:`sensors.imu`), where ``delta`` contains fields such
+        as ``"dR"``, ``"dv"``, ``"dp"``, and corresponding covariance or
+        information terms.
+
+        The exact keys expected in ``delta`` are left to the residual
+        implementation for ``factor_type``, but by storing the dictionary
+        unchanged in ``params["delta"]`` we keep this interface flexible.
+
+        :param pose_i: NodeId of the starting pose (time :math:`t_k`).
+        :param pose_j: NodeId of the ending pose (time :math:`t_{k+1}`).
+        :param delta: Dictionary describing the preintegrated IMU increment
+            between ``pose_i`` and ``pose_j``. All arrays should be JAX
+            arrays or types convertible via :func:`jax.numpy.asarray`.
+        :param weight: Optional scalar weight / scaling to apply to the IMU
+            factor inside the residual.
+        :param factor_type: Factor type string to register; by default this is
+            ``"pose_imu_preintegration"``.
+        :returns: The :class:`FactorId` of the created IMU factor.
+        """
+        params: Dict[str, object] = {"delta": {k: jnp.asarray(v) for k, v in delta.items()}}
+        if weight is not None:
+            params["weight"] = float(weight)
+        return self.add_factor(factor_type, [pose_i, pose_j], params)
+
     def optimize(
         self,
         lr: float = 0.1,
