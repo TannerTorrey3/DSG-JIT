@@ -131,9 +131,8 @@ def damped_newton(objective: ObjectiveFn, x0: jnp.ndarray, cfg: NewtonConfig) ->
 
     Uses a Levenberg–Marquardt-style update::
 
-        (H + λ I) \delta = 
-abla f(x)
-        x_{k+1} = x_k - \delta
+        (H + λ I) \\delta = abla f(x)
+        x_{k+1} = x_k - \\delta
 
     where ``H`` is the Hessian of the objective and ``λ`` is a damping factor.
 
@@ -176,8 +175,8 @@ def gauss_newton(residual_fn: ObjectiveFn, x0: jnp.ndarray, cfg: GNConfig) -> jn
 
     The algorithm forms the normal equations::
 
-        J^T J \delta = J^T r
-        x_{k+1} = x_k - \delta
+        J^T J \\delta = J^T r
+        x_{k+1} = x_k - \\delta
 
     with optional diagonal damping and step-size clamping for stability.
 

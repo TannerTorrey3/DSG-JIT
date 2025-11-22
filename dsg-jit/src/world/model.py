@@ -242,7 +242,7 @@ class WorldModel:
         Supported methods:
 
         - ``"gd"``: vanilla gradient descent on the scalar objective
-          :math:`\|r(x)\|^2`.
+          :math:`\\|r(x)\\|^2`.
         - ``"newton"``: damped Newton on the same scalar objective.
         - ``"gn"``: Gauss--Newton on the stacked residual vector assuming
           Euclidean variables.
