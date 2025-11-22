@@ -12,7 +12,7 @@ DSG-JIT is built around one central idea:
 
 To achieve this, the system is organized into **five coordinated layers**, each built on top of a general-purpose factor graph and SE3 manifold engine.
 
-![Architecture](../img/dsg-jit-architecture.png)
+![Architecture](img/dsg-jit-architecture.png)
 
 Each layer is optional, modular, and composable — enabling applications in classical SLAM, neural fields, robotics, and world-modeling.
 
