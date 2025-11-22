@@ -37,6 +37,7 @@ nav:
   - API:
       - Core: api/core.md
       - SLAM: api/slam.md
+      - Sensors: api/sensors.md
       - Optimization: api/optimization.md
       - Scene Graph: api/scene_graph.md
       - World Model: api/world.md
