@@ -51,7 +51,23 @@ JIT speedups: **31–7000×** depending on graph size.
 
 ---
 
-## 📚 Phase 5 — Public Documentation (In Progress)
+## 🤖 Phase 5 — Real‑World Sensors & SLAM Integration (Completed)
+Integration of DSG‑JIT into full robotics pipelines.
+
+Planned:
+- Real LIDAR factor  
+- RGB‑D depth factor  
+- Visual landmarks  
+- Camera intrinsics/extrinsics calibration via DSG  
+- Data loaders for KITTI / TUM RGB‑D  
+
+Stretch:
+- IMU pre‑integration  
+- Multi‑robot DSG fusion  
+
+---
+
+## 📚 Phase 6 — Public Documentation (In Progress)
 **Status:** 🟡  
 DSG-JIT current development stage.
 
@@ -67,7 +83,7 @@ Stretch:
 
 ---
 
-## 🧩 Phase 6 — Packaging & Distribution (In Progress)
+## 🧩 Phase 7 — Packaging & Distribution (In Progress)
 **Status:** ⏳
 
 Planned deliverables:
@@ -89,39 +105,7 @@ Stretch:
 
 ---
 
-## 🏗️ Phase 7 — Advanced DSL & Autogeneration (Planned)
-A domain‑specific "DSG Modeling Language" for declarative factor-graph design.
-
-Features:
-- YAML/JSON graph definitions  
-- Auto‑generated optimization graphs  
-- Auto‑differentiated residual templates  
-- Scenegraph compiler → JIT graph  
-
-Stretch:
-- Visual graph editor  
-- Drag‑and‑drop factor construction UI  
-- "Graph debugger" visualization  
-
----
-
-## 🤖 Phase 8 — Real‑World Sensors & SLAM Integration (Completed)
-Integration of DSG‑JIT into full robotics pipelines.
-
-Planned:
-- Real LIDAR factor  
-- RGB‑D depth factor  
-- Visual landmarks  
-- Camera intrinsics/extrinsics calibration via DSG  
-- Data loaders for KITTI / TUM RGB‑D  
-
-Stretch:
-- IMU pre‑integration  
-- Multi‑robot DSG fusion  
-
----
-
-## 🧬 Phase 9 — Research Extensions (Long‑Term)
+## 🧬 Phase 8 — Research Extensions (Long‑Term)
 - Neural scene graphs  
 - Neuro-symbolic factor graphs  
 - DSG‑based reinforcement learning  
@@ -135,7 +119,7 @@ Potential publications:
 
 ---
 
-## 🏁 Phase 10 — 1.0 Stable Release (Future)
+## 🏁 Phase 9 — 1.0 Stable Release (Future)
 The first fully stable release of DSG‑JIT.
 
 Requirements:
@@ -145,6 +129,22 @@ Requirements:
 - Public examples + tutorials  
 - Long‑term support policy  
 - Optimization safety & performance guarantees  
+
+---
+
+## 🏗️ Phase 7 — Advanced DSL & Autogeneration (Planned)
+A domain‑specific "DSG Modeling Language" for declarative factor-graph design.
+
+Features:
+- YAML/JSON graph definitions  
+- Auto‑generated optimization graphs  
+- Auto‑differentiated residual templates  
+- Scenegraph compiler → JIT graph  
+
+Stretch:
+- Visual graph editor  
+- Drag‑and‑drop factor construction UI  
+- "Graph debugger" visualization  
 
 ---
 
