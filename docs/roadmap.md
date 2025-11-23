@@ -81,6 +81,7 @@ Planned deliverables:
   - tests  
   - benchmark snapshot  
   - docs deploy  
+- ROS2 wrapper package  
 
 Stretch:
 - Optional CUDA/XLA GPU acceleration  
@@ -104,11 +105,10 @@ Stretch:
 
 ---
 
-## 🤖 Phase 8 — Real‑World Sensors & SLAM Integration (In Progress)
+## 🤖 Phase 8 — Real‑World Sensors & SLAM Integration (Completed)
 Integration of DSG‑JIT into full robotics pipelines.
 
 Planned:
-- ROS2 wrapper package  
 - Real LIDAR factor  
 - RGB‑D depth factor  
 - Visual landmarks  

@@ -13,3 +13,9 @@ This section documents the differentiable SE(3) manifold operations, factor resi
 ## `slam.measurements`
 
 ::: slam.measurements
+
+## `slam.pipeline`
+
+::: slam.pipeline
+
+---
