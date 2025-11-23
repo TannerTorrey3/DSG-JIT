@@ -41,6 +41,7 @@ nav:
       - Optimization: api/optimization.md
       - Scene Graph: api/scene_graph.md
       - World Model: api/world.md
+      - Datasets: api/datasets.md
 
 plugins:
   - search

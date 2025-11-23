@@ -191,8 +191,8 @@ def integrate_imu_naive(
 
     .. math::
 
-        v_{k+1} &= v_k + a_k \Delta t_k\\
-        p_{k+1} &= p_k + v_{k+1} \Delta t_k
+        v_{k+1} &= v_k + a_k \\delta t_k\\
+        p_{k+1} &= p_k + v_{k+1} \\delta t_k\\
 
     :param measurements: Iterable of :class:`IMUMeasurement` objects, in time order.
     :param v0: Optional initial velocity, shape ``(3,)``. Defaults to zeros.
