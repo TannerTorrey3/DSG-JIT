@@ -67,7 +67,7 @@ Stretch:
 
 ---
 
-## 📚 Phase 6 — Public Documentation (In Progress)
+## 📚 Phase 6 — Public Documentation (Completed)
 **Status:** 🟡  
 DSG-JIT current development stage.
 
@@ -106,8 +106,6 @@ Stretch:
 ---
 
 ## 🧬 Phase 8 — Research Extensions (Long‑Term)
-- Neural scene graphs  
-- Neuro-symbolic factor graphs  
 - DSG‑based reinforcement learning  
 - Learned Jacobian priors  
 - Generative world‑model layers  

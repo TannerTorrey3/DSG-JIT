@@ -14,7 +14,7 @@ functions rather than reimplementing the same boilerplate in every file.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List
 
 import jax.numpy as jnp
 

@@ -1,15 +1,3 @@
-"""
-exp20_range_sensor_dsg.py
-
-Simple demo of a sensor-capable DSG-JIT world using range-only measurements.
-
-We build:
-  - A SceneGraphWorld with a short SE3 odometry chain.
-  - A single place (3D point) at a known location.
-  - Synthetic range measurements from each robot pose to the place.
-
-Then we optimize and inspect how well we recover the trajectory and place.
-"""
 
 import jax.numpy as jnp
 

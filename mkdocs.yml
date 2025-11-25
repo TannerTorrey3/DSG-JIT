@@ -19,7 +19,6 @@ theme:
         icon: material/weather-night
         name: Switch to dark mode
   features:
-    - navigation.expand
     - navigation.sections
     - navigation.tracking
     - content.code.annotate
@@ -34,6 +33,7 @@ nav:
   - Benchmarks: benchmarks.md
   - Examples: examples.md
   - Roadmap: roadmap.md
+  - Glossary: glossary.md
   - API:
       - Core: api/core.md
       - SLAM: api/slam.md
@@ -42,9 +42,72 @@ nav:
       - Scene Graph: api/scene_graph.md
       - World Model: api/world.md
       - Datasets: api/datasets.md
+  - Tutorials:
+      - Introduction: tutorials/index.md
+      - Core Concepts:
+        - Mini World Factor Graph: tutorials/mini_world.md
+        - Manifold Geometry SE(3): tutorials/manifold_geometry_se3.md
+        - Building a Semantic Scene Graph World: tutorials/scene_graph_world.md
+        - Working with Objects in Scene Graphs: tutorials/scene_graph_objects.md
+        - Differentiable Voxel Observations: tutorials/differentiable_voxel_obs.md
+        - Visualizing a Factor Graph in 3D: tutorials/visual_factor_graph.md
+        - 3D Scene Graph Construction & Visualization: tutorials/scenegraph_3d.md
+        - Scene Graph Demo - Rooms, Places, Poses, and Objects: tutorials/scenegraph_demo.md
+        - Dynamic Scene Graph Dem0: tutorials/dynamic_scengraph_demo.md
+      - SE(3) & SLAM:
+        - Manifold Geometry SE(3): tutorials/manifold_geometry_se3.md
+        - Building a Semantic Scene Graph World: tutorials/scene_graph_world.md
+        - Dynamic Trajectories: tutorials/dynamic_trajectories.md
+        - Differentiable SE(3) Odometry Chain: tutorials/differentiable_se3_odom_chain.md
+        - Learnable Factor-Type Weights in a Scene Graph: tutorials/scenegraph_type_weights.md
+        - Hybrid SE(3) & Voxel Joint Parameter Learning: tutorials/hybrid_se3_voxel_joint_learning.md
+        - Hybrid Differentiable Scene Graphs: tutorials/hybrid_dsg.md
+        - Visualizing a Factor Graph in 3D: tutorials/visual_factor_graph.md
+        - 3D Scene Graph Construction & Visualization: tutorials/scenegraph_3d.md
+        - Dynamic Scene Graph Dem0: tutorials/dynamic_scengraph_demo.md
+      - Voxel Grids & Spatial Fields:
+        - Differentiable Voxel Observations: tutorials/differentiable_voxel_obs.md
+        - Multi-Voxel Parameter Optimization: tutorials/multi_voxel_param.md
+        - Multi-Voxel Point Observation Learning: tutorials/trainer_voxel_point_multi.md
+        - Joint Learning of Voxel Observation Parameters & Type Weights: tutorials/multi_voxel_param_weight.md
+        - Hybrid SE(3) & Voxel Joint Parameter Learning: tutorials/hybrid_se3_voxel_joint_learning.md
+        - Hybrid Differentiable Scene Graphs: tutorials/hybrid_dsg.md
+      - Static Scene Graphs:
+        - Build a Sematic Scene Graph World: tutorials/scene_graph_world.md
+        - Working with Objects in Scene Graphs: tutorials/scene_graph_objects.md
+        - Scene Graph Objects (JIT): tutorials/scene_graph_objects_jit.md
+        - Dynamic Trajectories: tutorials/dynamic_trajectories.md
+        - Scene Graph Demo - Rooms, Places, Poses, and Objects: tutorials/scenegraph_demo.md
+      - Dynamic Scene Graphs:
+        - Learnable Factor-Type Weights in a Scene Graph: tutorials/scenegraph_type_weights.md
+        - Multi-Voxel Point Observation Learning: tutorials/trainer_voxel_point_multi.md
+        - Hybrid SE(3) & Voxel Joint Parameter Learning: tutorials/hybrid_se3_voxel_joint_learning.md
+        - Hybrid Differentiable Scene Graphs: tutorials/hybrid_dsg.md
+        - 3D Scene Graph Construction & Visualization: tutorials/scenegraph_3d.md
+        - Dynamic Scene Graph Dem0: tutorials/dynamic_scengraph_demo.md
+        - Range Sensor Dynamic Scene Graph: tutorials/range_sensor_dsg.md
+        - Sensor DSG Mapping (End-to-End): tutorials/sensor_dsg_mapping.md
+      - Sensors & Fusion:
+        - Range Sensor Dynamic Scene Graph: tutorials/range_sensor_dsg.md
+        - Sensor Fusion Sandbox - Camera, LiDAR, and IMU Streams: tutorials/sensor_fusions_demo.md
+        - Sensor DSG Mapping (End-to-End): tutorials/sensor_dsg_mapping.md
+      - Learning & Hybrid Modules:
+        - Multi-Voxel Parameter Optimization: tutorials/multi_voxel_param.md
+        - Differentiable SE(3) Odometry Chain: tutorials/differentiable_se3_odom_chain.md
+        - Learning Factor-Type Weights: tutorials/learn_type_weights.md
+        - Learnable Factor-Type Weights in a Scene Graph: tutorials/scenegraph_type_weights.md
+        - Multi-Voxel Point Observation Learning: tutorials/trainer_voxel_point_multi.md
+        - Joint Learning of Voxel Observation Parameters & Type Weights: tutorials/multi_voxel_param_weight.md
+        - Hybrid SE(3) & Voxel Joint Parameter Learning: tutorials/hybrid_se3_voxel_joint_learning.md
+        - Hybrid Differentiable Scene Graphs: tutorials/hybrid_dsg.md
+      - JAX & JIT:
+        - Scene Graph Objects (JIT): tutorials/scene_graph_objects_jit.md
+        - Differentiable Voxel Observations: tutorials/differentiable_voxel_obs.md
+        - Visualizing a Factor Graph in 3D: tutorials/visual_factor_graph.md
 
 plugins:
   - search
+  - autorefs
   - mkdocstrings:
       handlers:
         python:

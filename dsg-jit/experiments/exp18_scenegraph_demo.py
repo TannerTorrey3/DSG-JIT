@@ -1,18 +1,3 @@
-"""
-exp18_scenegraph_demo.py
-
-"Hero" DSG-JIT scene graph visualization:
-
-- Two rooms (A, B)
-- One shared place (hallway)
-- A small robot trajectory (5 poses) near the place
-- Three objects anchored near the place
-
-We construct this as a bare FactorGraph with variables + structural
-factors used *only* for visualization. No optimization is run here:
-all positions are specified directly to keep the demo robust and
-purely focused on rendering.
-"""
 
 from __future__ import annotations
 
