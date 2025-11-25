@@ -89,7 +89,7 @@ nav:
         - Sensor DSG Mapping (End-to-End): tutorials/sensor_dsg_mapping.md
       - Sensors & Fusion:
         - Range Sensor Dynamic Scene Graph: tutorials/range_sensor_dsg.md
-        - Sensor Fusion Sandbox - Camera, LiDAR, and IMU Streams: tutorials/sensor_fusions_demo.md
+        - Sensor Fusion Sandbox - Camera, LiDAR, and IMU Streams: tutorials/sensor_fusion_demo.md
         - Sensor DSG Mapping (End-to-End): tutorials/sensor_dsg_mapping.md
       - Learning & Hybrid Modules:
         - Multi-Voxel Parameter Optimization: tutorials/multi_voxel_param.md
