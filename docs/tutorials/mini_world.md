@@ -52,8 +52,8 @@ Below is the annotated version of the experiment’s logic.
 You can paste this into a Jupyter notebook or run directly.
 
 ```python
-from world.scene_graph import SceneGraphWorld
-from world.visualization import plot_factor_graph_2d
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.visualization import plot_factor_graph_2d
 import jax.numpy as jnp
 
 # Create a new world

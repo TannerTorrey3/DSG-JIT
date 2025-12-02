@@ -4,10 +4,10 @@ from __future__ import annotations
 import pytest
 import jax.numpy as jnp
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import prior_residual, odom_residual
-from optimization.solvers import gradient_descent, GDConfig
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import prior_residual, odom_residual
+from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 
 
 def test_single_variable_prior():

@@ -5,17 +5,17 @@ import time
 import jax
 import jax.numpy as jnp
 
-from core.types import NodeId, Variable, FactorId, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import (
+from dsg_jit.core.types import NodeId, Variable, FactorId, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,  # or odom_se3_geodesic_residual if that's your “default”
 )
-from optimization.solvers import (
+from dsg_jit.optimization.solvers import (
     gauss_newton_manifold,
     GNConfig,
 )
-from slam.manifold import build_manifold_metadata
+from dsg_jit.slam.manifold import build_manifold_metadata
 
 
 def build_se3_chain_graph(num_poses: int = 10):

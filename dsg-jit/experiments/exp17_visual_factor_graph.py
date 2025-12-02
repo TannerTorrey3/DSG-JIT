@@ -1,12 +1,12 @@
 
 import jax.numpy as jnp
 
-from core.factor_graph import FactorGraph
-from core.types import NodeId, Variable, Factor
-from optimization.solvers import gauss_newton_manifold, GNConfig
-from slam.measurements import se3_chain_residual  
-from world.visualization import plot_factor_graph_2d, plot_factor_graph_3d
-from slam.manifold import build_manifold_metadata
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId, Variable, Factor
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.slam.measurements import se3_chain_residual  
+from dsg_jit.world.visualization import plot_factor_graph_2d, plot_factor_graph_3d
+from dsg_jit.slam.manifold import build_manifold_metadata
 
 
 def build_demo_graph(num_poses: int = 5) -> FactorGraph:

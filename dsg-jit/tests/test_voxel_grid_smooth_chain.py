@@ -1,11 +1,11 @@
 import jax.numpy as jnp
 import pytest
 
-from world.scene_graph import SceneGraphWorld
-from world.voxel_grid import VoxelGridSpec, build_voxel_grid, connect_grid_neighbors_1d_x
-from core.types import NodeId
-from slam.measurements import prior_residual, voxel_smoothness_residual
-from optimization.solvers import GNConfig
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.voxel_grid import VoxelGridSpec, build_voxel_grid, connect_grid_neighbors_1d_x
+from dsg_jit.core.types import NodeId
+from dsg_jit.slam.measurements import prior_residual, voxel_smoothness_residual
+from dsg_jit.optimization.solvers import GNConfig
 
 
 def test_voxel_grid_1d_chain_smoothing():

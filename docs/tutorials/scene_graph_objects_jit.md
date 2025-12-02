@@ -27,7 +27,7 @@ We begin by importing the scene graph and any JAX utilities needed for jit-frien
 import jax
 import jax.numpy as jnp
 
-from world.scene_graph import SceneGraphWorld
+from dsg_jit.world.scene_graph import SceneGraphWorld
 ```
 
 The `SceneGraphWorld` class wraps the dynamic scene graph and world model, providing unified access to nodes, edges, and SLAM structures.

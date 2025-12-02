@@ -23,12 +23,12 @@ from typing import Dict, List, Tuple
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from optimization.solvers import GNConfig, gauss_newton_manifold
-from slam.manifold import build_manifold_metadata
-from slam.measurements import prior_residual, odom_se3_geodesic_residual
-from world.visualization import (
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
+from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.slam.measurements import prior_residual, odom_se3_geodesic_residual
+from dsg_jit.world.visualization import (
     VisNode,
     VisEdge,
     export_factor_graph_for_vis,

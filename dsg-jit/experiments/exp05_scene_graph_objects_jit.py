@@ -1,7 +1,7 @@
 from __future__ import annotations
 import jax.numpy as jnp
 
-from world.scene_graph import SceneGraphWorld
+from dsg_jit.world.scene_graph import SceneGraphWorld
 
 
 def build_world() -> SceneGraphWorld:

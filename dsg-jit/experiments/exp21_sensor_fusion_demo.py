@@ -26,13 +26,13 @@ from typing import Dict, Any, List
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from sensors.streams import FunctionStream
-from sensors.fusion import SensorFusionManager
-from sensors.base import BaseMeasurement
-from sensors.camera import CameraMeasurement
-from sensors.lidar import LidarMeasurement
-from sensors.imu import IMUMeasurement
-from sensors.conversion import raw_sample_to_camera_measurement, raw_sample_to_imu_measurement, raw_sample_to_lidar_measurement
+from dsg_jit.sensors.streams import FunctionStream
+from dsg_jit.sensors.fusion import SensorFusionManager
+from dsg_jit.sensors.base import BaseMeasurement
+from dsg_jit.sensors.camera import CameraMeasurement
+from dsg_jit.sensors.lidar import LidarMeasurement
+from dsg_jit.sensors.imu import IMUMeasurement
+from dsg_jit.sensors.conversion import raw_sample_to_camera_measurement, raw_sample_to_imu_measurement, raw_sample_to_lidar_measurement
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +301,6 @@ def main() -> None:
 
     # 6) Plot the integrated 1D trajectory
     if integrator.history_t:
-        import matplotlib.pyplot as plt
 
         ts = jnp.array(integrator.history_t)
         xs = jnp.array(integrator.history_x)

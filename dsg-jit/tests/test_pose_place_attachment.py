@@ -4,11 +4,11 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import prior_residual, odom_se3_residual
-from scene_graph.relations import pose_place_attachment_residual
-from optimization.solvers import gradient_descent, GDConfig, GNConfig, gauss_newton
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
+from dsg_jit.scene_graph.relations import pose_place_attachment_residual
+from dsg_jit.optimization.solvers import gradient_descent, GDConfig, GNConfig, gauss_newton
 
 
 def test_pose_place_attachment_1d_along_x():

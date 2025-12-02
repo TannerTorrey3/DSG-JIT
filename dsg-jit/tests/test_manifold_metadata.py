@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from core.types import NodeId, Variable
-from core.factor_graph import FactorGraph
-from slam.manifold import build_manifold_metadata
+from dsg_jit.core.types import NodeId, Variable
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.manifold import build_manifold_metadata
 
 
 def test_build_manifold_metadata_basic():

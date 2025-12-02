@@ -1,10 +1,10 @@
 import jax.numpy as jnp
 import pytest
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import voxel_smoothness_residual
-from optimization.solvers import GNConfig, gauss_newton
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import voxel_smoothness_residual
+from dsg_jit.optimization.solvers import GNConfig, gauss_newton
 
 
 def test_voxel_smoothness_grid_spacing():

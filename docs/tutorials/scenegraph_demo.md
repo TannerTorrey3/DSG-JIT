@@ -20,9 +20,9 @@ This experiment is a good way to understand how DSG‑JIT can represent **semant
 The experiment constructs a `FactorGraph` and then uses it as a **structural scene graph**:
 
 ```python
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from world.visualization import plot_factor_graph_3d, plot_factor_graph_2d
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.visualization import plot_factor_graph_3d, plot_factor_graph_2d
 ```
 
 We start by creating the graph and defining two small helper functions:

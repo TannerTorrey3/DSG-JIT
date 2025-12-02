@@ -1,10 +1,10 @@
 import jax
 import jax.numpy as jnp
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from optimization.solvers import gradient_descent, GDConfig
-from slam.measurements import (
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.optimization.solvers import gradient_descent, GDConfig
+from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,                 # additive SE3 odom residual (R^6)
     voxel_point_observation_residual,  # your voxel_point_obs residual name

@@ -19,8 +19,8 @@ The experiment starts by importing the core world + scene‑graph wrappers:
 ```python
 import jax.numpy as jnp
 
-from world.model import WorldModel
-from world.scene_graph import SceneGraphWorld
+from dsg_jit.world.model import WorldModel
+from dsg_jit.world.scene_graph import SceneGraphWorld
 ```
 
 - **`WorldModel`** wraps a low‑level `FactorGraph` and knows how to pack/unpack the optimization state.

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from world.model import WorldModel
-from slam.measurements import prior_residual, odom_se3_residual
-from scene_graph.relations import room_centroid_residual
+from dsg_jit.world.model import WorldModel
+from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
+from dsg_jit.scene_graph.relations import room_centroid_residual
 
 
 def setup_mini_world() -> WorldModel:

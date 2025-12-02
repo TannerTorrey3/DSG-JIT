@@ -3,10 +3,10 @@
 import jax
 import jax.numpy as jnp
 
-from core.factor_graph import FactorGraph
-from core.types import NodeId, FactorId, Variable, Factor
-from optimization.solvers import gradient_descent, GDConfig
-from slam.measurements import (
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.optimization.solvers import gradient_descent, GDConfig
+from dsg_jit.slam.measurements import (
     prior_residual,
     voxel_point_observation_residual,  # registered as "voxel_point_obs"
 )

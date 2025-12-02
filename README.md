@@ -42,16 +42,64 @@ This repository serves as the structural roadmap for developing that system.
 
 ---
 
-## Quickstart
+## Installation (PyPI + Local Development)
 
-### Install
+DSG‑JIT can be installed in two ways:
+
+---
+
+### Option 1 — Install from PyPI (Recommended)
+
+```bash
+pip install dsg-jit
+```
+
+After installation you can verify:
+
+```python
+import dsg_jit
+from dsg_jit.core.factor_graph import FactorGraph
+print("DSG‑JIT imported successfully!")
+```
+
+---
+
+### Option 2 — Local Development Install (Clone Repository)
+
 ```bash
 git clone https://github.com/TannerTorrey3/DSG-JIT.git
 cd DSG-JIT
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-export PYTHONPATH=DSG-JIT/src
+pip install -e .
+```
+
+This installs DSG‑JIT in editable mode so that changes to the code are reflected immediately.
+
+---
+
+### PYTHONPATH (Legacy Local Workflow)
+
+If you prefer not to use `pip install -e .`, you may still manually add the package to PYTHONPATH:
+
+```bash
+export PYTHONPATH=$(pwd)/dsg-jit
+```
+
+However, the pip editable installation is now the recommended workflow.
+
+---
+
+## Quickstart
+
+### Install (from source)
+
+If you cloned the repository, install dependencies and enable editable mode:
+
+```bash
+pip install -r requirements.txt
+pip install -e .
 ```
 
 ### Run Tests
@@ -60,6 +108,12 @@ pytest -q
 ```
 
 ### Run a Simple Example
+
+For a guided, hands-on introduction, visit the **Tutorials** section of the documentation:
+
+https://tannertorrey3.github.io/DSG-JIT/tutorials/
+
+These walk through SLAM, voxel fields, dynamic scene graphs, optimization, and JIT acceleration step‑by‑step.
 ```bash
 python experiments/exp06_dynamic_trajectory.py
 ```
@@ -360,7 +414,8 @@ Contributions to **DSG-JIT** are welcome and encouraged.
 
 1. **Fork the repository**
    ```bash
-   git clone https://github.com/<your-username>/DSG-JIT.git
+   git clone https://github.com/TannerTorrey3/DSG-JIT.git
+   cd DSG-JIT
    ```
 
 2. **Create a new feature or fix branch**
@@ -371,7 +426,7 @@ Contributions to **DSG-JIT** are welcome and encouraged.
 3. **Install development dependencies**
    ```bash
    pip install -r requirements.txt
-   export PYTHONPATH=DSG-JIT/src
+   export PYTHONPATH=DSG-JIT/dsg-jit
    ```
 
 4. **Ensure tests pass**

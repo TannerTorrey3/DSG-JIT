@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from world.visualization import plot_factor_graph_3d, plot_factor_graph_2d
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.visualization import plot_factor_graph_3d, plot_factor_graph_2d
 
 
 def build_scenegraph_factor_graph() -> FactorGraph:

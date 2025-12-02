@@ -1,11 +1,10 @@
-# experiments/exp12_scenegraph_learnable_type_weights.py
 
 import jax
 import jax.numpy as jnp
 
-from world.scene_graph import SceneGraphWorld
-from world.training import DSGTrainer, InnerGDConfig
-from slam.measurements import prior_residual, odom_se3_residual
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.training import DSGTrainer, InnerGDConfig
+from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 
 
 def build_scenegraph():

@@ -3,8 +3,8 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from world.model import WorldModel
-from slam.measurements import prior_residual, odom_se3_residual
+from dsg_jit.world.model import WorldModel
+from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 
 
 def test_world_model_se3_two_pose_chain():

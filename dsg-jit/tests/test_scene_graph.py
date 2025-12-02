@@ -1,14 +1,13 @@
-# tests/test_scene_graph.py
 from __future__ import annotations
 
 import jax.numpy as jnp
 import pytest
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import prior_residual
-from optimization.solvers import gradient_descent, GDConfig
-from scene_graph.relations import room_centroid_residual
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import prior_residual
+from dsg_jit.optimization.solvers import gradient_descent, GDConfig
+from dsg_jit.scene_graph.relations import room_centroid_residual
 
 
 def test_room_centroid_with_fixed_places():

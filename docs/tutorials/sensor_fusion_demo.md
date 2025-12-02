@@ -79,7 +79,7 @@ def make_camera_read_fn(landmark_ids):
 Key idea: the returned dictionaries are **raw samples**, not `CameraMeasurement` objects yet. They are shaped so that they can be handed to the camera converter:
 
 ```python
-from sensors.conversion import raw_sample_to_camera_measurement
+from dsg_jit.sensors.conversion import raw_sample_to_camera_measurement
 ```
 
 The LiDAR and IMU streams follow the same pattern:
@@ -137,7 +137,7 @@ These functions are deliberately simple: they isolate the **stream interface** (
 DSG‑JIT represents a sensor stream as an object that it can poll for new samples. For synthetic streams, the `FunctionStream` wrapper is perfect:
 
 ```python
-from sensors.streams import FunctionStream
+from dsg_jit.sensors.streams import FunctionStream
 
 landmark_ids = [0, 1]
 cam_stream = FunctionStream(make_camera_read_fn(landmark_ids=landmark_ids))
@@ -168,8 +168,8 @@ These converters know how to interpret keys like `"t"`, `"frame_id"`, `"bearings
 The fusion manager takes a **stream + converter** pair for each sensor:
 
 ```python
-from sensors.fusion import SensorFusionManager
-from sensors.conversion import (
+from dsg_jit.sensors.fusion import SensorFusionManager
+from dsg_jit.sensors.conversion import (
     raw_sample_to_camera_measurement,
     raw_sample_to_lidar_measurement,
     raw_sample_to_imu_measurement,

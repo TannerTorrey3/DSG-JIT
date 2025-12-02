@@ -2,12 +2,11 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import prior_residual, odom_se3_geodesic_residual
-from slam.manifold import build_manifold_metadata
-from optimization.solvers import gauss_newton_manifold, GNConfig
-from core.math3d import relative_pose_se3
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import prior_residual, odom_se3_geodesic_residual
+from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
 
 
 def test_se3_manifold_loop_closure():

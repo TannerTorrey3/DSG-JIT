@@ -49,8 +49,8 @@ The main construction happens in `build_range_dsg`:
 ```python
 import jax.numpy as jnp
 
-from world.scene_graph import SceneGraphWorld
-from world.dynamic_scene_graph import DynamicSceneGraph
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.dynamic_scene_graph import DynamicSceneGraph
 
 
 def build_range_dsg(num_steps: int = 5):
@@ -170,8 +170,8 @@ Once the scene graph and dynamic layer are constructed, we can optimize the unde
 The helper `optimize_world` encapsulates this step:
 
 ```python
-from optimization.solvers import gauss_newton_manifold, GNConfig
-from slam.manifold import build_manifold_metadata
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.slam.manifold import build_manifold_metadata
 
 
 def optimize_world(sg: SceneGraphWorld):
@@ -220,7 +220,7 @@ By writing the optimized values back into `fg.variables[nid].value`, the **scene
 The `main()` function wires everything together:
 
 ```python
-from world.visualization import plot_factor_graph_3d
+from dsg_jit.world.visualization import plot_factor_graph_3d
 
 
 def main():

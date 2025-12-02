@@ -48,6 +48,7 @@ Processes raw sensor data (RGB-D, LiDAR, IMU) into:
 
 ### 2. JIT-Compiled SLAM Backend  
 A differentiable factor graph performing:
+
 - Pose optimization on SE3 manifolds  
 - Loop closure / chain constraints  
 - Learnable factor-type weights  
@@ -55,18 +56,21 @@ A differentiable factor graph performing:
 
 ### 3. Neural Field Module *(future integration)*  
 To support:
+
 - NeRF / Gaussian splatting  
 - Photometric residuals  
 - Dense geometry for segmentation  
 
 ### 4. Dynamic 3D Scene Graph Layer  
 SceneGraphWorld tracking:
+
 - Poses, places, rooms, agents  
 - Attachments and voxel embeddings  
 - Geometry + semantics as a single structure  
 
 ### 5. Global Optimization & Reasoning  
 Unified optimization across:
+
 - Trajectories  
 - Voxels  
 - Scene graph structure  

@@ -100,6 +100,7 @@ This layer enables **standard SLAM**, **learnable SLAM**, and **hybrid SLAM + vo
 This layer introduces the structural and semantic relationships that turn raw geometry into a **world model**.
 
 ### Entities
+
 - Poses  
 - Places  
 - Rooms  
@@ -109,6 +110,7 @@ This layer introduces the structural and semantic relationships that turn raw ge
 - Trajectories  
 
 ### Relations
+
 - Pose → Place membership  
 - Agent → Pose trajectory  
 - Room → Place grouping  
@@ -121,6 +123,7 @@ This layer introduces the structural and semantic relationships that turn raw ge
 | `scene_graph.relations` | Relations & constraints that form the DSG |
 
 ### Features
+
 - Geometry + semantics in one structure
 - Differentiable constraints between DSG entities
 - Realtime graph growth (future)

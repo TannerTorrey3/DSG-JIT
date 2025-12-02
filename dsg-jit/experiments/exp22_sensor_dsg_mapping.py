@@ -22,23 +22,23 @@ import jax.numpy as jnp
 import numpy as np
 
 #SLAM
-from slam.manifold  import build_manifold_metadata
+from dsg_jit.slam.manifold  import build_manifold_metadata
 # Core / optimization
-from core.factor_graph import FactorGraph
-from optimization.solvers import gauss_newton_manifold, GNConfig
-from core.types import Factor, FactorId
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.core.types import Factor, FactorId
 
 # World & visualization
-from world.model import WorldModel
-from world.scene_graph import SceneGraphWorld
-from world.visualization import plot_factor_graph_3d
+from dsg_jit.world.model import WorldModel
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.visualization import plot_factor_graph_3d
 
 # Sensor stack
-from sensors.camera import CameraMeasurement, CameraFrame
-from sensors.lidar import LidarMeasurement
-from sensors.imu import IMUMeasurement
-from sensors.streams import FunctionStream
-from sensors.conversion import (
+from dsg_jit.sensors.camera import CameraMeasurement, CameraFrame
+from dsg_jit.sensors.lidar import LidarMeasurement
+from dsg_jit.sensors.imu import IMUMeasurement
+from dsg_jit.sensors.streams import FunctionStream
+from dsg_jit.sensors.conversion import (
     raw_sample_to_camera_measurement,
     raw_sample_to_lidar_measurement,
     raw_sample_to_imu_measurement,

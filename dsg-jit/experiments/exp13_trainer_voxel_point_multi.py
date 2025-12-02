@@ -3,10 +3,10 @@
 import jax
 import jax.numpy as jnp
 
-from core.factor_graph import FactorGraph
-from core.types import NodeId, Variable, Factor, FactorId
-from optimization.solvers import gauss_newton, GNConfig
-from slam.measurements import (
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId, Variable, Factor, FactorId
+from dsg_jit.optimization.solvers import gauss_newton, GNConfig
+from dsg_jit.slam.measurements import (
     prior_residual,
     voxel_smoothness_residual,
     voxel_point_observation_residual,

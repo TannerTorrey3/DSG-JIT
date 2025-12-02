@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import pytest
 
-from core.math3d import se3_identity, se3_retract_left, relative_pose_se3
+from dsg_jit.core.math3d import se3_identity, se3_retract_left, relative_pose_se3
 
 
 def test_se3_retract_zero_delta_is_identity():

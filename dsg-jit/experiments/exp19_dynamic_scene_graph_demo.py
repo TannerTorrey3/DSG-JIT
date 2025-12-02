@@ -19,11 +19,11 @@ Requires:
 
 import jax.numpy as jnp
 
-from world.scene_graph import SceneGraphWorld
-from world.dynamic_scene_graph import DynamicSceneGraph
-from optimization.solvers import gauss_newton_manifold, GNConfig
-from slam.manifold import build_manifold_metadata
-from world.visualization import plot_scenegraph_3d, plot_dynamic_trajectories_3d
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.dynamic_scene_graph import DynamicSceneGraph
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.world.visualization import plot_scenegraph_3d, plot_dynamic_trajectories_3d
 
 
 def build_scene_graph():

@@ -3,15 +3,15 @@
 import jax
 import jax.numpy as jnp
 
-from core.types import NodeId, FactorId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import (
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import (
     prior_residual,
     voxel_point_observation_residual,
     sigma_to_weight,
 )
-from slam.manifold import build_manifold_metadata
-from optimization.solvers import GNConfig, gauss_newton_manifold
+from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
 
 
 def build_single_voxel_graph_with_param_obs():

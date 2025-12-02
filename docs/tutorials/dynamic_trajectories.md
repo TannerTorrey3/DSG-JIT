@@ -45,7 +45,7 @@ Experiment 6 walks through a minimal version of this workflow.
 The experiment begins by constructing a fresh scene‑graph world model:
 
 ```python
-from world.scene_graph import SceneGraphWorld
+from dsg_jit.world.scene_graph import SceneGraphWorld
 
 sg = SceneGraphWorld()
 ```
@@ -115,7 +115,7 @@ This stabilizes optimization.
 Experiment 6 uses the standard DSG‑JIT Gauss‑Newton solver:
 
 ```python
-from optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
 
 x0, index = sg.wm.fg.pack_state()
 cfg = GNConfig(max_iters=20)
@@ -143,7 +143,7 @@ Now you have refined poses for every timestep.
 Experiment 6 ends by plotting the 3‑D path:
 
 ```python
-from world.visualization import plot_factor_graph_3d
+from dsg_jit.world.visualization import plot_factor_graph_3d
 
 plot_factor_graph_3d(
     sg.wm.fg, values,

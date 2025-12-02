@@ -34,9 +34,9 @@ with each consecutive pair constrained by a relative motion of **1 meter along +
 ```python
 import jax.numpy as jnp
 
-from core.factor_graph import FactorGraph
-from core.types import NodeId, Variable, Factor
-from slam.measurements import se3_chain_residual
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId, Variable, Factor
+from dsg_jit.slam.measurements import se3_chain_residual
 
 
 def build_demo_graph(num_poses: int = 5) -> FactorGraph:
@@ -101,7 +101,7 @@ Once the graph structure is built, we need to:
 2. Build **manifold metadata** so the solver knows how to treat each variable (Euclidean vs SE(3), etc.).
 
 ```python
-from slam.manifold import build_manifold_metadata
+from dsg_jit.slam.manifold import build_manifold_metadata
 
 fg = build_demo_graph(num_poses=5)
 
@@ -142,7 +142,7 @@ x^\* = \arg\min_x \| r(x) \|^2
 using the **manifold Gauss–Newton** solver. This uses the manifold metadata to update SE(3) poses properly.
 
 ```python
-from optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
 
 cfg = GNConfig(
     max_iters=10,
@@ -190,7 +190,7 @@ This is necessary so downstream tools (like visualization) see the updated poses
 With the optimized poses stored in `fg.variables`, we can call the visualization helpers to render the graph layout.
 
 ```python
-from world.visualization import plot_factor_graph_3d
+from dsg_jit.world.visualization import plot_factor_graph_3d
 
 # Visualize optimized poses and factors
 plot_factor_graph_3d(fg)

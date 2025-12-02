@@ -137,7 +137,7 @@ Internally, JAX is used for differentiability and vectorization.
 ## 7. Example – Computing a Geodesic
 
 ```python
-from slam.se3_ops import SE3, se3_geodesic
+from dsg_jit.slam.se3_ops import SE3, se3_geodesic
 import jax.numpy as jnp
 
 T0 = SE3.from_xyz_rpy(0,0,0, 0,0,0)

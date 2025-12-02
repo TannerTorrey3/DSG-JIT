@@ -1,16 +1,14 @@
 from __future__ import annotations
 import jax.numpy as jnp
 
-from core.types import NodeId, Variable, Factor
-from core.factor_graph import FactorGraph
-from slam.measurements import (
+from dsg_jit.core.types import NodeId, Variable, Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.slam.measurements import (
     prior_residual,
-    odom_se3_geodesic_residual,
     pose_place_attachment_residual,
     odom_se3_residual
 )
-from slam.manifold import build_manifold_metadata
-from optimization.solvers import gauss_newton_manifold, GNConfig, gauss_newton
+from dsg_jit.optimization.solvers import  GNConfig, gauss_newton
 
 
 def run_experiment():

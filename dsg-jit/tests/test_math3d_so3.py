@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from core.math3d import so3_exp, so3_log
+from dsg_jit.core.math3d import so3_exp, so3_log
 
 
 def test_so3_log_exp_roundtrip_small_angle():
