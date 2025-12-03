@@ -30,5 +30,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
+        env:
+          PYTHONPATH: dsg-jit
         run: |
           pytest -q dsg-jit/tests
