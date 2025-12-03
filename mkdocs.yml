@@ -112,7 +112,7 @@ plugins:
       handlers:
         python:
           paths:
-            - dsg-jit/src
+            - dsg-jit/dsg_jit
           options:
             show_source: true
             show_signature: true

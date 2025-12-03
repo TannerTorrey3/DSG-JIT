@@ -31,9 +31,6 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install "mkdocs>=1.5" "mkdocs-material" "mkdocstrings[python]"
 
-      - name Install package:
-        run: pip install .
-
       - name: Build docs
         run: mkdocs build --strict
 
