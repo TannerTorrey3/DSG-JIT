@@ -56,8 +56,8 @@ from typing import List
 import jax
 import jax.numpy as jnp
 
-from core.factor_graph import FactorGraph
-from world.model import WorldModel
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 
 
 @dataclass

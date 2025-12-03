@@ -62,9 +62,9 @@ from typing import Dict, Tuple, List
 
 import jax.numpy as jnp
 
-from core.types import NodeId, FactorId, Factor
-from world.model import WorldModel
-from slam.measurements import (
+from dsg_jit.core.types import NodeId, FactorId, Factor
+from dsg_jit.world.model import WorldModel
+from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,
     odom_se3_geodesic_residual,

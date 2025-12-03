@@ -54,15 +54,10 @@ The design goal is to make IMU handling:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional, Protocol
+from typing import Iterable, Optional, Protocol
 
 import jax.numpy as jnp
-
-try:  # NumPy is optional but convenient for some users
-    import numpy as np
-except Exception:  # pragma: no cover
-    np = None  # type: ignore
-
+import numpy as np
 
 @dataclass
 class IMUMeasurement:

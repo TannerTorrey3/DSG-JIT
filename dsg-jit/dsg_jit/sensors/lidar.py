@@ -52,22 +52,16 @@ future plugins and extensions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import jax.numpy as jnp
 
-from core.types import Factor
-from slam.measurements import sigma_to_weight
-from world.model import WorldModel
-from world.dynamic_scene_graph import DynamicSceneGraph
-from world.scene_graph import SceneGraphWorld
-from .base import Sensor, SensorReading
-
-from typing import Optional, Tuple
-from dataclasses import dataclass
-
-import jax.numpy as jnp
-
+from dsg_jit.core.types import Factor
+from dsg_jit.slam.measurements import sigma_to_weight
+from dsg_jit.world.model import WorldModel
+from dsg_jit.world.dynamic_scene_graph import DynamicSceneGraph
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.sensors.base import Sensor, SensorReading
 
 @dataclass
 class LidarMeasurement:

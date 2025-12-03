@@ -18,12 +18,12 @@ from typing import Dict, List
 
 import jax.numpy as jnp
 
-from core.types import GNConfig
-from core.factor_graph import FactorGraph
-from optimization.solvers import gauss_newton_manifold
-from world.model import WorldModel
-from world.scene_graph import SceneGraphWorld
-from world.visualization import plot_factor_graph_3d
+from dsg_jit.core.types import GNConfig
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.optimization.solvers import gauss_newton_manifold
+from dsg_jit.world.model import WorldModel
+from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.world.visualization import plot_factor_graph_3d
 
 
 # ---------------------------------------------------------------------------

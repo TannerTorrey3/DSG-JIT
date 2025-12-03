@@ -82,7 +82,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from core.math3d import se3_retract_left
+from dsg_jit.core.math3d import se3_retract_left
 
 ObjectiveFn = Callable[[jnp.ndarray], jnp.ndarray]
 

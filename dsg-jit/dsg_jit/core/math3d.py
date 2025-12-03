@@ -64,9 +64,6 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from .types import Pose3  # still here
-
-
 def pose_vec_to_rt(v: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Split a 6D pose vector into translation and rotation components.

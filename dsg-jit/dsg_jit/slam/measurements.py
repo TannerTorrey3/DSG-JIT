@@ -129,7 +129,7 @@ from typing import Dict
 
 import jax.numpy as jnp
 
-from core.math3d import relative_pose_se3, se3_exp
+from dsg_jit.core.math3d import relative_pose_se3, se3_exp
 
 def _apply_weight(residual: jnp.ndarray, params: dict, key: str = "weight") -> jnp.ndarray:
     """

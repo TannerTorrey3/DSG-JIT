@@ -67,8 +67,8 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-from core.types import NodeId
-from core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId
+from dsg_jit.core.factor_graph import FactorGraph
 
 TYPE_TO_MANIFOLD: Dict[str, str] = {
     "pose_se3": "se3",

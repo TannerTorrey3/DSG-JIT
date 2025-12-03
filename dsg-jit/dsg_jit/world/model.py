@@ -49,16 +49,16 @@ from typing import Dict, Optional
 
 import jax.numpy as jnp
 
-from core.factor_graph import FactorGraph
-from core.types import Variable, Factor, NodeId, FactorId
-from optimization.solvers import (
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import Variable, Factor, NodeId, FactorId
+from dsg_jit.optimization.solvers import (
     gradient_descent, GDConfig,
     damped_newton, NewtonConfig,
     gauss_newton, GNConfig,
     gauss_newton_manifold,
 )
-from slam.manifold import build_manifold_metadata
-from optimization.jit_wrappers import JittedGN
+from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.optimization.jit_wrappers import JittedGN
 
 
 @dataclass

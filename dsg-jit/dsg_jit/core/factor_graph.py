@@ -85,7 +85,7 @@ from typing import Dict, Callable, Tuple, List
 import jax
 import jax.numpy as jnp
 
-from .types import NodeId, FactorId, Variable, Factor
+from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
 
 
 # Type aliases for clarity
@@ -113,6 +113,7 @@ class FactorGraph:
     variables: Dict[NodeId, Variable] = field(default_factory=dict)
     factors: Dict[FactorId, Factor] = field(default_factory=dict)
     residual_fns: Dict[str, ResidualFn] = field(default_factory=dict)
+    #TODO add NeRF's(radiance) to factors as a field
 
     def add_variable(self, var: Variable) -> None:
         """Register a new variable in the factor graph.

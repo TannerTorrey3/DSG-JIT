@@ -52,7 +52,7 @@ defines the mechanism by which sensors deliver data into such pipelines.
 
 from typing import Iterator, AsyncIterator, Optional, Any
 from abc import ABC
-from .base import SensorReading
+from dsg_jit.sensors.base import SensorReading
 
 class BaseSensorStream(ABC):
     """

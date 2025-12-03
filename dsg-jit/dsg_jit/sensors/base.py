@@ -78,9 +78,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
-from core.types import Factor
-from world.model import WorldModel
-from world.dynamic_scene_graph import DynamicSceneGraph
+from dsg_jit.core.types import Factor
+from dsg_jit.world.model import WorldModel
+from dsg_jit.world.dynamic_scene_graph import DynamicSceneGraph
 
 @dataclass
 class BaseMeasurement:

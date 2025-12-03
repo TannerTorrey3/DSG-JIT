@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.20"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dsg_jit"
+version = "0.5.0"
+description = "Differentiable Scene Graphs with JAX-based factor graphs and SLAM tooling."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Tanner Kocher" }
+]
+
+keywords = [
+  "SLAM",
+  "factor-graph",
+  "JAX",
+  "scene-graph",
+  "robotics",
+  "optimization",
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+# 🔧 Core runtime deps (you can refine these as needed)
+dependencies = [
+  "jax>=0.4.30",
+  "jaxlib>=0.4.30",
+  "numpy>=1.24",
+  "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+# For docs (MkDocs)
+docs = [
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.5",
+]
+
+# For dev tooling / testing (adjust as you actually use them)
+dev = [
+  "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tannertorrey3/DSG-JIT"
+Documentation = "https://tannertorrey3.github.io/DSG-JIT/"
+Source = "https://github.com/tannertorrey3/DSG-JIT"
+Issues = "https://github.com/tannertorrey3/DSG-JIT/issues"
+
+[tool.hatch.build.targets.wheel]
+# This tells hatchling what to package
+packages = ["dsg-jit/dsg_jit"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "dsg-jit/dsg_jit",
+  "README.md",
+  "LICENSE",
+]

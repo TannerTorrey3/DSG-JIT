@@ -16,8 +16,8 @@ from typing import Optional
 
 import jax.numpy as jnp
 
-from world.model import WorldModel
-from .fusion import SensorFusionManager, FusedPoseEstimate
+from dsg_jit.world.model import WorldModel
+from dsg_jit.sensors.fusion import SensorFusionManager, FusedPoseEstimate
 
 
 def apply_fused_pose_to_world(

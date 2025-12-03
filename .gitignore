@@ -34,4 +34,6 @@ dist/
 # Jupyter
 .ipynb_checkpoints/
 
+#Local build files
 site/
+dist/

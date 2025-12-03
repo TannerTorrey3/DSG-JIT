@@ -60,7 +60,7 @@ from typing import Dict, Tuple
 
 import jax.numpy as jnp
 
-from world.scene_graph import SceneGraphWorld
+from dsg_jit.world.scene_graph import SceneGraphWorld
 
 GridIndex = Tuple[int, int, int]
 

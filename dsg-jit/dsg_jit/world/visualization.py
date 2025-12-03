@@ -69,8 +69,8 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-from core.types import NodeId
-from core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId
+from dsg_jit.core.factor_graph import FactorGraph
 
 NodeType = Literal["pose", "voxel", "place", "room", "other"]
 

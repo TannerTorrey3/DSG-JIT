@@ -41,13 +41,13 @@ import jax.numpy as jnp
 import time
 import numpy as np
 
-from core.factor_graph import FactorGraph
-from core.types import Factor
+from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import Factor
 
 
-from sensors.camera import CameraMeasurement, CameraFrame  
-from sensors.imu import IMUMeasurement        
-from sensors.lidar import LidarMeasurement    
+from dsg_jit.sensors.camera import CameraMeasurement, CameraFrame  
+from dsg_jit.sensors.imu import IMUMeasurement        
+from dsg_jit.sensors.lidar import LidarMeasurement    
 
 
 @dataclass

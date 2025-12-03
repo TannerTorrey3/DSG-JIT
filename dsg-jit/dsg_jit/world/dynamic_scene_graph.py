@@ -53,8 +53,8 @@ from typing import Dict, Hashable, Iterable, List, Mapping, Tuple
 
 import jax.numpy as jnp
 
-from core.types import NodeId
-from world.scene_graph import SceneGraphWorld
+from dsg_jit.core.types import NodeId
+from dsg_jit.world.scene_graph import SceneGraphWorld
 
 
 #: Key used for time-indexed entities (e.g., agent poses).

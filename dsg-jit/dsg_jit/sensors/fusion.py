@@ -77,17 +77,17 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional
 from typing import TYPE_CHECKING
 
-from .camera import CameraMeasurement
-from .lidar import LidarMeasurement
-from .imu import IMUMeasurement
+from dsg_jit.sensors.camera import CameraMeasurement
+from dsg_jit.sensors.lidar import LidarMeasurement
+from dsg_jit.sensors.imu import IMUMeasurement
 
 if TYPE_CHECKING:
-    from world.model import WorldModel
+    from dsg_jit.world.model import WorldModel
 
-from .streams import BaseSensorStream, ReadingStream
-from .base import BaseMeasurement
+from dsg_jit.sensors.streams import BaseSensorStream, ReadingStream
+from dsg_jit.sensors.base import BaseMeasurement
 
-from .conversion import (
+from dsg_jit.sensors.conversion import (
     raw_sample_to_camera_measurement,
     raw_sample_to_lidar_measurement,
     imu_to_factors_placeholder,

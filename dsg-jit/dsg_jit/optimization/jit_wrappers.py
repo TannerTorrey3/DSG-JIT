@@ -83,7 +83,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
-from .solvers import gauss_newton, GNConfig
+from dsg_jit.optimization.solvers import gauss_newton, GNConfig
 
 
 @dataclass
