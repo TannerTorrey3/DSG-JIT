@@ -83,7 +83,7 @@ Stretch:
 
 ---
 
-## 🧩 Phase 7 — Packaging & Distribution (In Progress)
+## 🧩 Phase 7 — Packaging & Distribution (Completed)
 **Status:** ⏳
 
 Planned deliverables:
@@ -127,6 +127,7 @@ Requirements:
 - Public examples + tutorials  
 - Long‑term support policy  
 - Optimization safety & performance guarantees  
+- Extensive DSG API for "plug-and-play" Scene Graph Rendering
 
 ---
 
