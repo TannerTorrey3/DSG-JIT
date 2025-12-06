@@ -22,8 +22,8 @@ from dsg_jit.core.types import GNConfig
 from dsg_jit.core.factor_graph import FactorGraph
 from dsg_jit.optimization.solvers import gauss_newton_manifold
 from dsg_jit.world.model import WorldModel
-from dsg_jit.world.scene_graph import SceneGraphWorld
 from dsg_jit.world.visualization import plot_factor_graph_3d
+from dsg_jit.slam.manifold import build_manifold_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -87,13 +87,13 @@ def run_pose_graph_slam(
     fg: FactorGraph = wm.fg
 
     # Pack initial state
-    x0, index = fg.pack_state()
+    x0, _ = wm.pack_state()
+    residual_fn = wm.build_residual()
 
     # Manifold types: we already stored these per-variable in the graph.
-    manifold_types = fg.get_manifold_types()
+    manifold_types = build_manifold_metadata(packed_state=wm.pack_state(),fg=fg)
 
-    def residual_fn(x: jnp.ndarray) -> jnp.ndarray:
-        return fg.residual(x)
+    
 
     # Solve
     x_opt = gauss_newton_manifold(
@@ -107,7 +107,7 @@ def run_pose_graph_slam(
     pose_ids: List[int] = []
     landmark_ids: List[int] = []
 
-    for nid, v in fg.variables.items():
+    for nid, v in wm.fg.variables.items():
         if v.manifold == "se3":
             pose_ids.append(nid)
         elif v.manifold == "R3":
@@ -137,7 +137,7 @@ def update_worldmodel_from_solution(wm: WorldModel, result: PoseGraphResult) -> 
     """
     fg = wm.fg
     x_opt = result.x_opt
-    _, index = fg.pack_state()  # re-pack to get consistent slices
+    _, index = wm.pack_state()  # re-pack to get consistent slices
 
     for nid, sl in index.items():
         v = fg.variables[nid]
@@ -162,9 +162,8 @@ def pose_vectors_from_result(
         Mapping from pose node id -> pose vector (6,).
     :rtype: dict[int, jax.numpy.ndarray]
     """
-    fg = wm.fg
     x_opt = result.x_opt
-    _, index = fg.pack_state()
+    _, index = wm.pack_state()
 
     out: Dict[int, jnp.ndarray] = {}
     for nid in result.pose_ids:

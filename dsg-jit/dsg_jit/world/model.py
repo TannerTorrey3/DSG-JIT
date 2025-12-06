@@ -1,53 +1,79 @@
 # Copyright (c) 2025.
 # This file is part of DSG-JIT, released under the MIT License.
 """
-World-level wrapper around the core factor graph.
+World-level wrapper and optimization front-end around the core factor graph.
 
-This module defines the *world model* abstraction: a thin, typed layer on
-top of `core.factor_graph.FactorGraph` that knows about high-level
-entities (poses, places, rooms, voxels, objects, agents) but still
-remains generic enough to be reused across experiments.
+This module defines the *world model* abstraction: a typed layer on top of
+``core.factor_graph.FactorGraph`` that understands high-level entities
+(poses, places, rooms, voxels, objects, agents) and also centralizes
+residual construction, JIT compilation, and solver orchestration.
 
-Key responsibilities
---------------------
-- Manage the underlying `FactorGraph` instance.
-- Provide ergonomic helpers to:
-    • Add variables with automatically assigned `NodeId`s.
-    • Add typed factors (e.g. priors, odometry, attachments).
-    • Pack / unpack state vectors for optimization.
-- Maintain simple bookkeeping structures (e.g. maps from user-facing
-  handles / indices back to `NodeId`s) so that experiments and higher-
-  level layers do not need to manipulate `NodeId` directly.
-
-Role in DSG-JIT
----------------
-The world model is the bridge between:
+In other words, :class:`WorldModel` is the bridge between:
 
     • Low-level optimization (factor graph, residual functions, manifolds)
     • High-level scene graph abstractions (poses, agents, rooms, voxels)
+    • Application code that wants a simple, stable API for "optimize my world"
 
-Experiments typically:
+The underlying :class:`FactorGraph` remains a relatively small, generic
+data structure that stores variables and factors and knows nothing about
+JAX, JIT, or manifolds. All JAX-specific logic (residual registries,
+vmap-based batching, Gauss–Newton wrappers, etc.) is owned by the world
+model.
 
-    1. Construct a `WorldModel`.
+Key responsibilities
+--------------------
+- Manage the underlying :class:`FactorGraph` instance.
+- Provide ergonomic helpers to:
+    • Add variables with automatically assigned :class:`NodeId`s.
+    • Add typed factors (e.g. priors, odometry, attachments, voxel terms).
+    • Pack / unpack state vectors for optimization.
+- Maintain simple bookkeeping structures (e.g. maps from user-facing
+  handles / indices back to :class:`NodeId`s) so that experiments and
+  higher-level layers do not need to manipulate :class:`NodeId` directly.
+- Maintain a residual-function registry that maps factor-type strings
+  (e.g. ``"odom_se3"``, ``"voxel_point_obs"``) to JAX-compatible
+  residuals.
+- Build unified, vmap-optimized residual and objective functions on
+  demand, caching compiled versions keyed by graph structure.
+- Expose convenient optimization entry points (e.g. :meth:`optimize`,
+  or :class:`optimization.jit_wrappers.JittedGN`) that operate directly
+  on the world model.
+
+Typical usage
+-------------
+Experiments and higher layers typically:
+
+    1. Construct a :class:`WorldModel`.
     2. Add variables & factors according to a scenario.
-    3. Call into `optimization.solvers` to run Gauss–Newton or a
-       manifold-aware variant using the world model’s factor graph.
-    4. Decode and interpret the optimized state via the world model’s
-       convenience accessors.
+    3. Register residual functions for each factor type of interest.
+    4. Build a residual or objective from the world model and call into
+       :mod:`dsg_jit.optimization.solvers` or :mod:`dsg_jit.optimization.jit_wrappers`
+       to run Gauss–Newton (potentially manifold-aware) or gradient-based
+       optimization.
+    5. Decode and interpret the optimized state via the world model’s
+       convenience accessors, or export it to higher-level scene-graph
+       structures.
 
 Design goals
 ------------
-- **Thin wrapper**: keep most of the complexity in `FactorGraph`,
-  `slam.manifold`, and residuals, so `WorldModel` stays small and easy to
-  reason about.
-- **Scene-friendly**: provide just enough structure that scene graphs and
-  voxel modules can build on top of it without duplicating graph logic.
+- **Backend separation**: keep :class:`FactorGraph` as a minimal,
+  backend-agnostic data structure (variables, factors, connectivity),
+  while :class:`WorldModel` owns JAX-facing logic such as residual
+  construction, vmap batching, and JIT caching.
+- **Scene-friendly**: provide enough structure that scene graphs, voxel
+  modules, and DSG layers can build on top of the world model without
+  duplicating graph or optimization logic.
+- **Ergonomic but explicit**: favor simple, explicit methods
+  (``add_variable``, ``add_factor``, ``register_residual``, ``optimize``)
+  over hidden magic, so that experiments remain easy to debug and extend.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any, Callable, Tuple
 
+import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 
 from dsg_jit.core.factor_graph import FactorGraph
 from dsg_jit.core.types import Variable, Factor, NodeId, FactorId
@@ -60,6 +86,7 @@ from dsg_jit.optimization.solvers import (
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.optimization.jit_wrappers import JittedGN
 
+ResidualFn = Callable[..., jnp.array]
 
 @dataclass
 class WorldModel:
@@ -79,6 +106,10 @@ class WorldModel:
     place_ids: Dict[str, NodeId]
     object_ids: Dict[str, NodeId]
     agent_pose_ids: Dict[str, Dict[int, NodeId]]
+    _residual_registry: Dict[str, ResidualFn]
+    _compiled_solvers: Dict[Tuple[str,str], Any]
+    
+    
 
     def __init__(self) -> None:
         # Core factor graph
@@ -91,6 +122,9 @@ class WorldModel:
         self.object_ids = {}
         # Mapping: agent_id -> {timestep -> NodeId}
         self.agent_pose_ids = {}
+        #Residual Registry
+        self._residual_registry: Dict[str, ResidualFn] = {}
+        self._compiled_solvers: Dict[Tuple[str, str], Any] = {}
 
     def add_variable(self, var_type: str, value: jnp.ndarray) -> NodeId:
         """Add a new variable to the underlying factor graph.
@@ -111,6 +145,9 @@ class WorldModel:
         nid = NodeId(nid_int)
         v = Variable(id=nid, type=var_type, value=value)
         self.fg.add_variable(v)
+        # Graph structure has changed; clear any cached compiled solvers
+        # and residuals so they can be rebuilt on demand.
+        self._compiled_solvers.clear()
         return nid
 
     def add_pose(self, value: jnp.ndarray, name: Optional[str] = None) -> NodeId:
@@ -222,6 +259,9 @@ class WorldModel:
             params=params,
         )
         self.fg.add_factor(f)
+        # Adding a factor changes the factor graph structure; clear cached
+        # compiled solvers / residuals so they can be rebuilt consistently.
+        self._compiled_solvers.clear()
         return fid
 
     def add_camera_bearings(
@@ -407,16 +447,16 @@ class WorldModel:
             methods; steps larger than this are clamped to improve stability.
         :returns: ``None``. The world model is updated in place.
         """
-        x_init, index = self.fg.pack_state()
-        residual_fn = self.fg.build_residual_function()
+        x_init, index = self.pack_state()
+        residual_fn = self.build_residual()
 
         if method == "gd":
-            obj = self.fg.build_objective()
+            obj = self.build_objective()
             cfg = GDConfig(learning_rate=lr, max_iters=iters)
             x_opt = gradient_descent(obj, x_init, cfg)
 
         elif method == "newton":
-            obj = self.fg.build_objective()
+            obj = self.build_objective()
             cfg = NewtonConfig(max_iters=iters, damping=damping)
             x_opt = damped_newton(obj, x_init, cfg)
 
@@ -425,7 +465,7 @@ class WorldModel:
             x_opt = gauss_newton(residual_fn, x_init, cfg)
 
         elif method == "manifold_gn":
-            block_slices, manifold_types = build_manifold_metadata(self.fg)
+            block_slices, manifold_types = build_manifold_metadata(packed_state=self.pack_state(),fg=self.fg)
             cfg = GNConfig(max_iters=iters, damping=damping, max_step_norm=max_step_norm)
             x_opt = gauss_newton_manifold(
                 residual_fn, x_init, block_slices, manifold_types, cfg
@@ -439,7 +479,7 @@ class WorldModel:
             raise ValueError(f"Unknown optimization method '{method}'")
 
         # Write back
-        values = self.fg.unpack_state(x_opt, index)
+        values = self.unpack_state(x_opt, index)
         for nid, val in values.items():
             self.fg.variables[nid].value = val
 
@@ -466,3 +506,533 @@ class WorldModel:
         :returns: A dictionary mapping ``int(NodeId)`` to JAX arrays.
         """
         return {int(nid): jnp.array(var.value) for nid, var in self.fg.variables.items()}
+    
+    # --- Residuals ---
+    def register_residual(self, factor_type: str, fn: Callable[..., Any]) -> None:
+        """Register a residual function for a given factor type.
+
+        This is the WorldModel-level registry that associates factor type
+        strings (e.g. ``"odom_se3"``, ``"voxel_point_obs"``) with
+        JAX-compatible residual functions. The registered functions are
+        consumed by higher-level residual builders such as
+        :meth:`build_residual`.
+
+        Parameters
+        ----------
+        factor_type : str
+            String identifier for the factor type. This must match the
+            ``type`` field stored in :class:`Factor` instances in the
+            underlying :class:`FactorGraph`.
+        fn : Callable
+            Residual function implementing the measurement model. The
+            exact signature is intentionally flexible, but it is expected
+            to be compatible with the unified residual builder returned by
+            :meth:`build_residual` (e.g. it may be vmapped across factors
+            of a given type).
+        """
+        self._residual_registry[factor_type] = fn
+
+    def get_residual(self, factor_type: str) -> Optional[Callable[..., Any]]:
+        """Return the residual function registered for a given factor type.
+
+        Parameters
+        ----------
+        factor_type : str
+            String identifier for the factor type.
+
+        Returns
+        -------
+        callable or None
+            The residual function previously registered via
+            :meth:`register_residual`, or ``None`` if no function is
+            registered for the requested type.
+        """
+        return self._residual_registry.get(factor_type)
+    
+    def get_residuals(self) -> Dict[str, ResidualFn]:
+        """Returns the residual registry, all currently registered residuals.
+        
+        :return: Dict[str, ResidualFn]
+        """
+        return self._residual_registry
+
+    def list_residual_types(self) -> List[str]:
+        """List all factor types with registered residual functions.
+
+        This is a convenience helper for debugging, diagnostics, and tests
+        to verify that the WorldModel has been configured with the expected
+        residuals for the current application.
+
+        Returns
+        -------
+        list of str
+            Sorted list of factor type strings for which residuals have
+            been registered.
+        """
+        return sorted(self._residual_registry.keys())
+    
+    def build_residual(
+        self,
+        *,
+        use_type_weights: bool = False,
+        learn_odom: bool = False,
+        learn_voxel_points: bool = False,
+    ) -> Callable[..., Any]:
+        """Construct a unified residual function for the current world.
+
+        This method is the WorldModel-level entry point for building a
+        JAX-compatible residual function that stacks all factor residuals.
+        It is intended to subsume the various specialized builders that
+        previously lived on :class:`FactorGraph`, such as:
+
+        * ``build_residual_function_with_type_weights``
+        * ``build_residual_function_se3_odom_param_multi``
+        * ``build_residual_function_voxel_point_param[_multi]``
+
+        Instead of having separate entry points, this method exposes a
+        single interface whose behavior is controlled by configuration
+        flags and a structured "hyper-parameter" argument passed at call
+        time.
+
+        Parameters
+        ----------
+        use_type_weights : bool, optional
+            Currently unused in this implementation. Reserved for future
+            integration with type-weighted residuals.
+        learn_odom : bool, optional
+            Currently unused in this implementation. Reserved for future
+            integration with learnable odometry parameters.
+        learn_voxel_points : bool, optional
+            Currently unused in this implementation. Reserved for future
+            integration with learnable voxel observation points.
+
+        Returns
+        -------
+        callable
+            A JAX-compatible residual function. In the simplest case
+            (all flags ``False``) the signature is ``r(x)`` where ``x`` is
+            a packed state vector.
+        """
+        # NOTE: For now, the configuration flags are accepted but not yet
+        # wired into the implementation. They are kept in the signature to
+        # preserve the planned API surface and avoid breaking callers.
+        if use_type_weights or learn_odom or learn_voxel_points:
+            raise NotImplementedError(
+                "Hyper-parameterized residuals are provided by dedicated "
+                "WorldModel helper methods (e.g. "
+                "build_residual_function_with_type_weights, "
+                "build_residual_function_se3_odom_param_multi). "
+                "The generic build_residual hyper-parameter flags are not "
+                "yet implemented."
+            )
+
+        # Snapshot the current factor graph structure
+        factors = tuple(self.fg.factors.values())
+        var_count = len(self.fg.variables)
+
+        # Build a simple structural signature so we can reuse compiled residuals
+        # for the same graph structure. This keeps the implementation light-
+        # weight while still avoiding unnecessary recompilation.
+        sig_parts = [f"{f.type}:{len(f.var_ids)}" for f in factors]
+        structure_sig = f"v{var_count}|" + "|".join(sig_parts)
+        cache_key = ("residual", structure_sig)
+
+        cached = self._compiled_solvers.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Group factors by (type, shape-signature) so we only vmap over
+        # truly compatible factors. This handles cases like "prior" factors
+        # on pose_se3 (dim 6) vs voxel_cell (dim 3), which cannot be stacked
+        # together in a single batch.
+        group_to_factors: Dict[Tuple[str, Tuple[int, ...]], List[Factor]] = {}
+        for f in factors:
+            var_dims: List[int] = []
+            for nid in f.var_ids:
+                v = self.fg.variables[nid].value
+                var_dims.append(int(jnp.asarray(v).shape[0]))
+            shape_sig = tuple(var_dims)
+            key = (f.type, shape_sig)
+            group_to_factors.setdefault(key, []).append(f)
+
+        residual_fns = self._residual_registry
+        _, index = self.pack_state()
+
+        def residual(x: jnp.ndarray) -> jnp.ndarray:
+            """Stacked residual function over all factors for the current graph.
+
+            This implementation groups factors by type and applies
+            :func:`jax.vmap` within each group when there are multiple
+            factors of the same type. For singleton groups we fall back to
+            a simple scalar evaluation to avoid unnecessary overhead.
+            """
+            var_values = self.unpack_state(x, index)
+            res_chunks: List[jnp.ndarray] = []
+
+            for (f_type, _shape_sig), flist in group_to_factors.items():
+                res_fn = residual_fns.get(f_type, None)
+                if res_fn is None:
+                    raise ValueError(
+                        f"No residual fn registered for factor type '{f_type}'"
+                    )
+
+                if not flist:
+                    continue
+
+                # Singleton group: no need to build batched structures, just
+                # evaluate directly.
+                if len(flist) == 1:
+                    f = flist[0]
+                    vs = [var_values[nid] for nid in f.var_ids]
+                    stacked = jnp.concatenate(vs)
+                    r = res_fn(stacked, f.params)
+                    res_chunks.append(jnp.reshape(r, (-1,)))
+                    continue
+
+                # Batched path: build [N_factors, D] stacked states and a
+                # batched parameter pytree, then vmap the residual.
+                stacked_states: List[jnp.ndarray] = []
+                params_list: List[Dict[str, Any]] = []
+
+                for f in flist:
+                    vs = [var_values[nid] for nid in f.var_ids]
+                    stacked_states.append(jnp.concatenate(vs))
+                    params_list.append(f.params)
+
+                stacked_states_arr = jnp.stack(stacked_states, axis=0)
+
+                # Convert list-of-dicts into a dict-of-batched-arrays pytree.
+                # We rely on the factors of a given type having compatible
+                # parameter structure (keys and shapes).
+                params_tree = jtu.tree_map(
+                    lambda *vals: jnp.stack(
+                        [jnp.asarray(v) for v in vals], axis=0
+                    ),
+                    *params_list,
+                )
+
+                def single_factor_residual(
+                    s: jnp.ndarray, p: Dict[str, Any]
+                ) -> jnp.ndarray:
+                    return res_fn(s, p)
+
+                batched_res = jax.vmap(single_factor_residual)(
+                    stacked_states_arr, params_tree
+                )
+                res_chunks.append(jnp.reshape(batched_res, (-1,)))
+
+            if not res_chunks:
+                return jnp.zeros((0,), dtype=x.dtype)
+
+            return jnp.concatenate(res_chunks, axis=0)
+
+        residual_jit = jax.jit(residual)
+        self._compiled_solvers[cache_key] = residual_jit
+        return residual_jit
+    
+        # ------------------------------------------------------------------
+    # Hyper-parameterized residual builders
+    # ------------------------------------------------------------------
+    def build_residual_function_with_type_weights(
+        self, factor_type_order: List[str]
+    ):
+        """Build a residual function that supports learnable type weights.
+
+        The returned function has signature ``r(x, log_scales)`` where
+        ``log_scales[i]`` is the log-weight associated with
+        ``factor_type_order[i]``. Missing types default to unit weight.
+
+        This is a WorldModel-based version of the old FactorGraph helper,
+        implemented in terms of ``pack_state``, ``unpack_state``, and the
+        WorldModel residual registry.
+        """
+        factors = list(self.fg.factors.values())
+        residual_fns = self._residual_registry
+        _, index = self.pack_state()
+
+        type_to_idx = {t: i for i, t in enumerate(factor_type_order)}
+
+        def residual(x: jnp.ndarray, log_scales: jnp.ndarray) -> jnp.ndarray:
+            var_values = self.unpack_state(x, index)
+            res_list: List[jnp.ndarray] = []
+
+            for factor in factors:
+                res_fn = residual_fns.get(factor.type, None)
+                if res_fn is None:
+                    raise ValueError(
+                        f"No residual fn registered for factor type '{factor.type}'"
+                    )
+
+                stacked = jnp.concatenate(
+                    [var_values[vid] for vid in factor.var_ids], axis=0
+                )
+                r = res_fn(stacked, factor.params)  # (k,)
+
+                idx = type_to_idx.get(factor.type, None)
+                if idx is not None:
+                    scale = jnp.exp(log_scales[idx])
+                else:
+                    scale = 1.0
+
+                r_scaled = scale * r
+                r_scaled = jnp.reshape(r_scaled, (-1,))
+                res_list.append(r_scaled)
+
+            if not res_list:
+                return jnp.zeros((0,), dtype=x.dtype)
+
+            return jnp.concatenate(res_list, axis=0)
+
+        return residual
+
+    def build_residual_function_se3_odom_param_multi(self):
+        """Build a residual function with learnable SE(3) odometry.
+
+        All factors of type ``\"odom_se3\"`` are treated as depending on a
+        parameter array ``theta`` of shape ``(K, 6)``, where ``K`` is the
+        number of odometry factors. Each row of ``theta`` represents a
+        perturbable se(3) measurement.
+
+        Returns
+        -------
+        (residual_fn, index)
+            ``residual_fn(x, theta)`` and the pack index mapping from
+            :meth:`pack_state`.
+        """
+        factors = list(self.fg.factors.values())
+        residual_fns = self._residual_registry
+
+        _, index = self.pack_state()
+
+        def residual(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+            """
+            Parameters
+            ----------
+            x : jnp.ndarray
+                Flat state vector.
+            theta : jnp.ndarray
+                Shape (K, 6), per-odom se(3) measurement.
+            """
+            var_values = self.unpack_state(x, index)
+            res_list: List[jnp.ndarray] = []
+            odom_idx = 0
+
+            for f in factors:
+                res_fn = residual_fns.get(f.type, None)
+                if res_fn is None:
+                    raise ValueError(
+                        f"No residual fn registered for factor type '{f.type}'"
+                    )
+
+                stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids])
+
+                if f.type == "odom_se3":
+                    meas = theta[odom_idx]  # (6,)
+                    odom_idx += 1
+                    base_params = dict(f.params)
+                    base_params["measurement"] = meas
+                    params = base_params
+                else:
+                    params = f.params
+
+                r = res_fn(stacked, params)
+                w = params.get("weight", 1.0)
+                res_list.append(jnp.sqrt(w) * r)
+
+            if not res_list:
+                return jnp.zeros((0,), dtype=x.dtype)
+
+            return jnp.concatenate(res_list)
+
+        return residual, index
+
+    def build_residual_function_voxel_point_param(self):
+        """Build a residual function with a shared voxel observation point.
+
+        All factors of type ``\"voxel_point_obs\"`` will use a dynamic
+        ``point_world`` argument passed at call time, rather than a fixed
+        value stored in the factor params.
+
+        Returns
+        -------
+        (residual_fn, index)
+            ``residual_fn(x, point_world)`` where ``point_world`` has
+            shape (3,).
+        """
+        factors = list(self.fg.factors.values())
+        residual_fns = self._residual_registry
+
+        _, index = self.pack_state()
+
+        def residual(x: jnp.ndarray, point_world: jnp.ndarray) -> jnp.ndarray:
+            """
+            Parameters
+            ----------
+            x : jnp.ndarray
+                Flat state vector.
+            point_world : jnp.ndarray
+                Shape (3,), observation point in world coords for ALL
+                voxel_point_obs factors. For now we assume a single
+                voxel_point_obs, or that all share the same point.
+            """
+            var_values = self.unpack_state(x, index)
+            res_list: List[jnp.ndarray] = []
+
+            for f in factors:
+                res_fn = residual_fns.get(f.type, None)
+                if res_fn is None:
+                    raise ValueError(
+                        f"No residual fn registered for factor type '{f.type}'"
+                    )
+
+                stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids])
+
+                if f.type == "voxel_point_obs":
+                    base_params = dict(f.params)
+                    base_params["point_world"] = point_world
+                    params = base_params
+                else:
+                    params = f.params
+
+                r = res_fn(stacked, params)
+                w = params.get("weight", 1.0)
+                res_list.append(jnp.sqrt(w) * r)
+
+            if not res_list:
+                return jnp.zeros((0,), dtype=x.dtype)
+
+            return jnp.concatenate(res_list)
+
+        return residual, index
+
+    def build_residual_function_voxel_point_param_multi(self):
+        """Build a residual function with per-factor voxel observation points.
+
+        Each ``\"voxel_point_obs\"`` factor consumes a row of the parameter
+        array ``theta`` of shape ``(K, 3)``, where ``K`` is the number of
+        such factors.
+
+        Returns
+        -------
+        (residual_fn, index)
+            ``residual_fn(x, theta)`` where ``theta`` has shape (K, 3).
+        """
+        factors = list(self.fg.factors.values())
+        residual_fns = self._residual_registry
+
+        _, index = self.pack_state()
+
+        def residual(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+            """
+            Parameters
+            ----------
+            x : jnp.ndarray
+                Flat state vector.
+            theta : jnp.ndarray
+                Shape (K, 3), per-voxel-point observation in world
+                coordinates.
+            """
+            var_values = self.unpack_state(x, index)
+            res_list: List[jnp.ndarray] = []
+            obs_idx = 0  # python counter over voxel_point_obs factors
+
+            for f in factors:
+                res_fn = residual_fns.get(f.type, None)
+                if res_fn is None:
+                    raise ValueError(
+                        f"No residual fn registered for factor type '{f.type}'"
+                    )
+
+                stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids])
+
+                if f.type == "voxel_point_obs":
+                    point_world = theta[obs_idx]  # (3,)
+                    obs_idx += 1
+                    base_params = dict(f.params)
+                    base_params["point_world"] = point_world
+                    params = base_params
+                else:
+                    params = f.params
+
+                r = res_fn(stacked, params)
+                w = params.get("weight", 1.0)
+                res_list.append(jnp.sqrt(w) * r)
+
+            if not res_list:
+                return jnp.zeros((0,), dtype=x.dtype)
+
+            return jnp.concatenate(res_list)
+
+        return residual, index
+
+    def build_objective(self):
+        """Construct a scalar objective ``f(x) = ||r(x)||^2``.
+
+        This wraps :meth:`build_residual` and returns a function
+        that computes the squared L2 norm of the residual vector.
+
+        :return: JIT-compiled objective function ``f(x)``.
+        :rtype: Callable[[jnp.ndarray], jnp.ndarray]
+        """
+        residual = self.build_residual()
+
+        def objective(x: jnp.ndarray) -> jnp.ndarray:
+            r = residual(x)
+            return jnp.sum(r ** 2)
+
+        return jax.jit(objective)
+    
+    # --- State packing/unpacking ---
+    def _build_state_index(self) -> Dict[NodeId, Tuple[int, int]]:
+        """Build a contiguous index for the global state vector.
+
+        Each variable is assumed to be a 1D array. The method assigns a
+        contiguous block ``(start_index, dim)`` to every :class:`NodeId`.
+
+        :return: Mapping from node id to ``(start_index, dimension)`` in the
+            flattened state vector.
+        :rtype: Dict[NodeId, Tuple[int, int]]
+        """
+        index: Dict[NodeId, Tuple[int, int]] = {}
+        offset = 0
+        for node_id, var in sorted(self.fg.variables.items(), key=lambda x: x[0]):
+            v = jnp.asarray(var.value)
+            dim = v.shape[0]
+            index[node_id] = (offset, dim)
+            offset += dim
+        return index
+
+    def pack_state(self) -> jnp.ndarray:
+        """Pack all variable values into a single flat JAX array.
+
+        The variables are ordered by sorted :class:`NodeId` to ensure stable
+        indexing across calls.
+
+        :return: Tuple of ``(x, index)`` where ``x`` is the concatenated
+            state vector and ``index`` is the mapping produced by
+            :meth:`_build_state_index`.
+        :rtype: Tuple[jnp.ndarray, Dict[NodeId, Tuple[int, int]]]
+        """
+        index = self._build_state_index()
+        chunks = []
+        for node_id in sorted(self.fg.variables.keys()):
+            var = self.fg.variables[node_id]
+            chunks.append(jnp.asarray(var.value))
+        return jnp.concatenate(chunks), index
+
+    def unpack_state(self, x: jnp.ndarray, index: Dict[NodeId, Tuple[int, int]]) -> Dict[NodeId, jnp.ndarray]:
+        """Unpack a flat state vector back into per-variable arrays.
+
+        :param x: Flattened state vector produced by :meth:`pack_state` or
+            produced by an optimizer.
+        :type x: jnp.ndarray
+        :param index: Mapping from :class:`NodeId` to ``(start, dim)`` blocks
+            as returned by :meth:`_build_state_index`.
+        :type index: Dict[NodeId, Tuple[int, int]]
+        :return: Mapping from node id to its corresponding slice of ``x``.
+        :rtype: Dict[NodeId, jnp.ndarray]
+        """
+        result: Dict[NodeId, jnp.ndarray] = {}
+        for node_id, (start, dim) in index.items():
+            result[node_id] = x[start:start+dim]
+        return result

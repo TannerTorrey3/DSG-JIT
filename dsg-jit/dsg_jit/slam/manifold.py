@@ -66,9 +66,12 @@ Lie groups for velocities) by:
 from __future__ import annotations
 
 from typing import Dict, Tuple
+import jax.numpy as jnp
 
 from dsg_jit.core.types import NodeId
 from dsg_jit.core.factor_graph import FactorGraph
+
+
 
 TYPE_TO_MANIFOLD: Dict[str, str] = {
     "pose_se3": "se3",
@@ -97,7 +100,8 @@ def get_manifold_for_var_type(var_type: str) -> str:
 
 
 def build_manifold_metadata(
-    fg: FactorGraph,
+    packed_state: jnp.ndarray,
+    fg = FactorGraph
 ) -> Tuple[Dict[NodeId, slice], Dict[NodeId, str]]:
     """Build manifold metadata for a factor graph.
 
@@ -125,7 +129,7 @@ def build_manifold_metadata(
         ``manifold_types`` is a mapping from :class:`~core.types.NodeId`
         to a manifold model name string.
     """
-    _, index = fg.pack_state()
+    _, index = packed_state
 
     block_slices: Dict[NodeId, slice] = {}
     manifold_types: Dict[NodeId, str] = {}

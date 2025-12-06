@@ -117,7 +117,7 @@ class DSGTrainer:
         :param log_scales: Array of shape ``(T,)`` containing per-factor-type log-scale weights.
         :return: Optimized flat state vector ``x`` after the inner GD loop.
         """
-        x0, _ = self.fg.pack_state()
+        x0, _ = self.wm.pack_state()
 
         def loss_x(x, log_scales):
             r = self.residual_w(x, log_scales)
@@ -160,5 +160,5 @@ class DSGTrainer:
         :param x: Flat state vector to be unpacked.
         :return: Mapping from ``NodeId`` to the corresponding slice of ``x`` as a JAX array.
         """
-        _, index = self.fg.pack_state()
-        return self.fg.unpack_state(x, index)
+        _, index = self.wm.pack_state()
+        return self.wm.unpack_state(x, index)

@@ -295,7 +295,7 @@ class DynamicSceneGraph:
             :func:`optimization.solvers.gauss_newton_manifold`.
         :type x_opt: jax.numpy.ndarray
         :param index: Mapping from :class:`NodeId` to ``(start, dim)`` tuples as
-            returned by :meth:`core.factor_graph.FactorGraph.pack_state`.
+            returned by :meth:`world.model.WorldModel.pack_state`.
         :type index: Mapping[NodeId, Tuple[int, int]]
         :return: Array of shape ``(T, 6)`` containing the se(3) vectors for each
             time step in chronological order.
@@ -324,7 +324,7 @@ class DynamicSceneGraph:
             Gauss–Newton solvers.
         :type x_opt: jax.numpy.ndarray
         :param index: Mapping from :class:`NodeId` to ``(start, dim)`` tuples as
-            returned by :meth:`core.factor_graph.FactorGraph.pack_state`.
+            returned by :meth:`world.model.WorldModel.pack_state`.
         :type index: Mapping[NodeId, Tuple[int, int]]
         :return: Dictionary mapping each agent identifier to its optimized
             trajectory as an array of shape ``(T_i, 6)``.

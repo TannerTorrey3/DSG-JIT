@@ -62,7 +62,7 @@ from typing import Dict, Tuple, List
 
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Factor
+from dsg_jit.core.types import NodeId
 from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
@@ -130,18 +130,18 @@ class SceneGraphWorld:
         self.room_place_edges = []
 
         # --- Global residuals registry ---
-        self.wm.fg.register_residual("prior", prior_residual)
-        self.wm.fg.register_residual("odom_se3", odom_se3_residual)
-        self.wm.fg.register_residual("odom_se3_geodesic", odom_se3_geodesic_residual)
-        self.wm.fg.register_residual("pose_place_attachment", pose_place_attachment_residual)
-        self.wm.fg.register_residual("object_at_pose", object_at_pose_residual)
-        self.wm.fg.register_residual("pose_temporal_smoothness", pose_temporal_smoothness_residual)
-        self.wm.fg.register_residual("pose_landmark_relative", pose_landmark_relative_residual)
-        self.wm.fg.register_residual("pose_landmark_bearing", pose_landmark_bearing_residual)
-        self.wm.fg.register_residual("pose_voxel_point", pose_voxel_point_residual)
-        self.wm.fg.register_residual("voxel_smoothness", voxel_smoothness_residual)
-        self.wm.fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
-        self.wm.fg.register_residual("range", range_residual)
+        self.wm.register_residual("prior", prior_residual)
+        self.wm.register_residual("odom_se3", odom_se3_residual)
+        self.wm.register_residual("odom_se3_geodesic", odom_se3_geodesic_residual)
+        self.wm.register_residual("pose_place_attachment", pose_place_attachment_residual)
+        self.wm.register_residual("object_at_pose", object_at_pose_residual)
+        self.wm.register_residual("pose_temporal_smoothness", pose_temporal_smoothness_residual)
+        self.wm.register_residual("pose_landmark_relative", pose_landmark_relative_residual)
+        self.wm.register_residual("pose_landmark_bearing", pose_landmark_bearing_residual)
+        self.wm.register_residual("pose_voxel_point", pose_voxel_point_residual)
+        self.wm.register_residual("voxel_smoothness", voxel_smoothness_residual)
+        self.wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
+        self.wm.register_residual("range", range_residual)
 
     # --- Variable helpers ---
 

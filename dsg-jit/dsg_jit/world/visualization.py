@@ -416,7 +416,7 @@ def plot_scenegraph_3d(
         ``place_parents``, ``object_parents``, and ``place_attachments``,
         following the conventions used by :class:`SceneGraphWorld`.
     :param x_opt: Optimized flat state vector (e.g. from
-        :meth:`FactorGraph.pack_state`), containing the current estimates
+        :meth:`WorldModel.pack_state`), containing the current estimates
         of all node states.
     :param index: Mapping from node identifier to either a slice or
         ``(start, dim)`` tuple describing where that node’s state lives
