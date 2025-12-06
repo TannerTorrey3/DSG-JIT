@@ -1,9 +1,7 @@
-
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 from dsg_jit.optimization.solvers import GDConfig, gradient_descent
 
@@ -38,58 +36,50 @@ def _build_chain():
         - backpropagate loss wrt log_scales
         - take one grad step on log_scales and check loss decreases
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Slightly off initial guesses
-    p0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
-        value=jnp.array([0.2, -0.1, 0.0, 0.01, -0.02, 0.0], dtype=jnp.float32),
+    p0_val = jnp.array(
+        [0.2, -0.1, 0.0, 0.01, -0.02, 0.0], dtype=jnp.float32
     )
-    p1 = Variable(
-        id=NodeId(1),
-        type="pose_se3",
-        value=jnp.array([0.8, 0.2, 0.0, 0.02, 0.01, 0.0], dtype=jnp.float32),
+    p1_val = jnp.array(
+        [0.8, 0.2, 0.0, 0.02, 0.01, 0.0], dtype=jnp.float32
     )
 
-    fg.add_variable(p0)
-    fg.add_variable(p1)
+    # Add pose variables via WorldModel and keep track of their NodeIds
+    p0_id = wm.add_variable(var_type="pose_se3", value=p0_val)
+    p1_id = wm.add_variable(var_type="pose_se3", value=p1_val)
 
     # Prior on pose0 at identity
-    f_prior0 = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(p0_id,),
         params={"target": jnp.zeros(6, dtype=jnp.float32)},
     )
 
     # Additive odometry measurement (slightly off)
     meas01 = jnp.array([0.9, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
-    f_odom01 = Factor(
-        id=FactorId(1),
-        type="odom_se3",
-        var_ids=(NodeId(0), NodeId(1)),
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(p0_id, p1_id),
         params={"measurement": meas01},
     )
 
-    fg.add_factor(f_prior0)
-    fg.add_factor(f_odom01)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
 
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
-
-    # Pack state and slices
-    x_init, index = fg.pack_state()
-    p0_slice = _to_slice(index[NodeId(0)])
-    p1_slice = _to_slice(index[NodeId(1)])
+    # Pack state and slices using WorldModel's packing
+    x_init, index = wm.pack_state()
+    p0_slice = _to_slice(index[p0_id])
+    p1_slice = _to_slice(index[p1_id])
 
     # Ground truth poses
     gt0 = jnp.zeros(6, dtype=jnp.float32)
     gt1 = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     gt_stack = jnp.stack([gt0, gt1], axis=0)
 
-    return fg, x_init, (p0_slice, p1_slice), gt_stack
+    return wm, x_init, (p0_slice, p1_slice), gt_stack
 
 
 def test_learnable_factor_type_weights_scaling_and_grad():
@@ -104,11 +94,14 @@ def test_learnable_factor_type_weights_scaling_and_grad():
           * the odom residual components scale by exp(log_scale),
           * gradients wrt log_scales are finite (no NaNs).
     """
-    fg, x_init, (p0_slice, p1_slice), _ = _build_chain()
+    wm, x_init, (p0_slice, p1_slice), _ = _build_chain()
 
     # Only learn/scale 'odom_se3'. 'prior' remains unweighted implicitly (scale=1).
     factor_type_order = ["odom_se3"]
-    residual_w = fg.build_residual_function_with_type_weights(factor_type_order)
+
+    # Build the weighted residual using the WorldModel hyper-parameter builder.
+    # This is the analogue of the old FactorGraph.build_residual_function_with_type_weights.
+    residual_w = wm.build_residual_function_with_type_weights(factor_type_order)
 
     # Two different log_scales for odom: 0 -> scale 1,  ln(2) -> scale 2
     log_s0 = jnp.array([0.0], dtype=jnp.float32)           # scale = 1

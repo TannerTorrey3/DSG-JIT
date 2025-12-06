@@ -1,8 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import prior_residual, pose_landmark_relative_residual
 from dsg_jit.optimization.solvers import GNConfig, gauss_newton
 
@@ -22,72 +21,55 @@ def test_pose_landmark_relative_single_pose():
     Gauss–Newton recovers the correct configuration.
     """
 
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Slightly perturbed initial guesses
-    pose0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
-        value=jnp.array([0.1, -0.1, 0.05, 0.01, -0.02, 0.005]),
-    )
-    landmark0 = Variable(
-        id=NodeId(1),
-        type="landmark3d",
-        value=jnp.array([1.1, 2.2, 2.9]),
-    )
+    pose0_val = jnp.array([0.1, -0.1, 0.05, 0.01, -0.02, 0.005])
+    landmark0_val = jnp.array([1.1, 2.2, 2.9])
 
-    fg.add_variable(pose0)
-    fg.add_variable(landmark0)
+    pose0_id = wm.add_variable(var_type="pose_se3", value=pose0_val)
+    landmark0_id = wm.add_variable(var_type="landmark3d", value=landmark0_val)
 
     # Prior on pose0: identity
-    f_prior = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose0_id,),
         params={"target": jnp.zeros(6)},
     )
 
     # Relative measurement: landmark in pose frame should be [1, 2, 3]
     meas = jnp.array([1.0, 2.0, 3.0])
-    f_rel = Factor(
-        id=FactorId(1),
-        type="pose_landmark_relative",
-        var_ids=(NodeId(0), NodeId(1)),
+    wm.add_factor(
+        f_type="pose_landmark_relative",
+        var_ids=(pose0_id, landmark0_id),
         params={"measurement": meas},
     )
-    f_prior_lmk = Factor(
-    id=FactorId(2),
-    type="prior",
-    var_ids=(NodeId(1),),
-    params={"target": jnp.array([1.0, 2.0, 3.0])},
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(landmark0_id,),
+        params={"target": jnp.array([1.0, 2.0, 3.0])},
     )
 
-    fg.add_factor(f_prior)
-    fg.add_factor(f_prior_lmk)
-    fg.add_factor(f_rel)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("pose_landmark_relative", pose_landmark_relative_residual)
 
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("pose_landmark_relative", pose_landmark_relative_residual)
+    # Build residual fn and run Gauss–Newton using WorldModel
+    x_init, index = wm.pack_state()
+    x0 = x_init
 
-    # Build residual fn and run Gauss–Newton
-    x_init, index = fg.pack_state()
-
-    x0, index = fg.pack_state()
-
-# Quick sanity check: residual at initial guess
-    residual_fn_debug = fg.build_residual_function()
+    # Quick sanity check: residual at initial guess
+    residual_fn_debug = wm.build_residual()
     r0 = residual_fn_debug(x0)
     print("initial residual:", r0)
     assert jnp.all(jnp.isfinite(r0))
-    residual_fn = fg.build_residual_function()
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(max_iters=30, damping=1e-2, max_step_norm=0.1)
     x_opt = gauss_newton(residual_fn, x_init, cfg)
 
-    values = fg.unpack_state(x_opt, index)
-    p_opt = values[NodeId(0)]
-    l_opt = values[NodeId(1)]
+    values = wm.unpack_state(x_opt, index)
+    p_opt = values[pose0_id]
+    l_opt = values[landmark0_id]
 
     # pose ~ identity
     for i in range(6):

@@ -30,8 +30,8 @@ def test_voxel_grid_1d_chain_smoothing():
 
     # Manually ensure residuals are registered (SceneGraphWorld.__init__ should
     # already do this, but this makes the test self-contained if that changes).
-    sg.wm.fg.register_residual("prior", prior_residual)
-    sg.wm.fg.register_residual("voxel_smoothness", voxel_smoothness_residual)
+    sg.wm.register_residual("prior", prior_residual)
+    sg.wm.register_residual("voxel_smoothness", voxel_smoothness_residual)
 
     # Build a 1D grid: 4 voxels along x, spacing 1.0
     spec = VoxelGridSpec(

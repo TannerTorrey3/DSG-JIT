@@ -2,8 +2,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import prior_residual, odom_se3_geodesic_residual
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
@@ -21,31 +20,23 @@ def test_se3_manifold_loop_closure():
         The solver globally pulls all poses into a self-consistent loop.
     """
 
-    fg = FactorGraph()
+    wm = WorldModel()
     theta = 0.1  # small rotation (~6 degrees)
 
     # Initial (intentionally sloppy) guesses
-    pose0 = Variable(NodeId(0), "pose_se3",
-        jnp.array([0.2, 0.1, 0.0, 0.01, -0.01, 0.01])
-    )
-    pose1 = Variable(NodeId(1), "pose_se3",
-        jnp.array([1.1, -0.1, 0.0, -0.02, 0.02, theta + 0.03])
-    )
-    pose2 = Variable(NodeId(2), "pose_se3",
-        jnp.array([1.9, 0.2, 0.0, 0.03, -0.01, 2 * theta - 0.04])
-    )
+    pose0_val = jnp.array([0.2, 0.1, 0.0, 0.01, -0.01, 0.01])
+    pose1_val = jnp.array([1.1, -0.1, 0.0, -0.02, 0.02, theta + 0.03])
+    pose2_val = jnp.array([1.9, 0.2, 0.0, 0.03, -0.01, 2 * theta - 0.04])
 
-    fg.add_variable(pose0)
-    fg.add_variable(pose1)
-    fg.add_variable(pose2)
+    pose0_id = wm.add_variable(var_type="pose_se3", value=pose0_val)
+    pose1_id = wm.add_variable(var_type="pose_se3", value=pose1_val)
+    pose2_id = wm.add_variable(var_type="pose_se3", value=pose2_val)
 
     # Prior on pose0
-    fg.add_factor(
-        Factor(
-            FactorId(0), "prior",
-            (NodeId(0),),
-            {"target": jnp.zeros(6)}
-        )
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose0_id,),
+        params={"target": jnp.zeros(6)},
     )
 
     # Forward odometry
@@ -53,36 +44,46 @@ def test_se3_manifold_loop_closure():
     meas12 = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, theta])
     meas20 = jnp.array([-2.0, 0.0, 0.0, 0.0, 0.0, -2 * theta])  # closes loop
 
-    fg.add_factor(
-        Factor(FactorId(1), "odom_se3_geodesic", (NodeId(0), NodeId(1)), {"measurement": meas01})
+    wm.add_factor(
+        f_type="odom_se3_geodesic",
+        var_ids=(pose0_id, pose1_id),
+        params={"measurement": meas01},
     )
-    fg.add_factor(
-        Factor(FactorId(2), "odom_se3_geodesic", (NodeId(1), NodeId(2)), {"measurement": meas12})
+    wm.add_factor(
+        f_type="odom_se3_geodesic",
+        var_ids=(pose1_id, pose2_id),
+        params={"measurement": meas12},
     )
-    fg.add_factor(
-        Factor(FactorId(3), "odom_se3_geodesic", (NodeId(2), NodeId(0)), {"measurement": meas20})
+    wm.add_factor(
+        f_type="odom_se3_geodesic",
+        var_ids=(pose2_id, pose0_id),
+        params={"measurement": meas20},
     )
 
     # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3_geodesic", odom_se3_geodesic_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3_geodesic", odom_se3_geodesic_residual)
 
     # Metadata
-    x_init, index = fg.pack_state()
-    residual_fn = fg.build_residual_function()
-    block_slices, manifold_types = build_manifold_metadata(fg)
+    x_init, index = wm.pack_state()
+    residual_fn = wm.build_residual()
+    packed_state = (x_init, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=wm.fg,
+    )
 
     # Solve
     cfg = GNConfig(max_iters=30, damping=5e-3, max_step_norm=0.5)
     x_opt = gauss_newton_manifold(residual_fn, x_init, block_slices, manifold_types, cfg)
 
-    values = fg.unpack_state(x_opt, index)
-    p0, p1, p2 = values[NodeId(0)], values[NodeId(1)], values[NodeId(2)]
+    values = wm.unpack_state(x_opt, index)
+    p0, p1, p2 = values[pose0_id], values[pose1_id], values[pose2_id]
 
     # Check consistency of loop: 0->1->2->0 produces near-zero total error
     # Check that each factor residual is small at the solution.
 
-# Prior on pose0
+    # Prior on pose0
     r_prior = prior_residual(p0, {"target": jnp.zeros(6)})
 
     # Odom 0->1
@@ -99,7 +100,7 @@ def test_se3_manifold_loop_closure():
 
     # All residuals must be small
     for r in [r_prior, r01, r12, r20]:
-    # SE(3) is nonlinear; per-component residuals don't need to be
-    # < 5e-2. A small L2 norm is a more realistic criterion.
+        # SE(3) is nonlinear; per-component residuals don't need to be
+        # < 5e-2. A small L2 norm is a more realistic criterion.
         norm_r = float(jnp.linalg.norm(r))
         assert norm_r == pytest.approx(0.0, abs=1e-1)

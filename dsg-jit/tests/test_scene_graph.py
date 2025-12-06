@@ -3,8 +3,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import prior_residual
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.scene_graph.relations import room_centroid_residual
@@ -28,69 +27,55 @@ def test_room_centroid_with_fixed_places():
       - room ≈ (0 + 2 + 4) / 3 = 2
     """
 
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # --- Variables: 1D positions for simplicity ---
-    place0 = Variable(id=NodeId(0), type="place1d", value=jnp.array([0.5]))
-    place1 = Variable(id=NodeId(1), type="place1d", value=jnp.array([2.5]))
-    place2 = Variable(id=NodeId(2), type="place1d", value=jnp.array([3.5]))
-    room   = Variable(id=NodeId(3), type="room1d",  value=jnp.array([5.0]))
-
-    fg.add_variable(place0)
-    fg.add_variable(place1)
-    fg.add_variable(place2)
-    fg.add_variable(room)
+    place0_id = wm.add_variable(var_type="place1d", value=jnp.array([0.5]))
+    place1_id = wm.add_variable(var_type="place1d", value=jnp.array([2.5]))
+    place2_id = wm.add_variable(var_type="place1d", value=jnp.array([3.5]))
+    room_id   = wm.add_variable(var_type="room1d",  value=jnp.array([5.0]))
 
     # --- Priors on places to fix them near 0, 2, 4 ---
-    f_prior_p0 = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(place0_id,),
         params={"target": jnp.array([0.0])},
     )
-    f_prior_p1 = Factor(
-        id=FactorId(1),
-        type="prior",
-        var_ids=(NodeId(1),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(place1_id,),
         params={"target": jnp.array([2.0])},
     )
-    f_prior_p2 = Factor(
-        id=FactorId(2),
-        type="prior",
-        var_ids=(NodeId(2),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(place2_id,),
         params={"target": jnp.array([4.0])},
     )
 
     # --- Room centroid factor: room tied to mean of places ---
-    f_room = Factor(
-        id=FactorId(3),
-        type="room_centroid",
-        var_ids=(NodeId(3), NodeId(0), NodeId(1), NodeId(2)),
+    wm.add_factor(
+        f_type="room_centroid",
+        var_ids=(room_id, place0_id, place1_id, place2_id),
         params={"dim": jnp.array(1)},  # 1D positions
     )
 
-    fg.add_factor(f_prior_p0)
-    fg.add_factor(f_prior_p1)
-    fg.add_factor(f_prior_p2)
-    fg.add_factor(f_room)
-
     # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("room_centroid", room_centroid_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("room_centroid", room_centroid_residual)
 
-    # Optimize
-    x_init, index = fg.pack_state()
-    objective = fg.build_objective()
+    # Optimize using WorldModel
+    x_init, index = wm.pack_state()
+    objective = wm.build_objective()
 
     cfg = GDConfig(learning_rate=0.1, max_iters=400)
     x_opt = gradient_descent(objective, x_init, cfg)
 
-    values = fg.unpack_state(x_opt, index)
+    values = wm.unpack_state(x_opt, index)
 
-    p0_opt = float(values[NodeId(0)][0])
-    p1_opt = float(values[NodeId(1)][0])
-    p2_opt = float(values[NodeId(2)][0])
-    r_opt  = float(values[NodeId(3)][0])
+    p0_opt = float(values[place0_id][0])
+    p1_opt = float(values[place1_id][0])
+    p2_opt = float(values[place2_id][0])
+    r_opt  = float(values[room_id][0])
 
     # Places close to desired priors
     assert p0_opt == pytest.approx(0.0, rel=1e-3, abs=1e-3)

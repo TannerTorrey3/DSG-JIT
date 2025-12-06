@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
 from dsg_jit.optimization.solvers import GDConfig, gradient_descent
 from dsg_jit.slam.measurements import (
@@ -26,12 +26,12 @@ def build_hybrid_graph_for_test():
       voxel centers ~ [0, 1, 2] on x, y ~ 0
     """
 
-    fg = FactorGraph()
+    wm =  WorldModel()
 
     # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
-    fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
     # --- Variables: 3 poses + 3 voxels ---
 
@@ -45,10 +45,9 @@ def build_hybrid_graph_for_test():
         jnp.array([1.8, 0.03, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
     ]
 
-    for i, val in enumerate(pose_init):
-        nid = NodeId(i)
+    for val in pose_init:
+        nid = wm.add_variable(var_type="pose_se3", value=val)
         pose_ids.append(nid)
-        fg.add_variable(Variable(id=nid, type="pose_se3", value=val))
 
     # Voxels: rough guesses near x ~ [0,1,2] with y offsets
     voxel_init = [
@@ -57,21 +56,17 @@ def build_hybrid_graph_for_test():
         jnp.array([2.1, 0.1, 0.0], dtype=jnp.float32),
     ]
 
-    for i, val in enumerate(voxel_init):
-        nid = NodeId(10 + i)  # keep them distinct from poses
+    for val in voxel_init:
+        nid = wm.add_variable(var_type="voxel3d", value=val)
         voxel_ids.append(nid)
-        fg.add_variable(Variable(id=nid, type="voxel3d", value=val))
 
     # --- Factors ---
 
     # Prior on p0: identity in se(3)
-    fg.add_factor(
-        Factor(
-            id=FactorId(0),
-            type="prior",
-            var_ids=(pose_ids[0],),
-            params={"target": jnp.zeros(6, dtype=jnp.float32)},
-        )
+    wm.add_factor(
+        f_type="prior",
+        var_ids=[pose_ids[0]],
+        params={"target": jnp.zeros(6, dtype=jnp.float32)}
     )
 
     # Odometry factors p0->p1, p1->p2 (measurements will be overridden by theta["odom"])
@@ -81,21 +76,16 @@ def build_hybrid_graph_for_test():
         jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
     ]
 
-    fg.add_factor(
-        Factor(
-            id=FactorId(1),
-            type="odom_se3",
-            var_ids=(pose_ids[0], pose_ids[1]),
-            params={"measurement": odom_meas_init[0]},
-        )
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(pose_ids[0], pose_ids[1]),
+        params={"measurement": odom_meas_init[0]}
     )
-    fg.add_factor(
-        Factor(
-            id=FactorId(2),
-            type="odom_se3",
-            var_ids=(pose_ids[1], pose_ids[2]),
-            params={"measurement": odom_meas_init[1]},
-        )
+
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(pose_ids[1],pose_ids[2]),
+        params={"measurement": odom_meas_init[1]}
     )
 
     # Voxel observations: each (pose_i, voxel_i) with point_world as learnable param
@@ -106,35 +96,28 @@ def build_hybrid_graph_for_test():
         jnp.array([2.3, 0.2, 0.0], dtype=jnp.float32),
     ]
 
-    fg.add_factor(
-        Factor(
-            id=FactorId(3),
-            type="voxel_point_obs",
-            var_ids=(pose_ids[0], voxel_ids[0]),
-            params={"point_world": obs_init[0]},
-        )
-    )
-    fg.add_factor(
-        Factor(
-            id=FactorId(4),
-            type="voxel_point_obs",
-            var_ids=(pose_ids[1], voxel_ids[1]),
-            params={"point_world": obs_init[1]},
-        )
-    )
-    fg.add_factor(
-        Factor(
-            id=FactorId(5),
-            type="voxel_point_obs",
-            var_ids=(pose_ids[2], voxel_ids[2]),
-            params={"point_world": obs_init[2]},
-        )
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(pose_ids[0],voxel_ids[0]),
+        params={"point_world": obs_init[0]}
     )
 
-    return fg, pose_ids, voxel_ids
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(pose_ids[1], voxel_ids[1]),
+        params={"point_world": obs_init[1]}
+    )
+
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(pose_ids[2], voxel_ids[2]),
+        params={"point_world": obs_init[2]}
+    )
+
+    return wm, pose_ids, voxel_ids
 
 
-def build_param_residual(fg: FactorGraph):
+def build_param_residual(wm: WorldModel):
     """
     Hybrid parameterized residual:
 
@@ -144,9 +127,11 @@ def build_param_residual(fg: FactorGraph):
     Returns:
       residual_param(x, theta), index, n_odom, n_obs
     """
-    factors = list(fg.factors.values())
-    residual_fns = fg.residual_fns
-    _, index = fg.pack_state()
+    factors = list(wm.fg.factors.values())
+    # Access the WorldModel's residual registry directly; this replaces
+    # the old FactorGraph-based residual access.
+    residual_fns = wm._residual_registry
+    _, index = wm.pack_state()
 
     odom_indices = [i for i, f in enumerate(factors) if f.type == "odom_se3"]
     obs_indices = [i for i, f in enumerate(factors) if f.type == "voxel_point_obs"]
@@ -154,7 +139,7 @@ def build_param_residual(fg: FactorGraph):
     n_obs = len(obs_indices)
 
     def residual(x: jnp.ndarray, theta: dict) -> jnp.ndarray:
-        var_values = fg.unpack_state(x, index)
+        var_values = wm.unpack_state(x, index)
         res_list = []
         odom_k = 0
         obs_k = 0
@@ -226,11 +211,11 @@ def test_hero_hybrid_joint_learning_converges():
       - Voxels line up near x ~ [0,1,2] and y ~ 0.
     """
 
-    fg, pose_ids, voxel_ids = build_hybrid_graph_for_test()
-    residual_param, index, n_odom, n_obs = build_param_residual(fg)
+    wm, pose_ids, voxel_ids = build_hybrid_graph_for_test()
+    residual_param, index, n_odom, n_obs = build_param_residual(wm)
 
     theta0 = _build_initial_theta(n_odom, n_obs)
-    x0, _ = fg.pack_state()
+    x0, _ = wm.pack_state()
 
     gd_cfg = GDConfig(learning_rate=0.05, max_iters=80)
 
@@ -243,7 +228,7 @@ def test_hero_hybrid_joint_learning_converges():
 
     def supervised_loss(theta: dict) -> jnp.ndarray:
         x_opt = inner_solve(theta)
-        values = fg.unpack_state(x_opt, index)
+        values = wm.unpack_state(x_opt, index)
 
         # Pose loss on last pose (want tx -> 2.0)
         pose_last = values[pose_ids[-1]]
@@ -293,7 +278,7 @@ def test_hero_hybrid_joint_learning_converges():
 
     # Final optimized state: geometric checks
     x_final = inner_solve(theta)
-    values = fg.unpack_state(x_final, index)
+    values = wm.unpack_state(x_final, index)
 
     pose_last = values[pose_ids[-1]]
     tx_last = float(pose_last[0])

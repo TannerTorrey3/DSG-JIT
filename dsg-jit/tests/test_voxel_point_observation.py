@@ -35,9 +35,9 @@ def test_voxel_point_observation_on_grid_chain():
     sg = SceneGraphWorld()
 
     # Just in case __init__ changes in future, make sure residual registration is explicit
-    sg.wm.fg.register_residual("prior", prior_residual)
-    sg.wm.fg.register_residual("voxel_smoothness", voxel_smoothness_residual)
-    sg.wm.fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+    sg.wm.register_residual("prior", prior_residual)
+    sg.wm.register_residual("voxel_smoothness", voxel_smoothness_residual)
+    sg.wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
     # Build a 1D voxel grid with 3 voxels: [0,1,2] on x-axis
     spec = VoxelGridSpec(

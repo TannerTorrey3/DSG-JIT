@@ -1,8 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
     pose_voxel_point_residual,
@@ -29,59 +28,44 @@ def test_pose_voxel_point_alignment():
         - weak prior on voxel0 around [1, 0.5, 0]
         - pose_voxel_point: enforces voxel_center ≈ T(pose0) * point_meas
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Initial guesses (intentionally a bit off)
-    pose0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
-        value=jnp.array([0.1, -0.1, 0.0, 0.01, -0.02, 0.0]),
-    )
-    voxel0 = Variable(
-        id=NodeId(1),
-        type="voxel_cell",
-        value=jnp.array([0.5, 0.0, 0.1]),
-    )
+    pose0_val = jnp.array([0.1, -0.1, 0.0, 0.01, -0.02, 0.0])
+    voxel0_val = jnp.array([0.5, 0.0, 0.1])
 
-    fg.add_variable(pose0)
-    fg.add_variable(voxel0)
+    pose0_id = wm.add_variable(var_type="pose_se3", value=pose0_val)
+    voxel0_id = wm.add_variable(var_type="voxel_cell", value=voxel0_val)
 
     # Prior on pose0: identity
-    f_prior_pose = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose0_id,),
         params={"target": jnp.zeros(6)},
     )
 
     # Weak prior on voxel0 near the expected solution
-    f_prior_voxel = Factor(
-        id=FactorId(2),
-        type="prior",
-        var_ids=(NodeId(1),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel0_id,),
         params={"target": jnp.array([1.0, 0.5, 0.0])},
     )
 
     # 3D point measurement in the pose frame
     point_meas = jnp.array([1.0, 0.5, 0.0])
-    f_pv = Factor(
-        id=FactorId(1),
-        type="pose_voxel_point",
-        var_ids=(NodeId(0), NodeId(1)),
+    wm.add_factor(
+        f_type="pose_voxel_point",
+        var_ids=(pose0_id, voxel0_id),
         params={"point_meas": point_meas},
     )
 
-    fg.add_factor(f_prior_pose)
-    fg.add_factor(f_prior_voxel)
-    fg.add_factor(f_pv)
-
     # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("pose_voxel_point", pose_voxel_point_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("pose_voxel_point", pose_voxel_point_residual)
 
     # Optimize with conservative Gauss-Newton (to avoid SE(3) blowups)
-    x_init, index = fg.pack_state()
-    residual_fn = fg.build_residual_function()
+    x_init, index = wm.pack_state()
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(
         max_iters=40,
@@ -90,9 +74,9 @@ def test_pose_voxel_point_alignment():
     )
     x_opt = gauss_newton(residual_fn, x_init, cfg)
 
-    values = fg.unpack_state(x_opt, index)
-    p_opt = values[NodeId(0)]
-    v_opt = values[NodeId(1)]
+    values = wm.unpack_state(x_opt, index)
+    p_opt = values[pose0_id]
+    v_opt = values[voxel0_id]
 
     # pose0 should be near identity
     for i in range(6):

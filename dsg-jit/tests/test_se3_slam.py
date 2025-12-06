@@ -4,8 +4,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 from dsg_jit.optimization.solvers import gauss_newton, GNConfig
 
@@ -28,60 +27,47 @@ def test_se3_odom_two_poses():
       pose1 ~ [1, 0, 0, 0, 0, 0]
     """
 
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Initial guesses
-    pose0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
-        value=jnp.array([0.1, -0.2, 0.05, 0.01, -0.02, 0.005]),
-    )
-    pose1 = Variable(
-        id=NodeId(1),
-        type="pose_se3",
-        value=jnp.array([0.2, 0.1, -0.1, 0.1, 0.05, -0.02]),
-    )
+    pose0_val = jnp.array([0.1, -0.2, 0.05, 0.01, -0.02, 0.005])
+    pose1_val = jnp.array([0.2, 0.1, -0.1, 0.1, 0.05, -0.02])
 
-    fg.add_variable(pose0)
-    fg.add_variable(pose1)
+    pose0_id = wm.add_variable(var_type="pose_se3", value=pose0_val)
+    pose1_id = wm.add_variable(var_type="pose_se3", value=pose1_val)
 
     # Prior on pose0: identity
-    f_prior = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose0_id,),
         params={"target": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])},
     )
 
     # SE(3) odometry measurement: 1m along x, zero rotation
-    measurement = jnp.array(
-        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    )
+    measurement = jnp.array([
+        1.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    ])
 
-    f_odom = Factor(
-        id=FactorId(1),
-        type="odom_se3",
-        var_ids=(NodeId(0), NodeId(1)),
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(pose0_id, pose1_id),
         params={"measurement": measurement},
     )
 
-    fg.add_factor(f_prior)
-    fg.add_factor(f_odom)
-
     # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
 
     # Build residual function and run Gauss-Newton
-    x_init, index = fg.pack_state()
-    residual_fn = fg.build_residual_function()
+    x_init, index = wm.pack_state()
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)
     x_opt = gauss_newton(residual_fn, x_init, cfg)
 
-    values = fg.unpack_state(x_opt, index)
-    p0_opt = values[NodeId(0)]
-    p1_opt = values[NodeId(1)]
+    values = wm.unpack_state(x_opt, index)
+    p0_opt = values[pose0_id]
+    p1_opt = values[pose1_id]
 
     # pose0 should be near identity
     for i in range(6):

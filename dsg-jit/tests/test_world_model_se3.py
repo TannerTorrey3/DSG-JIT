@@ -26,8 +26,8 @@ def test_world_model_se3_two_pose_chain():
     wm = WorldModel()
 
     # Register residuals
-    wm.fg.register_residual("prior", prior_residual)
-    wm.fg.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
 
     # Initial guesses (intentionally off)
     pose0 = wm.add_variable(

@@ -26,9 +26,9 @@ def test_world_model_joint_optimization():
     wm = WorldModel()
 
     # Register residuals
-    wm.fg.register_residual("prior", prior_residual)
-    wm.fg.register_residual("odom", odom_residual)
-    wm.fg.register_residual("room_centroid", room_centroid_residual)
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom", odom_residual)
+    wm.register_residual("room_centroid", room_centroid_residual)
 
     # Variables (1D)
     p0 = wm.add_variable("place1d", jnp.array([0.5]))
