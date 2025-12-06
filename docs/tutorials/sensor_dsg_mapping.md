@@ -100,11 +100,11 @@ LiDAR ranges become priors on the landmark:
 
 ```python
 target = [mean_range, 0, 0]  # in world frame
-fg.add_factor(Factor(
-    type="prior",
+wm.add_factor(
+    f_type="prior",
     var_ids=[landmark_id],
     params={"target": target, "weight": 1/sigma^2}
-))
+)
 ```
 
 One prior is added **per pose** (demonstration only), all constraining the
@@ -117,8 +117,8 @@ same landmark.
 We pack the state and build manifold metadata:
 
 ```python
-x0, index = fg.pack_state()
-block_slices, manifold_types = build_manifold_metadata(fg)
+x0, index = wm.pack_state()
+block_slices, manifold_types = build_manifold_metadata(packed_state=wm.pack_state(),fg=wm.fg)
 ```
 
 Then solve:

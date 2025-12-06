@@ -36,8 +36,8 @@ Key components:
 - Consecutive **odom** constraints set to `[1, 0, 0, 0, 0, 0]`
 
 ```python
-fg.register_residual("odom_se3", odom_se3_geodesic_residual)
-fg.register_residual("prior", prior_residual)
+wm.register_residual("odom_se3", odom_se3_geodesic_residual)
+wm.register_residual("prior", prior_residual)
 ```
 
 After adding variables and factors, we pack the state and prepare it for optimization.
@@ -66,7 +66,7 @@ pose_i.x ≈ i
 DSG-JIT provides:
 
 ```python
-nodes_fg, edges_fg = export_factor_graph_for_vis(fg)
+nodes_fg, edges_fg = export_factor_graph_for_vis(wm.fg)
 ```
 
 This generates visualization-friendly structures:

@@ -1,5 +1,3 @@
-
-
 # Tutorial: Dynamic Scene Graph Demo  
 **Categories:** Dynamic Scene Graphs, SE(3) & SLAM, 3D Visualization
 
@@ -45,13 +43,26 @@ This hybrid structure creates a **multi‑layer, multi‑agent dynamic spatial m
 
 ## Optimization
 
-Once the scene graph is built, the full factor graph is:
-
-- Packed into a state vector  
-- Given manifold metadata (SE(3) + Euclidean)
-- Optimized using **manifold Gauss‑Newton**:
+Once the scene graph is built, the full **WorldModel-backed factor graph** (owned by `SceneGraphWorld.wm`) is:
 
 ```python
+# Access the WorldModel from the static scene graph
+wm = sg.wm
+
+# 1) Pack the full state from the WorldModel
+x0, index = wm.pack_state()
+packed_state = (x0, index)
+
+# 2) Build manifold metadata (SE(3) + Euclidean) from the packed state
+block_slices, manifold_types = build_manifold_metadata(
+    packed_state=packed_state,
+    fg=wm.fg,  # underlying factor graph structure
+)
+
+# 3) Build the residual function from the WorldModel residual registry
+residual_fn = wm.build_residual()
+
+# 4) Run manifold Gauss-Newton
 cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)
 x_opt = gauss_newton_manifold(
     residual_fn,
@@ -61,6 +72,7 @@ x_opt = gauss_newton_manifold(
     cfg,
 )
 ```
+Here, the WorldModel is responsible for packing/unpacking the state and owning the residual registry, while the underlying factor graph `wm.fg` provides the structure needed for manifold metadata.
 
 This solves simultaneously for:
 - Room centers  

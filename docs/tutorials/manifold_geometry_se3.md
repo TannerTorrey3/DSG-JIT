@@ -15,6 +15,8 @@ The goal is to deeply understand:
 - How tangent vectors, exponential maps, and geodesics work  
 - How SE(3) is implemented inside DSG‑JIT  
 
+Under the hood, SE(3) operations in DSG‑JIT are used inside a **WorldModel‑backed factor graph**, where pose variables live in the WorldModel and residuals are built on top of SE(3) manifold geometry.
+
 ---
 
 ## 1. What is SE(3)?
@@ -130,7 +132,7 @@ Key functions:
 | `se3_inv` | `slam/se3_ops.py` | Pose inverse |
 | `se3_geodesic` | `experiments/exp02_mini_world_se3_geodesic.py` | Generates geodesic path |
 
-Internally, JAX is used for differentiability and vectorization.
+Internally, JAX is used for differentiability and vectorization. These SE(3) primitives are then consumed by the WorldModel and its residual functions to perform manifold‑aware SLAM and scene‑graph optimization.
 
 ---
 
@@ -165,13 +167,13 @@ SE(3) is the mathematical backbone of:
 - SLAM
 - Motion planning
 - Robot localization
-- Scene‑graph optimization
+- Scene‑graph optimization in a WorldModel‑backed factor graph
 - Multisensor fusion
 
 Understanding manifold geometry ensures:
 - Stable solvers  
 - Correct interpolation  
-- Proper factor graph construction  
+- Proper WorldModel‑backed factor graph construction  
 
 This tutorial prepares you for upcoming lessons involving:
 - Odometry factors  

@@ -10,6 +10,9 @@ This tutorial demonstrates a core idea behind **DSG-JIT**:
 > You can make the entire SLAM and spatial reasoning pipeline *differentiable*, including Gauss–Newton optimization, voxel inference, and geometric factors.
 
 We walk through a minimal example where we optimize the position of a single voxel cell that is constrained by:
+
+Under the hood, this is represented as a **WorldModel‑backed factor graph**, where residuals are registered with the WorldModel and state packing/unpacking is handled at the WorldModel layer.
+
 - A **weak prior** pulling it toward `[0, 0, 0]`
 - A **strong voxel-point observation** pulling it toward `[1, 0, 0]`
 
@@ -26,7 +29,7 @@ This type of differentiability is essential for:
 
 ## Building a Single‑Voxel Optimization Problem
 
-We start by constructing a tiny factor graph containing:
+We start by constructing a tiny **WorldModel‑backed factor graph** containing:
 
 ### **1. A single voxel variable**
 A voxel cell is simply a 3‑vector in \(\mathbb{R}^3\).  
@@ -59,7 +62,7 @@ This simulates the effect of a real sensor producing a measurement that “obser
 
 ### **4. Registering residuals**
 
-We register two residuals:
+We register two residuals with the WorldModel:
 
 - `prior_residual`
 - `voxel_point_observation_residual`
@@ -74,23 +77,97 @@ We call `build_manifold_metadata` to generate:
 - Slices for each variable inside the packed vector
 - The manifold type (Euclidean in this case)
 
+Concretely, the setup in DSG‑JIT looks like this:
+
+```python
+import jax
+import jax.numpy as jnp
+
+from dsg_jit.world.model import WorldModel
+from dsg_jit.slam.measurements import (
+    prior_residual,
+    voxel_point_observation_residual,
+)
+from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
+
+# 1) Construct the WorldModel
+wm = WorldModel()
+
+# Register residuals at the WorldModel level
+wm.register_residual("prior", prior_residual)
+wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
+
+# 2) Add a single voxel variable (incorrect initial position)
+voxel_id = wm.add_variable(
+    var_type="voxel_cell3d",
+    value=jnp.array([-0.5, 0.2, 0.0], dtype=jnp.float32),
+)
+
+# 3) Add a weak prior pulling toward [0, 0, 0]
+wm.add_factor(
+    f_type="prior",
+    var_ids=(voxel_id,),
+    params={
+        "target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+        "weight": 0.1,
+    },
+)
+
+# 4) Add a strong voxel–point observation toward [1, 0, 0]
+target = jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32)
+wm.add_factor(
+    f_type="voxel_point_obs",
+    var_ids=(voxel_id,),
+    params={
+        "point_world": target,
+        "weight": 10.0,
+    },
+)
+
+# 5) Pack state and build manifold metadata
+x0, index = wm.pack_state()             # x0 is the flat voxel state
+packed_state = (x0, index)
+block_slices, manifold_types = build_manifold_metadata(
+    packed_state=packed_state,
+    fg=wm.fg,                           # underlying factor graph structure
+)
+
+# 6) Build the residual function from the WorldModel registry
+residual_fn = wm.build_residual()
+
+# Convenience: slice for the voxel inside x
+voxel_slice = slice(*index[voxel_id])
+cfg = GNConfig(max_iters=10, damping=1e-3, max_step_norm=1.0)
+```
+
 ---
 
 ## Running Differentiable Gauss–Newton
 
-We define:
-
 ```python
 def solve_and_loss(x0):
-    x_opt = gauss_newton_manifold(...)
+    """
+    x0 is the packed initial voxel state (a 3‑vector in this example).
+    We treat it as differentiable input to the Gauss–Newton solve.
+    """
+    x_opt = gauss_newton_manifold(
+        residual_fn,
+        x0,
+        block_slices,
+        manifold_types,
+        cfg,
+    )
+
+    # Extract the optimized voxel from the flat state
     v_opt = x_opt[voxel_slice]
-    return || v_opt - target ||^2
+    return jnp.sum((v_opt - target) ** 2)
 ```
 
 This function:
 
-1. Runs Gauss–Newton
-2. Retrieves the optimized voxel
+1. Runs Gauss–Newton on the WorldModel‑backed residual function  
+2. Retrieves the optimized voxel from the packed state  
 3. Computes its squared error from the target
 
 Because everything inside is written in pure JAX, we can do:
@@ -142,7 +219,7 @@ This is the core idea behind:
 
 In this tutorial, you learned how to:
 
-- Construct a minimal factor graph with voxel variables
+- Construct a minimal WorldModel‑backed factor graph with voxel variables
 - Add priors and voxel-to-point observation factors
 - Use the manifold Gauss–Newton solver
 - Make the *entire optimization differentiable*
@@ -154,4 +231,4 @@ This unlocks powerful capabilities for future DSG‑JIT modules such as:
 - learned Jacobians,
 - and self‑supervised perception systems.
 
-You now have the foundation for building advanced differentiable SLAM systems in DSG‑JIT.
+You now have the foundation for building advanced differentiable SLAM systems in DSG‑JIT using the WorldModel residual architecture.

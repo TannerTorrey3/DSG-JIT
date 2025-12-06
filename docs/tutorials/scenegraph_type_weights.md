@@ -41,8 +41,8 @@ sg = SceneGraphWorld()
 wm = sg.wm
 fg = wm.fg
 
-fg.register_residual("prior", prior_residual)
-fg.register_residual("odom_se3", odom_se3_residual)
+wm.register_residual("prior", prior_residual)
+wm.register_residual("odom_se3", odom_se3_residual)
 
 p0 = sg.add_pose_se3(jnp.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32))
 p1 = sg.add_pose_se3(jnp.array([0.8, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32))

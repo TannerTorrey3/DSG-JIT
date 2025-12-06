@@ -71,8 +71,11 @@ objA1 = sg.add_object3d(placeA, jnp.array([1.2, 0.1, 0.0]))
 objA2 = sg.add_object3d(placeA, jnp.array([0.8, -0.2, 0.0]))
 objB1 = sg.add_object3d(placeB, jnp.array([-1.2, 0.2, 0.0]))
 
-# Visualize
-plot_factor_graph_2d(sg.wm.fg, title="Mini-World Scene Graph")
+# Access the underlying WorldModel (factor graph + residual architecture)
+wm = sg.wm
+
+# Visualize the factor graph structure
+plot_factor_graph_2d(wm.fg, title="Mini-World Scene Graph")
 ```
 
 ---

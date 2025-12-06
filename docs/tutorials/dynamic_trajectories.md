@@ -14,7 +14,8 @@ You will learn:
 - How to run Gauss‑Newton optimization over a full trajectory  
 - How the dynamic aspect fits into the larger DSG pipeline
 
-This tutorial shows *why* trajectories matter, *how* DSG‑JIT builds them, and *what* tools the experiment uses.
+This tutorial shows *why* trajectories matter, *how* DSG‑JIT builds them, and *what* tools the experiment uses.  
+Under the hood, trajectories are represented in a **WorldModel-backed factor graph**, where residuals are registered with the WorldModel and all state packing/unpacking happens at the WorldModel layer.
 
 ---
 
@@ -112,29 +113,46 @@ This stabilizes optimization.
 
 ### 5. Solve the Trajectory
 
-Experiment 6 uses the standard DSG‑JIT Gauss‑Newton solver:
+Experiment 6 uses the standard DSG‑JIT Gauss‑Newton solver on the **WorldModel‑backed factor graph**:
 
 ```python
 from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
+from dsg_jit.slam.manifold import build_manifold_metadata
 
-x0, index = sg.wm.fg.pack_state()
-cfg = GNConfig(max_iters=20)
+# Access the WorldModel from the SceneGraphWorld
+wm = sg.wm
 
+# 1) Pack the full state from the WorldModel
+x0, index = wm.pack_state()
+packed_state = (x0, index)
+
+# 2) Build manifold metadata (SE(3) + Euclidean) from the packed state
+block_slices, manifold_types = build_manifold_metadata(
+    packed_state=packed_state,
+    fg=wm.fg,  # underlying factor graph structure
+)
+
+# 3) Build the residual function from the WorldModel residual registry
+residual_fn = wm.build_residual()
+
+# 4) Run manifold Gauss–Newton
+cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)
 x_opt = gauss_newton_manifold(
-    lambda x: sg.wm.fg.residual(x),
+    residual_fn,
     x0,
-    sg.wm.fg.manifold_shapes(),
-    cfg
+    block_slices,
+    manifold_types,
+    cfg,
 )
 ```
 
 After optimization:
 
 ```python
-values = sg.wm.fg.unpack_state(x_opt)
+values = wm.unpack_state(x_opt, index)
 ```
 
-Now you have refined poses for every timestep.
+Here, the WorldModel is responsible for packing/unpacking the trajectory state and owning the residual registry, while the underlying factor graph `wm.fg` provides the structure needed for manifold metadata.
 
 ---
 
@@ -165,7 +183,7 @@ In DSG‑JIT:
 
 - Trajectories live inside a unified **SceneGraphWorld**  
 - Each pose is an SE(3) variable  
-- Odometry builds the factor graph structure  
+- Odometry builds the WorldModel‑backed factor graph structure  
 - Gauss‑Newton refines the entire trajectory jointly  
 - The system scales naturally into full SLAM with landmarks and sensor fusion  
 

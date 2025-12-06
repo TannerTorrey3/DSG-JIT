@@ -1,5 +1,3 @@
-
-
 # Tutorial: Hybrid Differentiable Scene Graphs
 **Categories:** SE(3) & SLAM, Voxel Grids & Spatial Fields, Dynamic Scene Graphs, Learning & Hybrid Modules
 
@@ -24,6 +22,7 @@ This experiment demonstrates how to jointly learn:
 3. The optimal **state configuration** of both poses and voxels.
 
 It represents one of the most complete examples of *hybrid SE(3) + voxel learning* in this repository.
+Under the hood, this experiment uses a **WorldModel‑backed factor graph**, where residuals are registered with the WorldModel and all state packing/unpacking happens at the WorldModel layer.
 
 ---
 
@@ -31,7 +30,7 @@ It represents one of the most complete examples of *hybrid SE(3) + voxel learnin
 
 ### 1. What We Build
 
-We construct a **hybrid factor graph** with:
+We construct a **hybrid WorldModel‑backed factor graph** with:
 
 #### **6 SE(3) Poses**
 Ground‑truth conceptual targets:
@@ -139,22 +138,23 @@ def build_hybrid_graph():
     ...
 ```
 
-This constructs all SE(3) poses, voxels, and factors described above.
+This constructs a WorldModel, adds all SE(3) poses, voxels, and factors described above, and returns the WorldModel (and associated pose/voxel ids) used by the rest of the experiment.
 
 ---
 
 ### Build the Parametric Residual Function  
 ```python
-def build_param_residual(fg: FactorGraph):
+from dsg_jit.world.model import WorldModel
+
+def build_param_residual(wm: WorldModel):
     ...
 ```
 
-This generates:
-- A `residual(x, theta)` function  
-- That injects learned odom & voxel obs parameters  
-- Into each corresponding factor  
+- A `residual(x, theta)` function built on top of the WorldModel residual registry  
+- That injects learned odom & voxel obs parameters into each corresponding factor  
+- While using `wm.pack_state()` / `wm.unpack_state()` to manage the stacked state
 
-This allows the gradient to flow from supervision → inner loop → θ.
+This keeps the graph structure, residual definitions, and packed state layout centralized in the WorldModel.
 
 ---
 
@@ -197,14 +197,14 @@ for it in range(steps):
 
 In this tutorial you learned how to:
 
-- Construct a **hybrid SE(3) + voxel factor graph**
+- Construct a **hybrid SE(3) + voxel WorldModel‑backed factor graph**
 - Parameterize both odometry and 3D point observations
 - Build a **differentiable residual function** with parameter injection
 - Implement a **differentiable inner solver**
 - Implement an **outer learning loop** to optimize parameters  
 - Achieve a complete **end‑to‑end differentiable SLAM + mapping system**
 
-This HERO experiment is one of the most advanced examples in the project and serves as a blueprint for:
+This HERO experiment is one of the most advanced examples in the project and serves as a blueprint for (implemented on top of the WorldModel residual architecture):
 
 - Joint pose + map learning  
 - Robust SLAM systems  

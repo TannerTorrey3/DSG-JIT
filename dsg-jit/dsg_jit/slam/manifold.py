@@ -101,7 +101,7 @@ def get_manifold_for_var_type(var_type: str) -> str:
 
 def build_manifold_metadata(
     packed_state: jnp.ndarray,
-    fg = FactorGraph
+    fg: FactorGraph
 ) -> Tuple[Dict[NodeId, slice], Dict[NodeId, str]]:
     """Build manifold metadata for a factor graph.
 

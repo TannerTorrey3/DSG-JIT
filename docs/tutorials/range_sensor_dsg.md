@@ -178,9 +178,9 @@ def optimize_world(sg: SceneGraphWorld):
     wm = sg.wm           # WorldModel
     fg = wm.fg           # Underlying FactorGraph
 
-    x0, index = fg.pack_state()
-    block_slices, manifold_types = build_manifold_metadata(fg)
-    residual_fn = fg.build_residual_function()
+    x0, index = wm.pack_state()
+    block_slices, manifold_types = build_manifold_metadata(packed_state=wm.pack_state(), fg=fg)
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)
     x_opt = gauss_newton_manifold(
@@ -191,11 +191,11 @@ def optimize_world(sg: SceneGraphWorld):
         cfg,
     )
 
-    values = fg.unpack_state(x_opt, index)
+    values = wm.unpack_state(x_opt, index)
 
     # Update the world variables in-place for visualization and printing
     for nid, v in values.items():
-        fg.variables[nid].value = v
+        wm.fg.variables[nid].value = v
 
     return values
 ```

@@ -8,12 +8,12 @@
 
 This tutorial walks through a minimal but complete example of:
 
-- Building a small **factor graph** over SE(3) poses,
+- Building a small **WorldModel-backed factor graph** over SE(3) poses,
 - Registering a custom **odometry residual**,
 - Solving the resulting nonlinear least‑squares problem with the **manifold Gauss–Newton** solver, and
 - **Visualizing** the optimized poses and factors in 3D.
 
-The code is based on the experiment `exp_visual_factor_graph.py` (the snippet below), and is meant as a first introduction to how *FactorGraph + residuals + solvers + visualization* fit together in DSG-JIT.
+The code is based on the experiment `exp_visual_factor_graph.py` (the snippet below), and is meant as a first introduction to how a *WorldModel-backed factor graph + residuals + solvers + visualization* fit together in DSG-JIT.
 
 ---
 
@@ -34,62 +34,52 @@ with each consecutive pair constrained by a relative motion of **1 meter along +
 ```python
 import jax.numpy as jnp
 
-from dsg_jit.core.factor_graph import FactorGraph
-from dsg_jit.core.types import NodeId, Variable, Factor
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import se3_chain_residual
 
 
-def build_demo_graph(num_poses: int = 5) -> FactorGraph:
-    fg = FactorGraph()
+def build_demo_world(num_poses: int = 5) -> WorldModel:
+    """Build a simple WorldModel-backed factor graph for an SE(3) pose chain."""
+    wm = WorldModel()
 
     # 1. Register the residual type used by our factors
-    fg.register_residual("odom_se3", se3_chain_residual)
+    wm.register_residual("odom_se3", se3_chain_residual)
 
     # 2. Add pose variables: pose_se3 in R^6
-    for i in range(num_poses):
-        nid = NodeId(i)
-        fg.add_variable(
-            Variable(
-                id=nid,
-                type="pose_se3",
-                value=jnp.zeros(6),  # initial guess: all zeros
-            )
+    pose_ids = []
+    for _ in range(num_poses):
+        vid = wm.add_variable(
+            var_type="pose_se3",
+            value=jnp.zeros(6, dtype=jnp.float32),  # initial guess: all zeros
         )
+        pose_ids.append(vid)
 
     # 3. Add odometry factors between consecutive poses
-    fid = 0
     for i in range(num_poses - 1):
         meas = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # 1 m along x
-        fg.add_factor(
-            Factor(
-                id=fid,
-                type="odom_se3",
-                var_ids=(NodeId(i), NodeId(i + 1)),
-                params={"measurement": meas, "weight": 1.0},
-            )
+        wm.add_factor(
+            f_type="odom_se3",
+            var_ids=(pose_ids[i], pose_ids[i + 1]),
+            params={"measurement": meas, "weight": 1.0},
         )
-        fid += 1
 
-    return fg
+    return wm
 ```
 
 **What’s happening here?**
 
-- `FactorGraph` is the core container for:
-  - **Variables** (node states),
-  - **Factors** (constraints / residuals), and
-  - A mapping from **factor type names** (like `"odom_se3"`) to residual functions.
+- `WorldModel` is the high-level container that owns:
+  - An underlying **factor graph** (`wm.fg`) storing variables and factors,
+  - A registry of **residual functions** keyed by factor type names, and
+  - Helpers for **state packing/unpacking** and building residual functions for optimization.
 
-- Each SE(3) pose is stored as a `Variable` with:
-  - A `NodeId` for bookkeeping,
+- Each SE(3) pose is stored as a variable in the WorldModel-backed factor graph with:
   - A `type` string (`"pose_se3"`), and
   - A 6‑D initial value.
 
-- Each odometry constraint is a `Factor` of type `"odom_se3"` connecting two variables. Its `params` dictionary carries:
-  - `measurement`: the relative motion (here, 1 m along x),
-  - `weight`: a scalar that scales that residual in the objective.
+- Each odometry constraint is a factor of type `"odom_se3"` connecting two pose variables in the WorldModel-backed factor graph.
 
-- `fg.register_residual("odom_se3", se3_chain_residual)` tells the factor graph **which residual function to call** when evaluating factors of this type.
+- `wm.register_residual("odom_se3", se3_chain_residual)` tells the WorldModel which residual function to call when evaluating factors of this type.
 
 ---
 
@@ -103,25 +93,30 @@ Once the graph structure is built, we need to:
 ```python
 from dsg_jit.slam.manifold import build_manifold_metadata
 
-fg = build_demo_graph(num_poses=5)
+wm = build_demo_world(num_poses=5)
+fg = wm.fg  # underlying factor graph structure
+
+# Pack current variable values into a flat state vector x0 via the WorldModel
+x0, index = wm.pack_state()
+packed_state = (x0, index)
 
 # Build manifold metadata for all variables
-block_slices, manifold_types = build_manifold_metadata(fg)
+block_slices, manifold_types = build_manifold_metadata(
+    packed_state=packed_state,
+    fg=fg,
+)
 
-# Pack current variable values into a flat state vector x0
-x0, index = fg.pack_state()
-
-# Build the global residual function r(x)
-residual_fn = fg.build_residual_function()
+# Build the global residual function r(x) from the WorldModel registry
+residual_fn = wm.build_residual()
 ```
 
-- `build_manifold_metadata(fg)` inspects the graph and returns:
-  - `block_slices`: a mapping from `NodeId` to slices in the flat vector `x`,
-  - `manifold_types`: a mapping from `NodeId` to a manifold tag (e.g. `"se3"` vs `"euclidean"`).
+- `build_manifold_metadata(packed_state=..., fg=fg)` inspects the WorldModel-backed factor graph and returns:
+  - `block_slices`: a mapping from node ids to slices in the flat vector `x`,
+  - `manifold_types`: a mapping from node ids to a manifold tag (e.g. `"se3"` vs `"euclidean"`).
 
-- `fg.pack_state()` collects all variable `value` arrays into one flat JAX vector `x0`, along with an `index` structure for unpacking later.
+- `wm.pack_state()` collects all variable values into one flat JAX vector `x0`, along with an `index` structure for unpacking later.
 
-- `fg.build_residual_function()` returns a JAX‑compatible function
+- `wm.build_residual()` returns a JAX‑compatible function
 
   \[
   r(x): \mathbb{R}^n \to \mathbb{R}^m
@@ -157,7 +152,7 @@ x_opt = gauss_newton_manifold(
     manifold_types,
     cfg,
 )
-values = fg.unpack_state(x_opt, index)
+values = wm.unpack_state(x_opt, index)
 ```
 
 - `GNConfig` controls:
@@ -170,7 +165,7 @@ values = fg.unpack_state(x_opt, index)
   - Solves for a step in the **tangent space** of each manifold block,
   - Retracts back onto the manifold (e.g. updates SE(3) poses correctly).
 
-- `fg.unpack_state(x_opt, index)` maps the optimized flat state back to a dict from `NodeId` to arrays.
+- `wm.unpack_state(x_opt, index)` maps the optimized flat state back to a dict from node ids to arrays.
 
 After solving, we typically push the optimized values back into the factor graph:
 
@@ -183,11 +178,13 @@ for nid, v in values.items():
 
 This is necessary so downstream tools (like visualization) see the updated poses.
 
+Here, `wm` owns the packed state and residuals, while `fg = wm.fg` stores the underlying variable objects used by the visualizer.
+
 ---
 
 ## 4. Visualizing the factor graph in 3D
 
-With the optimized poses stored in `fg.variables`, we can call the visualization helpers to render the graph layout.
+With the optimized poses stored in `fg.variables` (where `fg = wm.fg`), we can call the visualization helpers to render the graph layout.
 
 ```python
 from dsg_jit.world.visualization import plot_factor_graph_3d
@@ -211,9 +208,9 @@ In this experiment, since the odometry measurements are all `[1, 0, 0, 0, 0, 0]`
 
 In this tutorial you saw how to:
 
-1. **Define a minimal SE(3) odometry chain** as a factor graph using `Variable` and `Factor` objects.
-2. **Register a residual function** (`se3_chain_residual`) for a factor type (`"odom_se3"`).
-3. **Pack and unpack the state** via `FactorGraph.pack_state` / `unpack_state`, and build **manifold metadata** with `build_manifold_metadata`.
+1. **Define a minimal SE(3) odometry chain** as a WorldModel-backed factor graph by adding pose variables and odometry factors via the `WorldModel` API.
+2. **Register a residual function** (`se3_chain_residual`) for a factor type (`"odom_se3"`) with the `WorldModel`.
+3. **Pack and unpack the state** via `WorldModel.pack_state` / `unpack_state`, and build **manifold metadata** with `build_manifold_metadata(packed_state, fg)`.
 4. **Solve** the resulting nonlinear least squares problem with `gauss_newton_manifold` and a simple `GNConfig`.
 5. **Visualize** the final optimized poses and factors in 3D using `plot_factor_graph_3d`.
 

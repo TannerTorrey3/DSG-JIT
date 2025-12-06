@@ -1,5 +1,3 @@
-
-
 # DSG‑JIT Tutorials Overview
 
 Welcome to the **DSG‑JIT Tutorials Hub** — a structured, hands‑on guide to understanding and using the Differentiable Scene Graph Just‑In‑Time (DSG‑JIT) framework.
@@ -12,23 +10,23 @@ These tutorials are designed to move from foundational concepts toward advanced 
 
 ### **Core Concepts**
 Get familiar with the building blocks of DSG‑JIT:
-- How factor graphs work and how states are optimized.
+- How the WorldModel-backed factor graph works and how states are optimized.
 - The SE(3) manifold and Lie‑group operations.
 - How semantic scene graphs are constructed and maintained.
 - How objects, rooms, places, and agents form a unified spatial abstraction.
 
 ### **SE(3) & SLAM**
 Dive into:
-- Differentiable odometry chains  
+- Differentiable odometry chains using the WorldModel residual architecture  
 - Dynamic trajectories  
 - Learnable factor‑type weights  
-- Hybrid SE(3) + voxel optimization pipelines  
+- Hybrid SE(3) + voxel optimization pipelines built on the WorldModel-backed factor graph  
 - End‑to‑end differentiable SLAM examples  
 
 These tutorials bridge classical geometry with modern differentiable optimization.
 
 ### **Voxel Grids & Spatial Fields**
-Learn how DSG‑JIT handles:
+Learn how DSG‑JIT handles voxel and spatial field optimization through the WorldModel:
 - Voxel observation modeling  
 - Multi‑voxel parameter learning  
 - Differentiable spatial field estimation  
@@ -52,10 +50,10 @@ Explore the sensor stack:
 - Range‑based DSG construction  
 - End‑to‑end mapping from raw sensor samples  
 
-This layer demonstrates how sensors feed into the world model and factor graph.
+This layer demonstrates how sensors feed into the WorldModel, which manages the underlying factor graph and residual construction.
 
 ### **Learning & Hybrid Modules**
-Learn differentiable components tightly integrated into the DSL:
+Learn differentiable components tightly integrated into the WorldModel + DSG API:
 - Learnable factor-type weights  
 - Multi‑modal learning (SE(3) + voxel)  
 - Joint optimization of geometry and field representations  
@@ -67,7 +65,7 @@ Useful for machine‑learning‑based mapping and hybrid perception models.
 See how DSG‑JIT leverages JAX to:
 - Construct differentiable residuals  
 - JIT‑compile optimization routines  
-- Build training loops that interleave geometry and learning  
+- Build training loops that interleave geometry and learning via the WorldModel's packed state and residual registry  
 
 ---
 
@@ -88,7 +86,7 @@ You can read them in order or jump directly to the area relevant to your researc
 
 If you're new to DSG‑JIT, begin here:
 
-1. **Mini World Factor Graph** — foundational concepts  
+1. **Mini WorldModel & Factor Graph Overview** — foundational concepts  
 2. **Manifold Geometry SE(3)** — essential mathematical background  
 3. **Scene Graph World** — your first semantic world model  
 4. **Dynamic Trajectories** — motion estimation and odometry  

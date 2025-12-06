@@ -23,17 +23,19 @@ Each layer is optional, modular, and composable — enabling applications in cla
 The **core** provides the primitive mathematical and structural building blocks:
 
 ### Core Responsibilities
-- Variable management (poses, voxels, arbitrary vectors)
-- Factor definitions (priors, odometry, smoothness, observations)
-- Differentiable residual functions
-- JIT-compiled residual + objective builders
-- Unified flat-state storage for optimization
-- Jacobian computation (via JAX autodiff)
+- Variable management (poses, voxels, arbitrary vectors), via a backend‑agnostic data structure.
+- Factor definitions (priors, odometry, smoothness, observations).
+- Differentiable **residual registry** (now owned by the WorldModel).
+- Backend‑agnostic factor graph interface (supports pluggable backends).
+- JIT‑compiled residual builders (vmap‑optimized for performance).
+- Unified flat‑state storage and index maps for optimization.
+- Automatic Jacobian computation (via JAX autodiff).
 
 ### Key Modules
 | Module | Purpose |
 |--------|---------|
-| `core.factor_graph` | Central class for building and executing factor graphs |
+| `world.model` | Central owner of variables, factors, residuals, and state packing |
+| `core.factor_graph` | Lightweight backend factor graph used by WorldModel (pluggable) |
 | `core.types` | Data structures (Variable, Factor, NodeId, FactorId) |
 | `core.math3d` | Vector/rotation utilities, SE3 helpers |
 
@@ -47,20 +49,17 @@ Everything above is built on these abstractions.
 The optimization layer transforms the factor graph into a **high-performance nonlinear solver**.
 
 ### Features
-- **Gauss–Newton with line-search**
-- **Manifold retractors** for SE3 variables
-- **Pure JAX implementation**
-- **Fully JIT-compilable**:
-  - Residuals
-  - Jacobians
-  - Solver loop
-- CPU/GPU compatibility
+- Gauss–Newton with line-search, fully JIT‑compiled.
+- Manifold retractors for SE3 and Euclidean variables.
+- Pure JAX solver loop with **vmap‑accelerated residual evaluation**.
+- JIT‑compiled objective + residuals with caching of compiled solvers in WorldModel.
+- Ultra‑low Python overhead — solver runs nearly entirely in XLA.
 
 ### Modules
 | Module | Purpose |
 |--------|---------|
 | `optimization.solvers` | Gauss–Newton, manifold-aware logic |
-| `optimization.jit_wrappers` | One-line JIT versions of solvers |
+| `optimization.jit_wrappers` | One‑line JIT interfaces using the new WorldModel residual API |
 
 This layer is responsible for the **50–1000x performance boost** seen in benchmarks.
 
@@ -68,7 +67,7 @@ This layer is responsible for the **50–1000x performance boost** seen in bench
 
 # 3. SLAM Layer — Residual Functions & Manifolds
 
-This layer plugs concrete geometry and factors into the general factor-graph engine.
+This layer provides the differentiable measurements registered inside the WorldModel. These residuals implement the geometric logic of SE3 constraints, landmarks, voxel consistency, and smoothness. The factor graph simply stores variable/factor connectivity; the **WorldModel owns the residual functions and packing logic**.
 
 ### Supported Manifolds
 - **SE3 poses**
@@ -78,12 +77,14 @@ This layer plugs concrete geometry and factors into the general factor-graph eng
 ### Provided Residuals
 | Residual Type | Description |
 |---------------|-------------|
-| `se3_geodesic` | Pose-to-pose constraint via logmap |
-| `odom_se3` | Learnable odometry factor |
-| `pose_landmark_relative` | Landmark relative measurement |
-| `pose_voxel_point` | Transform voxel → world → camera consistency |
-| `voxel_smoothness` | Local grid regularizer |
+| `se3_geodesic` | Pose‑to‑pose geodesic constraint |
+| `odom_se3` | Learnable or fixed SE3 odometry factor |
+| `pose_landmark_relative` | Relative landmark measurement |
+| `pose_voxel_point` | Voxel observation constraint |
+| `voxel_smoothness` | Grid regularization term |
 | `prior` | Generic variable prior |
+
+All residuals are now registered with `WorldModel.register_residual`. The FactorGraph stores only structure — not residual logic.
 
 ### Modules
 | Module | Purpose |
@@ -128,6 +129,8 @@ This layer introduces the structural and semantic relationships that turn raw ge
 - Differentiable constraints between DSG entities
 - Realtime graph growth (future)
 
+Future extensions allow the Scene Graph to store **multi‑resolution geometric layers** (voxels, meshes, raw points, NeRF latent fields). DSG‑JIT is designed so that future NeRF modules can attach object‑specific neural fields directly to DSG nodes while still participating in global optimization.
+
 The DSG operates as a **high-level structural layer** over the SLAM + voxel system.
 
 ---
@@ -138,12 +141,24 @@ The world layer combines SLAM, voxels, and the scene graph into one coherent sys
 
 ### `SceneGraphWorld`
 
-This is the **high-level API** researchers will interact with:
+`SceneGraphWorld` is the highest‑level API and the primary entry point for users. It manages:
 
-- Create poses, voxels, rooms, agents  
-- Add factors automatically  
-- Run optimization on the full graph  
-- Visualize or export world state  
+- Variables and factors (via the underlying factor graph backend)
+- The residual registry
+- JIT‑compiled residual and solver construction
+- Optimization of full DSG + voxel + SLAM systems
+- Integration with differentiable learning pipelines
+- Multi‑resolution storage formats (planned)
+- Planned NeRF attachments for objects and rooms
+
+### WorldModel Responsibilities
+
+- Owns variables, factors, manifold types, and residual functions.
+- Provides unified `pack_state` / `unpack_state` logic.
+- Builds JIT‑optimized residuals via `build_residual` and specialized builders.
+- Groups factors by type and applies `vmap` for high‑throughput evaluation.
+- Caches compiled solvers for real‑time re‑optimization.
+- Supports backend‑pluggable FactorGraph implementations.
 
 ### Training & Learning
 
@@ -166,13 +181,14 @@ The world layer exposes the **learnable parameters** used in the experiments:
 # Information Flow Between Layers
 
 ```
-Sensors → SLAM Residuals → Factor Graph → JIT Solver → SceneGraphWorld → Applications
+Sensors → SLAM Residuals → WorldModel (variables + residuals + factor graph)  
+→ JIT Solver (vmap‑optimized) → SceneGraphWorld → Applications
 ```
 
 1. Sensors provide point clouds, images, IMU.  
 2. SLAM residuals convert observations to geometric factors.  
-3. Core factor graph collects variables + constraints.  
-4. JIT solver optimizes the entire state.  
+3. WorldModel manages variables, residuals, and factor graph structure.  
+4. JIT solver (vmap‑optimized) optimizes the entire state.  
 5. SceneGraphWorld structures it into a semantic world.  
 6. Applications consume the optimized graph (robotics, NeRFs, planning, etc.).
 
@@ -185,6 +201,7 @@ Sensors → SLAM Residuals → Factor Graph → JIT Solver → SceneGraphWorld �
 - SE3 on manifolds  
 - Minimal Python overhead  
 - 50–1000× faster than naïve Python solvers  
+- vmap grouping of factor types for large batching speedups
 
 ## 2. Differentiability
 - JAX grad through:
@@ -198,6 +215,7 @@ Sensors → SLAM Residuals → Factor Graph → JIT Solver → SceneGraphWorld �
 - DSG-only semantic reasoning  
 - Hybrid world models  
 - Incremental or batch optimization  
+- Supports pluggable factor‑graph backends (Python, Rust, C++) as long as they implement the FactorGraph Standard.
 
 ## 4. Extensibility
 This architecture supports future additions:
@@ -207,19 +225,19 @@ This architecture supports future additions:
 - Real-world robotics datasets  
 - Differentiable planning & policies  
 - Joint SLAM + segmentation  
+- NeRF‑augmented objects and rooms (future)
+- Multi‑resolution geometric storage (voxels, meshes, point clouds)
 
 ---
 
-# Summary
 
-DSG-JIT isn’t just “another SLAM system.”  
-It is a **research platform** for:
+# The Modern DSG‑JIT Architecture (2025+)
 
-- Differentiable geometry  
-- Dynamic 3D scene graphs  
-- Voxel world models  
-- Real-time optimization  
-- Learnable SLAM  
-- Hybrid geometric + neural fields  
+DSG‑JIT has evolved into a **WorldModel‑centric** system:
 
-It is designed to power the next generation of spatial intelligence systems.
+- The FactorGraph is a backend implementation detail.
+- All differentiability, residuals, and packing logic live in the WorldModel.
+- Solvers operate on JIT‑compiled, vmap‑batched functions.
+- SceneGraphWorld provides a rich, extensible API that will support NeRFs, hierarchical geometry, and large‑scale world‑modeling.
+
+This architecture enables DSG‑JIT to function as a real‑time differentiable world model suitable for robotics, simulation, mapping, and neural field research.
