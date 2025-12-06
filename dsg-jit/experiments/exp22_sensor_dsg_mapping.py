@@ -5,7 +5,7 @@ End-to-end demo:
 - Simulated camera + LiDAR + IMU streams.
 - Conversion to typed measurements (CameraMeasurement, LidarMeasurement, IMUMeasurement).
 - Conversion to MeasurementFactor objects via sensors.conversion.
-- Injection into a WorldModel / FactorGraph.
+- Injection into a WorldModel-backed factor graph.
 - Gauss–Newton solve and 3D visualization of the resulting graph.
 
 This is intentionally small and synthetic. The goal is to show *how* the
@@ -21,12 +21,11 @@ from typing import Any, Dict, Iterable, List, Tuple
 import jax.numpy as jnp
 import numpy as np
 
-#SLAM
-from dsg_jit.slam.manifold  import build_manifold_metadata
+# SLAM / manifold
+from dsg_jit.slam.manifold import build_manifold_metadata
 # Core / optimization
-from dsg_jit.core.factor_graph import FactorGraph
 from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
-from dsg_jit.core.types import Factor, FactorId
+from dsg_jit.slam.measurements import prior_residual
 
 # World & visualization
 from dsg_jit.world.model import WorldModel
@@ -162,6 +161,9 @@ def build_world_model(num_poses: int = 5) -> Tuple[WorldModel, SceneGraphWorld, 
     """
     sg = SceneGraphWorld()
 
+    # Register prior residual at the WorldModel level so "prior" factors work.
+    sg.wm.register_residual("prior", prior_residual)
+
     # 2) Add poses and odometry chain in the WorldModel directly.
     pose_ids: List[int] = []
 
@@ -183,12 +185,12 @@ def build_world_model(num_poses: int = 5) -> Tuple[WorldModel, SceneGraphWorld, 
 
 
 def add_range_factors_from_lidar(
-    fg: FactorGraph,
+    wm: WorldModel,
     pose_ids: List[int],
     landmark_id: int,
     lidar_meas: LidarMeasurement,
     sigma: float = 0.05,
-) -> List[FactorId]:
+) -> List[int]:
     """
     Use a simple 1D interpretation of LiDAR measurements to create prior
     factors on the landmark position.
@@ -207,8 +209,8 @@ def add_range_factors_from_lidar(
 
         landmark_xyz - target ≈ 0
 
-    :param fg: Underlying factor graph (fg) from the WorldModel.
-    :type fg: FactorGraph
+    :param wm: WorldModel whose underlying factor graph will receive the factors.
+    :type wm: WorldModel
     :param pose_ids: List of pose node IDs. We only use the length to
         decide how many priors to add (one per pose, for demonstration).
     :type pose_ids: list[int]
@@ -219,8 +221,8 @@ def add_range_factors_from_lidar(
     :param sigma: Standard deviation for the prior on the landmark
         position (in meters). Smaller values mean a stronger prior.
     :type sigma: float
-    :return: List of newly created FactorId values.
-    :rtype: list[FactorId]
+    :return: List of newly created factor IDs (as ints).
+    :rtype: list[int]
     """
     # Use the mean range from the LiDAR scan (all 5.0 in this toy example).
     mean_range = float(jnp.mean(lidar_meas.ranges))
@@ -231,32 +233,20 @@ def add_range_factors_from_lidar(
     # Simple isotropic weight: 1/sigma^2 (can be scalar; _apply_weight will broadcast).
     w = 1.0 / (sigma ** 2)
 
-    # Allocate fresh factor ids.
-    if fg.factors:
-        next_id_val = max(fg.factors.keys()) + 1
-    else:
-        next_id_val = 0
-
-    created_ids: List[FactorId] = []
+    created_ids: List[int] = []
 
     # For demonstration, add one prior factor per pose (they all constrain the
     # same landmark variable to the same target).
     for _ in pose_ids:
-        factor_id = FactorId(next_id_val)
-        next_id_val += 1
-
-        fg.add_factor(
-            Factor(
-                id=factor_id,
-                type="prior",  # uses prior_residual in slam.measurements
-                var_ids=[int(landmark_id)],
-                params={
-                    "target": target,        # required by prior_residual
-                    "weight": jnp.array(w),  # optional, scalar or length-3
-                },
-            )
+        factor_id = wm.add_factor(
+            f_type="prior",  # uses prior_residual registered on the WorldModel
+            var_ids=(int(landmark_id),),
+            params={
+                "target": target,        # required by prior_residual
+                "weight": jnp.array(w),  # optional, scalar or length-3
+            },
         )
-        created_ids.append(factor_id)
+        created_ids.append(int(factor_id))
 
     return created_ids
 
@@ -270,7 +260,7 @@ def main():
     # -------------------------------------------------------------------------
     num_poses = 5
     wm, sg, pose_ids = build_world_model(num_poses=num_poses)
-    fg = wm.fg  # underlying FactorGraph
+    fg = wm.fg  # underlying FactorGraph (for visualization / metadata only)
 
     # Add a simple 1D landmark at x = 5.0
     landmark = ToyLandmark1D(x=5.0)
@@ -316,7 +306,7 @@ def main():
     # -------------------------------------------------------------------------
     print("\n=== Creating range priors from LiDAR ===")
     factor_ids = add_range_factors_from_lidar(
-        fg=fg,
+        wm=wm,
         pose_ids=pose_ids,
         landmark_id=landmark_var,
         lidar_meas=lidar_meas,
@@ -327,38 +317,35 @@ def main():
     # -------------------------------------------------------------------------
     # 4) Optimize the factor graph (Gauss–Newton on SE(3)+R^3)
     # -------------------------------------------------------------------------
-    x0, index = fg.pack_state()
+    # Pack initial state from the WorldModel
+    x0, index = wm.pack_state()
 
-    # Build manifold_types: we assume:
-    #   - pose variables are SE3
-    #   - landmark is Euclidean
-    manifold_types = []
-    for var in fg.variables.values():
-        if var.type == "pose_se3":
-            manifold_types.append("se3")
-        else:
-            manifold_types.append("euclidean")
-    manifold_types = tuple(manifold_types)
-    residual_fn = fg.build_residual_function()
+    # Build manifold metadata using the WorldModel's packed state and underlying graph
+    packed_state = (x0, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=fg,
+    )
+
+    # Build residual function from the WorldModel-level residual registry
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(
         max_iters=20,
         damping=1e-3,
-        max_step_norm=1.0
+        max_step_norm=1.0,
     )
-
-    block_slices, manifold_types = build_manifold_metadata(fg)
 
     x_opt = gauss_newton_manifold(
         residual_fn=residual_fn,
         x0=x0,
+        block_slices=block_slices,
         manifold_types=manifold_types,
         cfg=cfg,
-        block_slices=block_slices
     )
 
     # Unpack optimized poses/landmarks back into the graph
-    values = fg.unpack_state(x_opt, index)
+    values = wm.unpack_state(x_opt, index)
 
     print("\n=== Optimized poses ===")
     for pid in pose_ids:

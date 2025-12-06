@@ -1,4 +1,3 @@
-
 import jax.numpy as jnp
 
 from dsg_jit.world.scene_graph import SceneGraphWorld
@@ -65,14 +64,24 @@ def build_range_dsg(num_steps: int = 5):
 
 def optimize_world(sg: SceneGraphWorld):
     """
-    Run Gauss-Newton manifold optimization on the underlying factor graph.
+    Run Gauss-Newton manifold optimization on the underlying WorldModel-backed
+    factor graph.
     """
     wm = sg.wm           # WorldModel
-    fg = wm.fg           # Underlying FactorGraph
+    fg = wm.fg           # Underlying FactorGraph for manifold metadata & viz
 
-    x0, index = fg.pack_state()
-    block_slices, manifold_types = build_manifold_metadata(fg)
-    residual_fn = fg.build_residual_function()
+    # Pack initial state from the WorldModel
+    x0, index = wm.pack_state()
+
+    # Build manifold metadata using the packed state and the underlying graph
+    packed_state = (x0, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=fg,
+    )
+
+    # Build residual function from the WorldModel-level residual registry
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)
     x_opt = gauss_newton_manifold(
@@ -83,7 +92,8 @@ def optimize_world(sg: SceneGraphWorld):
         cfg,
     )
 
-    values = fg.unpack_state(x_opt, index)
+    # Unpack optimized values via the WorldModel
+    values = wm.unpack_state(x_opt, index)
 
     # Update the world variables in-place for visualization and printing
     for nid, v in values.items():

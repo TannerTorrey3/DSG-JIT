@@ -3,8 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
     voxel_point_observation_residual,
@@ -17,7 +16,7 @@ from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
 
 def build_three_voxel_chain_with_param_obs():
     """
-    Build a small 1D chain of 3 voxels along x:
+    Build a small 1D chain of 3 voxels along x, backed by a WorldModel:
 
         v0, v1, v2
 
@@ -37,70 +36,57 @@ def build_three_voxel_chain_with_param_obs():
       - compute loss as sum_i ||v_i - gt_i||^2
       - differentiate loss w.r.t theta
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Three voxel variables (voxel_cell), intentionally perturbed from [0,1,2]
-    v0 = Variable(
-        id=NodeId(0),
-        type="voxel_cell",
+    v0_id = wm.add_variable(
+        var_type="voxel_cell",
         value=jnp.array([-0.2, 0.1, 0.0], dtype=jnp.float32),
     )
-    v1 = Variable(
-        id=NodeId(1),
-        type="voxel_cell",
+    v1_id = wm.add_variable(
+        var_type="voxel_cell",
         value=jnp.array([0.9, -0.3, 0.0], dtype=jnp.float32),
     )
-    v2 = Variable(
-        id=NodeId(2),
-        type="voxel_cell",
+    v2_id = wm.add_variable(
+        var_type="voxel_cell",
         value=jnp.array([2.3, 0.2, 0.0], dtype=jnp.float32),
     )
 
-    fg.add_variable(v0)
-    fg.add_variable(v1)
-    fg.add_variable(v2)
-
     # Priors at v0 ~ [0,0,0], v2 ~ [2,0,0]
-    f_prior0 = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(v0_id,),
         params={"target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32)},
     )
-    f_prior2 = Factor(
-        id=FactorId(1),
-        type="prior",
-        var_ids=(NodeId(2),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(v2_id,),
         params={"target": jnp.array([2.0, 0.0, 0.0], dtype=jnp.float32)},
     )
 
-    # Voxel smoothness: v1-v0 ~ [1,0,0], v2-v1 ~ [1,0,0]
-    # Use moderate regularization
+    # Voxel smoothness: v1-v0 ~ [1,0,0], v2-v1 ~ [1,0,0] with moderate regularization
     smooth_sigma = 0.1
     smooth_weight = sigma_to_weight(smooth_sigma)
 
-    f_smooth01 = Factor(
-    id=FactorId(2),
-    type="voxel_smoothness",
-    var_ids=(NodeId(0), NodeId(1)),
-    params={
-        # voxel_smoothness_residual expects 'offset'
-        "offset": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
-        "weight": smooth_weight,
+    wm.add_factor(
+        f_type="voxel_smoothness",
+        var_ids=(v0_id, v1_id),
+        params={
+            "offset": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": smooth_weight,
         },
     )
-    f_smooth12 = Factor(
-    id=FactorId(3),
-    type="voxel_smoothness",
-    var_ids=(NodeId(1), NodeId(2)),
-    params={
-        "offset": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
-        "weight": smooth_weight,
+    wm.add_factor(
+        f_type="voxel_smoothness",
+        var_ids=(v1_id, v2_id),
+        params={
+            "offset": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": smooth_weight,
         },
     )
 
     # voxel_point_obs for each voxel.
-    # We'll override 'point_world' via theta in the parametric residual builder.
+    # We'll override 'point_world' via theta in the parametric residual.
     obs_sigma = 0.05
     obs_weight = sigma_to_weight(obs_sigma)
 
@@ -109,77 +95,100 @@ def build_three_voxel_chain_with_param_obs():
     base_obs1 = jnp.array([0.7, -0.2, 0.0], dtype=jnp.float32)
     base_obs2 = jnp.array([2.4, 0.3, 0.0], dtype=jnp.float32)
 
-    f_obs0 = Factor(
-        id=FactorId(4),
-        type="voxel_point_obs",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(v0_id,),
         params={
-            "point_world": base_obs0,   # will be overridden by theta[0]
+            "point_world": base_obs0,  # will be overridden by theta[0]
             "weight": obs_weight,
         },
     )
-    f_obs1 = Factor(
-        id=FactorId(5),
-        type="voxel_point_obs",
-        var_ids=(NodeId(1),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(v1_id,),
         params={
-            "point_world": base_obs1,   # will be overridden by theta[1]
+            "point_world": base_obs1,  # will be overridden by theta[1]
             "weight": obs_weight,
         },
     )
-    f_obs2 = Factor(
-        id=FactorId(6),
-        type="voxel_point_obs",
-        var_ids=(NodeId(2),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(v2_id,),
         params={
-            "point_world": base_obs2,   # will be overridden by theta[2]
+            "point_world": base_obs2,  # will be overridden by theta[2]
             "weight": obs_weight,
         },
     )
 
-    for f in (f_prior0, f_prior2, f_smooth01, f_smooth12, f_obs0, f_obs1, f_obs2):
-        fg.add_factor(f)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("voxel_smoothness", voxel_smoothness_residual)
+    wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("voxel_smoothness", voxel_smoothness_residual)
-    fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
-
-    # Pack state, manifold metadata
-    x_init, index = fg.pack_state()
-    block_slices, manifold_types = build_manifold_metadata(fg)
+    # Pack state and manifold metadata
+    x_init, index = wm.pack_state()
+    packed_state = (x_init, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=wm.fg,
+    )
 
     # Get slices for each voxel in the state vector
-    v0_idx = index[NodeId(0)]
-    v1_idx = index[NodeId(1)]
-    v2_idx = index[NodeId(2)]
-
-    # Normalize any (start, len) to slice
-    def to_slice(idx):
-        if isinstance(idx, slice):
-            return idx
-        start, length = idx
-        return slice(start, start + length)
-
-    v0_slice = to_slice(v0_idx)
-    v1_slice = to_slice(v1_idx)
-    v2_slice = to_slice(v2_idx)
+    v0_slice = block_slices[v0_id]
+    v1_slice = block_slices[v1_id]
+    v2_slice = block_slices[v2_id]
 
     # Build parametric residual function: residual(x, theta) with theta.shape == (3, 3)
-    residual_param_fn, _ = fg.build_residual_function_voxel_point_param_multi()
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
+
+    def residual_param_fn(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+        """
+        Residual function that treats the 3 observation points as parameters.
+
+        theta: shape (3, 3)
+          theta[0] -> point_world for voxel 0
+          theta[1] -> point_world for voxel 1
+          theta[2] -> point_world for voxel 2
+        """
+        var_values = wm.unpack_state(x, index)
+        res_list = []
+        obs_idx = 0
+
+        for f in factors:
+            res_fn = residual_fns.get(f.type, None)
+            if res_fn is None:
+                raise ValueError(f"No residual fn registered for factor type '{f.type}'")
+
+            stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids])
+
+            if f.type == "voxel_point_obs":
+                # Override point_world with theta[obs_idx]
+                point_world = theta[obs_idx]
+                obs_idx += 1
+                base_params = dict(f.params)
+                base_params["point_world"] = point_world
+                params = base_params
+            else:
+                params = f.params
+
+            r = res_fn(stacked, params)
+            w = params.get("weight", 1.0)
+            res_list.append(jnp.sqrt(w) * r)
+
+        return jnp.concatenate(res_list)
 
     # Ground-truth positions
     gt0 = jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32)
     gt1 = jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32)
     gt2 = jnp.array([2.0, 0.0, 0.0], dtype=jnp.float32)
-
     gt_stack = jnp.stack([gt0, gt1, gt2], axis=0)
 
     # Initial theta from base_obs
     theta0 = jnp.stack([base_obs0, base_obs1, base_obs2], axis=0)  # shape (3, 3)
 
     return (
-        fg,
+        wm,
         x_init,
         residual_param_fn,
         block_slices,
@@ -192,7 +201,7 @@ def build_three_voxel_chain_with_param_obs():
 
 def main():
     (
-        fg,
+        wm,
         x_init,
         residual_fn_param,
         block_slices,

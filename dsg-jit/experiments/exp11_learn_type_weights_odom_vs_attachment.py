@@ -1,8 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,
@@ -12,7 +11,7 @@ from dsg_jit.optimization.solvers import GDConfig, gradient_descent
 
 
 def _to_slice(idx):
-    """Normalize FactorGraph index entry (slice or (start, length)) into a slice."""
+    """Normalize an index entry (slice or (start, length)) into a slice."""
     if isinstance(idx, slice):
         return idx
     start, length = idx
@@ -43,51 +42,41 @@ def build_problem():
 
     We will learn the per-type log-scale for 'odom_se3'.
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Initial guesses (intentionally a bit off)
-    pose0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
+    pose0_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([0.2, -0.1, 0.0, 0.01, -0.02, 0.0], dtype=jnp.float32),
     )
-    pose1 = Variable(
-        id=NodeId(1),
-        type="pose_se3",
+    pose1_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([0.5, 0.1, 0.0, 0.02, 0.01, 0.0], dtype=jnp.float32),
     )
-    place0 = Variable(
-        id=NodeId(2),
-        type="place1d",
+    place0_id = wm.add_variable(
+        var_type="place1d",
         value=jnp.array([0.6], dtype=jnp.float32),
     )
 
-    fg.add_variable(pose0)
-    fg.add_variable(pose1)
-    fg.add_variable(place0)
-
     # Prior on pose0: identity
-    f_prior_pose0 = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose0_id,),
         params={"target": jnp.zeros(6, dtype=jnp.float32)},
     )
 
     # Biased odometry: wants pose1.tx = 0.7
     biased_meas = jnp.array([0.7, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
-    f_odom = Factor(
-        id=FactorId(1),
-        type="odom_se3",
-        var_ids=(NodeId(0), NodeId(1)),
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(pose0_id, pose1_id),
         params={"measurement": biased_meas},
     )
 
     # Attachment: place0 ~ pose1.tx
-    f_attach = Factor(
-        id=FactorId(2),
-        type="pose_place_attachment",
-        var_ids=(NodeId(1), NodeId(2)),  # pose1, place0
+    wm.add_factor(
+        f_type="pose_place_attachment",
+        var_ids=(pose1_id, place0_id),  # pose1, place0
         params={
             "pose_dim": jnp.array(6, dtype=jnp.int32),
             "place_dim": jnp.array(1, dtype=jnp.int32),
@@ -96,37 +85,66 @@ def build_problem():
     )
 
     # Prior on place0 at x = 1.0 (trusted external observation)
-    f_prior_place = Factor(
-        id=FactorId(3),
-        type="prior",
-        var_ids=(NodeId(2),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(place0_id,),
         params={"target": jnp.array([1.0], dtype=jnp.float32)},
     )
 
-    # Add all factors
-    for f in (f_prior_pose0, f_odom, f_attach, f_prior_place):
-        fg.add_factor(f)
-
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
-    fg.register_residual("pose_place_attachment", pose_place_attachment_residual)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("pose_place_attachment", pose_place_attachment_residual)
 
     # Pack state and get slices
-    x_init, index = fg.pack_state()
-    p0_slice = _to_slice(index[NodeId(0)])
-    p1_slice = _to_slice(index[NodeId(1)])
-    pl_slice = _to_slice(index[NodeId(2)])
+    x_init, index = wm.pack_state()
+    p0_slice = _to_slice(index[pose0_id])
+    p1_slice = _to_slice(index[pose1_id])
+    pl_slice = _to_slice(index[place0_id])
 
     # Build weighted residual fn with a single learnable log_scale for 'odom_se3'
     factor_type_order = ["odom_se3"]
-    residual_w = fg.build_residual_function_with_type_weights(factor_type_order)
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
+    type_to_idx = {t: i for i, t in enumerate(factor_type_order)}
 
-    return fg, x_init, residual_w, (p0_slice, p1_slice, pl_slice)
+    def residual_w(x: jnp.ndarray, log_scales: jnp.ndarray) -> jnp.ndarray:
+        """
+        Residual with per-type weights controlled by log_scales.
+
+        log_scales[i] corresponds to factor_type_order[i].
+        Missing types default to unit weight.
+        """
+        var_values = wm.unpack_state(x, index)
+        res_list = []
+
+        for f in factors:
+            res_fn = residual_fns.get(f.type, None)
+            if res_fn is None:
+                raise ValueError(
+                    f"No residual fn registered for factor type '{f.type}'"
+                )
+
+            stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids], axis=0)
+            r = res_fn(stacked, f.params)  # (k,)
+
+            idx = type_to_idx.get(f.type, None)
+            if idx is not None:
+                scale = jnp.exp(log_scales[idx])
+            else:
+                scale = 1.0
+
+            r_scaled = scale * r
+            r_scaled = jnp.reshape(r_scaled, (-1,))
+            res_list.append(r_scaled)
+
+        return jnp.concatenate(res_list, axis=0)
+
+    return wm, x_init, residual_w, (p0_slice, p1_slice, pl_slice)
 
 
 def run_experiment():
-    fg, x_init, residual_w, (p0_slice, p1_slice, pl_slice) = build_problem()
+    wm, x_init, residual_w, (p0_slice, p1_slice, pl_slice) = build_problem()
 
     # Inner solver config: optimize x for fixed log_scale
     gd_cfg = GDConfig(learning_rate=0.1, max_iters=200)

@@ -114,13 +114,19 @@ def build_scene_graph():
 def main():
     sg, dsg, objects = build_scene_graph()
 
-    # Pack full factor-graph state
-    fg = sg.wm.fg
-    x0, index = fg.pack_state()
+    # Access the WorldModel and pack the full state
+    wm = sg.wm
+    x0, index = wm.pack_state()
 
-    # Build manifold metadata and residual function
-    block_slices, manifold_types = build_manifold_metadata(fg)
-    residual_fn = fg.build_residual_function()
+    # Build manifold metadata using the WorldModel's packed state and underlying factor graph
+    packed_state = (x0, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=wm.fg,
+    )
+
+    # Build residual function from the WorldModel-level residual registry
+    residual_fn = wm.build_residual()
 
     # Solve optimization on the SE3+Euclidean manifold
     cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)

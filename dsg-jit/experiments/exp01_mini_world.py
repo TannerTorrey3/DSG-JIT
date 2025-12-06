@@ -31,10 +31,10 @@ def setup_mini_world() -> WorldModel:
 
     wm = WorldModel()
 
-    # Register residuals
-    wm.fg.register_residual("prior", prior_residual)
-    wm.fg.register_residual("odom_se3", odom_se3_residual)
-    wm.fg.register_residual("room_centroid", room_centroid_residual)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("room_centroid", room_centroid_residual)
 
     # -------------------------
     # Poses (SE(3) in R^6)

@@ -1,8 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.slam.measurements import (
     prior_residual,
@@ -16,7 +15,7 @@ from dsg_jit.slam.measurements import (
 
 def build_hybrid_factor_graph():
     """
-    Hybrid factor graph with:
+    Hybrid world model with:
       - 3 SE3 poses (pose_se3) in R^6
       - 3 voxel cells (voxel3d) in R^3
 
@@ -31,146 +30,132 @@ def build_hybrid_factor_graph():
 
     But we will use *biased* odom and noisy voxel observations as learnable params.
     """
+    wm = WorldModel()
 
-    fg = FactorGraph()
-
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
-    fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
     # --- Variables ---
 
     # SE3 poses (tx, ty, tz, wx, wy, wz)
-    pose0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
+    pose0_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
     )
-    pose1 = Variable(
-        id=NodeId(1),
-        type="pose_se3",
+    pose1_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([0.8, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
     )
-    pose2 = Variable(
-        id=NodeId(2),
-        type="pose_se3",
+    pose2_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([1.7, 0.1, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32),
     )
 
     # Voxel centers (3D Euclidean)
-    voxel0 = Variable(
-        id=NodeId(3),
-        type="voxel3d",
+    voxel0_id = wm.add_variable(
+        var_type="voxel3d",
         value=jnp.array([-0.3, 0.1, 0.0], dtype=jnp.float32),
     )
-    voxel1 = Variable(
-        id=NodeId(4),
-        type="voxel3d",
+    voxel1_id = wm.add_variable(
+        var_type="voxel3d",
         value=jnp.array([0.9, -0.2, 0.0], dtype=jnp.float32),
     )
-    voxel2 = Variable(
-        id=NodeId(5),
-        type="voxel3d",
+    voxel2_id = wm.add_variable(
+        var_type="voxel3d",
         value=jnp.array([2.3, 0.2, 0.0], dtype=jnp.float32),
     )
-
-    for v in [pose0, pose1, pose2, voxel0, voxel1, voxel2]:
-        fg.add_variable(v)
 
     # --- Factors ---
 
     # Prior on pose0 ~ identity
-    f_prior_p0 = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose0_id,),
         params={"target": jnp.zeros(6, dtype=jnp.float32), "weight": 1.0},
     )
 
     # (Optional) weak priors on voxels near [0,1,2] along x, small weight
     voxel_prior_weight = 0.1
-    f_prior_v0 = Factor(
-        id=FactorId(1),
-        type="prior",
-        var_ids=(NodeId(3),),
-        params={"target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
-                "weight": voxel_prior_weight},
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel0_id,),
+        params={
+            "target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": voxel_prior_weight,
+        },
     )
-    f_prior_v1 = Factor(
-        id=FactorId(2),
-        type="prior",
-        var_ids=(NodeId(4),),
-        params={"target": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
-                "weight": voxel_prior_weight},
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel1_id,),
+        params={
+            "target": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": voxel_prior_weight,
+        },
     )
-    f_prior_v2 = Factor(
-        id=FactorId(3),
-        type="prior",
-        var_ids=(NodeId(5),),
-        params={"target": jnp.array([2.0, 0.0, 0.0], dtype=jnp.float32),
-                "weight": voxel_prior_weight},
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel2_id,),
+        params={
+            "target": jnp.array([2.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": voxel_prior_weight,
+        },
     )
 
     # Biased odometry along x (dx is learned later via theta)
     # For now, just put placeholders; 'measurement' will be overwritten by theta.
-    f_odom01 = Factor(
-        id=FactorId(4),
-        type="odom_se3",
-        var_ids=(NodeId(0), NodeId(1)),
-        params={"measurement": jnp.array([0.9, 0, 0, 0, 0, 0], dtype=jnp.float32),
-                "weight": 1.0},
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(pose0_id, pose1_id),
+        params={
+            "measurement": jnp.array([0.9, 0, 0, 0, 0, 0], dtype=jnp.float32),
+            "weight": 1.0,
+        },
     )
-    f_odom12 = Factor(
-        id=FactorId(5),
-        type="odom_se3",
-        var_ids=(NodeId(1), NodeId(2)),
-        params={"measurement": jnp.array([1.1, 0, 0, 0, 0, 0], dtype=jnp.float32),
-                "weight": 1.0},
+    wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(pose1_id, pose2_id),
+        params={
+            "measurement": jnp.array([1.1, 0, 0, 0, 0, 0], dtype=jnp.float32),
+            "weight": 1.0,
+        },
     )
 
     # Voxel point observations – their 'point_world' will come from theta
-    # We keep initial noisy guesses in params for readability; we overwrite at runtime.
-    f_obs0 = Factor(
-        id=FactorId(6),
-        type="voxel_point_obs",
-        var_ids=(NodeId(3),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(voxel0_id,),
         params={
             "point_world": jnp.array([-0.5, 0.1, 0.0], dtype=jnp.float32),
             "weight": 1.0,
         },
     )
-    f_obs1 = Factor(
-        id=FactorId(7),
-        type="voxel_point_obs",
-        var_ids=(NodeId(4),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(voxel1_id,),
         params={
             "point_world": jnp.array([0.7, -0.2, 0.0], dtype=jnp.float32),
             "weight": 1.0,
         },
     )
-    f_obs2 = Factor(
-        id=FactorId(8),
-        type="voxel_point_obs",
-        var_ids=(NodeId(5),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(voxel2_id,),
         params={
             "point_world": jnp.array([2.4, 0.3, 0.0], dtype=jnp.float32),
             "weight": 1.0,
         },
     )
 
-    for f in [f_prior_p0, f_prior_v0, f_prior_v1, f_prior_v2,
-              f_odom01, f_odom12, f_obs0, f_obs1, f_obs2]:
-        fg.add_factor(f)
-
-    return fg, (NodeId(0), NodeId(1), NodeId(2)), (NodeId(3), NodeId(4), NodeId(5))
+    return wm, (pose0_id, pose1_id, pose2_id), (voxel0_id, voxel1_id, voxel2_id)
 
 
 # -------------------------------------------------------------------
 # 2. Hybrid parametric residual: depends on both odom meas and voxel obs
 # -------------------------------------------------------------------
 
-def build_hybrid_param_residual(fg: FactorGraph):
+def build_hybrid_param_residual(wm: WorldModel):
     """
     Build residual(x, theta) where:
       theta = {'odom': (K_odom, 6), 'obs': (K_obs, 3)}
@@ -179,15 +164,12 @@ def build_hybrid_param_residual(fg: FactorGraph):
     - voxel_point_obs factors get 'point_world' from theta['obs'][obs_idx]
     - all other factors use their original params
     """
-    factors = list(fg.factors.values())
-    residual_fns = dict(fg.residual_fns)
-    x0, index = fg.pack_state()
-
-    def unpack(x: jnp.ndarray):
-        return fg.unpack_state(x, index)
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
+    x0, index = wm.pack_state()
 
     def residual(x: jnp.ndarray, theta) -> jnp.ndarray:
-        var_values = unpack(x)
+        var_values = wm.unpack_state(x, index)
         res_list = []
         odom_idx = 0
         obs_idx = 0
@@ -197,7 +179,9 @@ def build_hybrid_param_residual(fg: FactorGraph):
             if res_fn is None:
                 raise ValueError(f"No residual fn for factor type '{f.type}'")
 
-            stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids], axis=0)
+            stacked = jnp.concatenate(
+                [var_values[vid] for vid in f.var_ids], axis=0
+            )
 
             if f.type == "odom_se3":
                 meas = theta["odom"][odom_idx]  # (6,)
@@ -227,7 +211,7 @@ def build_hybrid_param_residual(fg: FactorGraph):
 # 3. Inner solver: optimize x given theta via GD on 0.5 * ||r||^2
 # -------------------------------------------------------------------
 
-def solve_inner(fg: FactorGraph, residual_param, x0: jnp.ndarray, theta, gd_cfg: GDConfig):
+def solve_inner(residual_param, x0: jnp.ndarray, theta, gd_cfg: GDConfig):
     def obj(x):
         r = residual_param(x, theta)
         return 0.5 * jnp.sum(r * r)
@@ -242,8 +226,8 @@ def solve_inner(fg: FactorGraph, residual_param, x0: jnp.ndarray, theta, gd_cfg:
 def main():
     print("=== 4.d – Hybrid SE3 + Voxel joint param learning (exp15) ===\n")
 
-    fg, pose_ids, voxel_ids = build_hybrid_factor_graph()
-    residual_param, x0, index = build_hybrid_param_residual(fg)
+    wm, pose_ids, voxel_ids = build_hybrid_factor_graph()
+    residual_param, x0, index = build_hybrid_param_residual(wm)
 
     # Ground-truth we conceptually want:
     voxel_gt = jnp.array(
@@ -278,8 +262,8 @@ def main():
     gd_cfg = GDConfig(learning_rate=0.05, max_iters=80)
 
     def supervised_loss(theta):
-        x_opt = solve_inner(fg, residual_param, x0, theta, gd_cfg)
-        values = fg.unpack_state(x_opt, index)
+        x_opt = solve_inner(residual_param, x0, theta, gd_cfg)
+        values = wm.unpack_state(x_opt, index)
 
         p0 = values[pose_ids[0]]
         p1 = values[pose_ids[1]]
@@ -347,8 +331,8 @@ def main():
             )
 
     # Final optimized state for inspection
-    x_final = solve_inner(fg, residual_param, x0, theta, gd_cfg)
-    values = fg.unpack_state(x_final, index)
+    x_final = solve_inner(residual_param, x0, theta, gd_cfg)
+    values = wm.unpack_state(x_final, index)
 
     p0 = values[pose_ids[0]]
     p1 = values[pose_ids[1]]

@@ -14,8 +14,10 @@ This experiment shows how to:
   - Use a callback to accumulate a toy 1D pose estimate from IMU data.
   - Inspect / print the fused results.
 
-This does *not* yet wire into the WorldModel / SceneGraph; it is intended
-as a lightweight sandbox for the new `sensors.*` layer.
+This also demonstrates how to mirror fused IMU poses into a WorldModel-backed
+factor graph, so the standard residual / optimization pipeline can be used
+later if desired. It remains a lightweight sandbox for the new `sensors.*`
+layer.
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ from typing import Dict, Any, List
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+
+from dsg_jit.world.model import WorldModel
+from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 
 from dsg_jit.sensors.streams import FunctionStream
 from dsg_jit.sensors.fusion import SensorFusionManager
@@ -157,15 +162,42 @@ class ToyImuIntegrator:
 
     This is *not* a real inertial filter; it's just a toy to show that
     SensorFusionManager callbacks can accumulate state and optionally
-    publish fused poses back into the manager.
+    publish fused poses back into the manager and into a WorldModel.
     """
 
-    def __init__(self, fusion: SensorFusionManager) -> None:
+    def __init__(self, fusion: SensorFusionManager, wm: WorldModel | None = None) -> None:
         self.fusion = fusion
+        self.wm = wm
+
         self.x = 0.0      # position along x
         self.vx = 0.0     # velocity along x
         self.history_t: List[float] = []
         self.history_x: List[float] = []
+
+        # Optional WorldModel-backed pose chain
+        self._last_pose_id = None
+        self._last_pose_x = 0.0
+        self._pose_ids: List[int] = []
+
+        if self.wm is not None:
+            # Register residuals for pose priors and odometry at the WorldModel level.
+            self.wm.register_residual("prior", prior_residual)
+            self.wm.register_residual("odom_se3", odom_se3_residual)
+
+            # Initialize a base pose at the origin with a prior.
+            pose0 = jnp.zeros(6, dtype=jnp.float32)
+            pose0_id = self.wm.add_variable(
+                var_type="pose_se3",
+                value=pose0,
+            )
+            self.wm.add_factor(
+                f_type="prior",
+                var_ids=(pose0_id,),
+                params={"target": pose0},
+            )
+            self._last_pose_id = pose0_id
+            self._last_pose_x = 0.0
+            self._pose_ids.append(pose0_id)
 
     def __call__(self, meas: BaseMeasurement) -> None:
         # We only care about IMU for this toy integrator
@@ -189,6 +221,34 @@ class ToyImuIntegrator:
                 covariance=None,
                 source_counts={"imu": 1},
             )
+
+            # Optionally mirror this fused pose into the WorldModel as a pose chain.
+            if self.wm is not None and self._last_pose_id is not None:
+                # Create a new pose variable at the fused position.
+                pose_vec = jnp.array(
+                    [self.x, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    dtype=jnp.float32,
+                )
+                pose_id = self.wm.add_variable(
+                    var_type="pose_se3",
+                    value=pose_vec,
+                )
+
+                # Build an odometry measurement between the last pose and this one.
+                dx = self.x - self._last_pose_x
+                odom_meas = jnp.array(
+                    [dx, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    dtype=jnp.float32,
+                )
+                self.wm.add_factor(
+                    f_type="odom_se3",
+                    var_ids=(self._last_pose_id, pose_id),
+                    params={"measurement": odom_meas},
+                )
+
+                self._last_pose_id = pose_id
+                self._last_pose_x = self.x
+                self._pose_ids.append(pose_id)
 
         elif isinstance(meas, CameraMeasurement):
             # Log something lightweight about the camera sample.
@@ -277,8 +337,9 @@ def main() -> None:
         converter=raw_sample_to_imu_measurement,  # use default imu_sample_to_measurement
     )
 
-    # 3) Attach our toy integrator as a callback
-    integrator = ToyImuIntegrator(fusion)
+    # 3) Construct a WorldModel and attach our toy integrator as a callback.
+    wm = WorldModel()
+    integrator = ToyImuIntegrator(fusion, wm=wm)
     fusion.register_callback(integrator)
 
     # 4) Run a short simulation loop
@@ -288,6 +349,11 @@ def main() -> None:
         if n_meas == 0:
             # All streams returned None; you could break here in a real app.
             pass
+
+    # WorldModel summary: how many poses/factors were mirrored from the IMU integrator.
+    print("\n=== WorldModel summary (exp21 sensor fusion demo) ===")
+    print(f"Num variables: {len(wm.fg.variables)}")
+    print(f"Num factors:   {len(wm.fg.factors)}")
 
     # 5) Inspect latest fused pose
     fused = fusion.get_latest_pose()

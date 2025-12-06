@@ -3,8 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,  # additive SE3 residual (no geodesic manifold here)
@@ -14,7 +13,7 @@ from dsg_jit.optimization.solvers import GDConfig, gradient_descent  # first-ord
 
 def _to_slice(idx):
     """
-    Normalize FactorGraph index entry (slice or (start, length)) into a slice.
+    Normalize an index entry (slice or (start, length)) into a slice.
     """
     if isinstance(idx, slice):
         return idx
@@ -52,34 +51,26 @@ def build_se3_chain_with_param_odom():
     Using first-order GD avoids the numerical fragility of backpropagating
     through repeated linear solves inside Gauss-Newton.
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Initial pose guesses, slightly perturbed from GT.
-    p0 = Variable(
-        id=NodeId(0),
-        type="pose_se3",
+    p0_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([0.1, -0.1, 0.0, 0.01, -0.02, 0.0], dtype=jnp.float32),
     )
-    p1 = Variable(
-        id=NodeId(1),
-        type="pose_se3",
+    p1_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([1.2, 0.2, 0.0, 0.02, 0.01, 0.0], dtype=jnp.float32),
     )
-    p2 = Variable(
-        id=NodeId(2),
-        type="pose_se3",
+    p2_id = wm.add_variable(
+        var_type="pose_se3",
         value=jnp.array([1.8, -0.2, 0.0, -0.01, 0.02, 0.0], dtype=jnp.float32),
     )
 
-    fg.add_variable(p0)
-    fg.add_variable(p1)
-    fg.add_variable(p2)
-
     # Strong prior on pose0 at identity.
-    f_prior0 = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(p0_id,),
         params={"target": jnp.zeros(6, dtype=jnp.float32)},
     )
 
@@ -87,34 +78,70 @@ def build_se3_chain_with_param_odom():
     base_meas01 = jnp.array([0.9, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     base_meas12 = jnp.array([1.1, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
 
-    # Odom factors using the additive SE3 residual.
-    f_odom01 = Factor(
-        id=FactorId(1),
-        type="odom_se3",
-        var_ids=(NodeId(0), NodeId(1)),
+    # Odom factors using the additive SE3 residual. The 'measurement'
+    # fields will be overridden by theta in the parametric residual.
+    f_odom01_id = wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(p0_id, p1_id),
         params={"measurement": base_meas01},
     )
-    f_odom12 = Factor(
-        id=FactorId(2),
-        type="odom_se3",
-        var_ids=(NodeId(1), NodeId(2)),
+    f_odom12_id = wm.add_factor(
+        f_type="odom_se3",
+        var_ids=(p1_id, p2_id),
         params={"measurement": base_meas12},
     )
 
-    for f in (f_prior0, f_odom01, f_odom12):
-        fg.add_factor(f)
-
-    # Register residuals.
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
+    # Register residuals at the WorldModel level.
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
 
     # Pack state and get index map.
-    x_init, index = fg.pack_state()
+    x_init, index = wm.pack_state()
 
-    # Build parametric residual function:
+    # Pose slices in the flat state vector.
+    p0_slice = _to_slice(index[p0_id])
+    p1_slice = _to_slice(index[p1_id])
+    p2_slice = _to_slice(index[p2_id])
+
+    # Build a parametric residual function:
     #   residual_param_fn(x, theta) -> stacked residuals,
-    # with theta of shape (K, 6) where K is the number of odom_se3 factors.
-    residual_param_fn, _ = fg.build_residual_function_se3_odom_param_multi()
+    # where theta has shape (K, 6) with K equal to the number of odom_se3 factors.
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
+
+    def residual_param_fn(x: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+        """
+        Parametric residual r(x, theta), where theta[k] is the SE(3) odometry
+        measurement for the k-th odom_se3 factor in factor iteration order.
+        """
+        var_values = wm.unpack_state(x, index)
+        res_list = []
+        odom_idx = 0
+
+        for f in factors:
+            res_fn = residual_fns.get(f.type, None)
+            if res_fn is None:
+                raise ValueError(
+                    f"No residual fn registered for factor type '{f.type}'"
+                )
+
+            stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids])
+
+            if f.type == "odom_se3":
+                # Override the measurement parameter from theta[odom_idx]
+                meas = theta[odom_idx]
+                odom_idx += 1
+                base_params = dict(f.params)
+                base_params["measurement"] = meas
+                params = base_params
+            else:
+                params = f.params
+
+            r = res_fn(stacked, params)
+            w = params.get("weight", 1.0)
+            res_list.append(jnp.sqrt(w) * r)
+
+        return jnp.concatenate(res_list)
 
     # Ground truth poses (stacked).
     gt0 = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
@@ -125,13 +152,8 @@ def build_se3_chain_with_param_odom():
     # Initial theta: stack of the two odom measurements (2, 6).
     theta0 = jnp.stack([base_meas01, base_meas12], axis=0)  # shape (2, 6)
 
-    # Pose slices in the flat state vector.
-    p0_slice = _to_slice(index[NodeId(0)])
-    p1_slice = _to_slice(index[NodeId(1)])
-    p2_slice = _to_slice(index[NodeId(2)])
-
     return (
-        fg,
+        wm,
         x_init,
         residual_param_fn,
         (p0_slice, p1_slice, p2_slice),
@@ -142,7 +164,7 @@ def build_se3_chain_with_param_odom():
 
 def main():
     (
-        fg,
+        wm,
         x_init,
         residual_fn_param,
         (p0_slice, p1_slice, p2_slice),

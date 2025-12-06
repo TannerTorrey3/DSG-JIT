@@ -3,7 +3,7 @@ exp18_scenegraph_3d.py
 
 Hero-style 3D Scene Graph visualization for DSG-JIT.
 
-- Builds a small SE(3) odometry chain in a FactorGraph
+- Builds a small SE(3) odometry chain in a WorldModel-backed factor graph
 - Solves with manifold Gauss-Newton
 - Exports pose nodes as VisNode / VisEdge
 - Adds semantic nodes (rooms, places, objects)
@@ -23,8 +23,8 @@ from typing import Dict, List, Tuple
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.core.types import NodeId
+from dsg_jit.world.model import WorldModel
 from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.slam.measurements import prior_residual, odom_se3_geodesic_residual
@@ -40,9 +40,9 @@ from dsg_jit.world.visualization import (
 # ---------------------------------------------------------------------------
 
 
-def build_pose_chain_factor_graph(num_poses: int = 5) -> Tuple[FactorGraph, jnp.ndarray]:
+def build_pose_chain_factor_graph(num_poses: int = 5) -> WorldModel:
     """
-    Build a 1D SE(3) pose chain factor graph on the x-axis.
+    Build a 1D SE(3) pose chain in a WorldModel-backed factor graph on the x-axis.
 
     pose0 --odom--> pose1 --odom--> ... --odom--> pose_{N-1}
 
@@ -53,63 +53,66 @@ def build_pose_chain_factor_graph(num_poses: int = 5) -> Tuple[FactorGraph, jnp.
           * odom_se3 factors between consecutive poses with dx = [1, 0, ..., 0]
 
     Returns:
-        fg: constructed FactorGraph
-        x0: initial packed state
+        wm: constructed WorldModel
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
-    # Register residual functions
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_geodesic_residual)
+    # Register residual functions at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_geodesic_residual)
 
     # Add pose variables (initialized at zero)
-    for i in range(num_poses):
-        nid = NodeId(i)
-        v = Variable(
-            id=nid,
-            type="pose_se3",
+    pose_ids: List[int] = []
+    for _ in range(num_poses):
+        vid = wm.add_variable(
+            var_type="pose_se3",
             value=jnp.zeros(6, dtype=jnp.float32),
         )
-        fg.add_variable(v)
+        pose_ids.append(vid)
 
     # Prior on pose0 at the origin
-    prior_factor = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose_ids[0],),
         params={
             "target": jnp.zeros(6, dtype=jnp.float32),
             "weight": 100.0,
         },
     )
-    fg.add_factor(prior_factor)
 
     # Odom factors between consecutive poses
     for i in range(1, num_poses):
-        fid = FactorId(i)
         meas = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
-        odom_factor = Factor(
-            id=fid,
-            type="odom_se3",
-            var_ids=(NodeId(i - 1), NodeId(i)),
+        wm.add_factor(
+            f_type="odom_se3",
+            var_ids=(pose_ids[i - 1], pose_ids[i]),
             params={
                 "measurement": meas,
                 "weight": 1.0,
             },
         )
-        fg.add_factor(odom_factor)
 
-    # Initial state
-    x0, _ = fg.pack_state()
-    return fg, x0
+    return wm
 
 
-def solve_pose_chain(fg: FactorGraph, x0: jnp.ndarray) -> jnp.ndarray:
+def solve_pose_chain(wm: WorldModel) -> Tuple[jnp.ndarray, Dict[NodeId, Tuple[int, int]]]:
     """
     Solve the SE3 pose chain using the manifold-aware Gauss-Newton solver.
+
+    Returns:
+        x_opt: optimized packed state
+        index: mapping from NodeId -> (start, length) for unpacking
     """
-    residual_fn = fg.build_residual_function()
-    block_slices, manifold_types = build_manifold_metadata(fg)
+    # Pack initial state and build manifold metadata
+    x0, index = wm.pack_state()
+    packed_state = (x0, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=wm.fg,
+    )
+
+    # Build residual function from the WorldModel
+    residual_fn = wm.build_residual()
 
     cfg = GNConfig(max_iters=20, damping=1e-3, max_step_norm=1.0)
     x_opt = gauss_newton_manifold(
@@ -119,7 +122,7 @@ def solve_pose_chain(fg: FactorGraph, x0: jnp.ndarray) -> jnp.ndarray:
         manifold_types,
         cfg,
     )
-    return x_opt
+    return x_opt, index
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +163,7 @@ def plot_scene_graph_3d_from_nodes(
     }
 
     # Build lookup for positions
-    node_pos: Dict[NodeId, jnp.ndarray] = {}
+    node_pos: Dict[int, jnp.ndarray] = {}
 
     for n in nodes:
         p = n.position
@@ -370,20 +373,20 @@ def build_semantic_scene(nodes_fg: List[VisNode]) -> Tuple[List[VisNode], List[V
 
 def main():
     # 1) Build and solve pose chain
-    fg, x0 = build_pose_chain_factor_graph(num_poses=5)
-    x_opt = solve_pose_chain(fg, x0)
+    wm = build_pose_chain_factor_graph(num_poses=5)
+    x_opt, index = solve_pose_chain(wm)
 
     # Inspect optimized poses
-    _, index = fg.pack_state()
-    values = fg.unpack_state(x_opt, index)
+    values = wm.unpack_state(x_opt, index)
 
     print("=== Optimized poses (se(3) vector) ===")
+    # values is a dict keyed by node id; assume pose ids start at 0 in order
     for i in range(len(values)):
         v = values[NodeId(i)]
         print(f"pose{i}: {v}")
 
-    # 2) Export factor graph to VisNode/VisEdge
-    nodes_fg, edges_fg = export_factor_graph_for_vis(fg)
+    # 2) Export factor graph to VisNode/VisEdge from the underlying graph
+    nodes_fg, edges_fg = export_factor_graph_for_vis(wm.fg)
 
     # 3) Build semantic layer (rooms, places, objects)
     semantic_nodes, semantic_edges = build_semantic_scene(nodes_fg)

@@ -3,8 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.factor_graph import FactorGraph
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.world.model import WorldModel
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.slam.measurements import (
     prior_residual,
@@ -29,117 +28,92 @@ We then:
 """
 
 
-def build_voxel_graph(theta_init: jnp.ndarray) -> FactorGraph:
+def build_voxel_graph(theta_init: jnp.ndarray):
     """
-    Build a tiny FactorGraph with 3 voxel cells and 3 voxel_point_obs factors.
+    Build a tiny WorldModel with 3 voxel cells and 3 voxel_point_obs factors.
 
     theta_init: (3,3) initial world points for the 3 observations.
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # --- Variables: 3 voxel cells in R^3 (x, y, z) ---
-    v0 = Variable(
-        id=NodeId(0),
-        type="voxel_cell3d",
+    v0_id = wm.add_variable(
+        var_type="voxel_cell3d",
         value=jnp.array([-0.2, 0.1, 0.0], dtype=jnp.float32),
     )
-    v1 = Variable(
-        id=NodeId(1),
-        type="voxel_cell3d",
+    v1_id = wm.add_variable(
+        var_type="voxel_cell3d",
         value=jnp.array([0.8, -0.3, 0.0], dtype=jnp.float32),
     )
-    v2 = Variable(
-        id=NodeId(2),
-        type="voxel_cell3d",
+    v2_id = wm.add_variable(
+        var_type="voxel_cell3d",
         value=jnp.array([2.3, 0.2, 0.0], dtype=jnp.float32),
     )
 
-    fg.add_variable(v0)
-    fg.add_variable(v1)
-    fg.add_variable(v2)
-
-    # --- Residual registrations ---
-    fg.register_residual("voxel_prior", prior_residual)
-    fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+    # --- Residual registrations at the WorldModel level ---
+    wm.register_residual("voxel_prior", prior_residual)
+    wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
     # --- Priors: weakly pull voxels toward 0,1,2 on x-axis ---
     prior_weight = 0.1  # weak prior, learning driven mostly by obs
 
-    fg.add_factor(
-        Factor(
-            id=FactorId(0),
-            type="voxel_prior",
-            var_ids=(NodeId(0),),
-            params={
-                "target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
-                "weight": prior_weight,
-            },
-        )
+    wm.add_factor(
+        f_type="voxel_prior",
+        var_ids=(v0_id,),
+        params={
+            "target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": prior_weight,
+        },
     )
-    fg.add_factor(
-        Factor(
-            id=FactorId(1),
-            type="voxel_prior",
-            var_ids=(NodeId(1),),
-            params={
-                "target": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
-                "weight": prior_weight,
-            },
-        )
+    wm.add_factor(
+        f_type="voxel_prior",
+        var_ids=(v1_id,),
+        params={
+            "target": jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": prior_weight,
+        },
     )
-    fg.add_factor(
-        Factor(
-            id=FactorId(2),
-            type="voxel_prior",
-            var_ids=(NodeId(2),),
-            params={
-                "target": jnp.array([2.0, 0.0, 0.0], dtype=jnp.float32),
-                "weight": prior_weight,
-            },
-        )
+    wm.add_factor(
+        f_type="voxel_prior",
+        var_ids=(v2_id,),
+        params={
+            "target": jnp.array([2.0, 0.0, 0.0], dtype=jnp.float32),
+            "weight": prior_weight,
+        },
     )
 
     # --- Voxel point observations (one per voxel) ---
     obs_weight = 10.0  # relatively strong obs; learnable type scale will modulate
 
-    fg.add_factor(
-        Factor(
-            id=FactorId(3),
-            type="voxel_point_obs",
-            var_ids=(NodeId(0),),
-            params={
-                "point_world": theta_init[0],  # will be overridden
-                "weight": obs_weight,
-            },
-        )
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(v0_id,),
+        params={
+            "point_world": theta_init[0],  # will be overridden
+            "weight": obs_weight,
+        },
     )
-    fg.add_factor(
-        Factor(
-            id=FactorId(4),
-            type="voxel_point_obs",
-            var_ids=(NodeId(1),),
-            params={
-                "point_world": theta_init[1],
-                "weight": obs_weight,
-            },
-        )
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(v1_id,),
+        params={
+            "point_world": theta_init[1],
+            "weight": obs_weight,
+        },
     )
-    fg.add_factor(
-        Factor(
-            id=FactorId(5),
-            type="voxel_point_obs",
-            var_ids=(NodeId(2),),
-            params={
-                "point_world": theta_init[2],
-                "weight": obs_weight,
-            },
-        )
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(v2_id,),
+        params={
+            "point_world": theta_init[2],
+            "weight": obs_weight,
+        },
     )
 
-    return fg
+    return wm, (v0_id, v1_id, v2_id)
 
 
-def build_residual_param_and_weight(fg: FactorGraph):
+def build_residual_param_and_weight(wm):
     """
     Build a residual function:
 
@@ -153,12 +127,12 @@ def build_residual_param_and_weight(fg: FactorGraph):
     All voxel_point_obs residuals are scaled by exp(log_scale_obs).
     voxel_prior residuals keep their static 'weight' only.
     """
-    factors = list(fg.factors.values())
-    residual_fns = fg.residual_fns
-    _, index = fg.pack_state()
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
+    _, index = wm.pack_state()
 
     def residual(x: jnp.ndarray, theta: jnp.ndarray, log_scale_obs: jnp.ndarray) -> jnp.ndarray:
-        var_values = fg.unpack_state(x, index)
+        var_values = wm.unpack_state(x, index)
         res_list = []
         obs_idx = 0
 
@@ -219,9 +193,11 @@ def main():
     K = theta_init.shape[0]
 
     # --- Build graph ---
-    fg = build_voxel_graph(theta_init)
-    residual_pw, index = build_residual_param_and_weight(fg)
-    x0, _ = fg.pack_state()  # initial voxel state
+    wm, voxel_ids = build_voxel_graph(theta_init)
+    v0_id, v1_id, v2_id = voxel_ids
+
+    residual_pw, index = build_residual_param_and_weight(wm)
+    x0, _ = wm.pack_state()  # initial voxel state
 
     # --- Inner solver: GD over x for fixed (theta, log_scale_obs) ---
     # More conservative settings to avoid blow-up when log_scale is large
@@ -250,11 +226,11 @@ def main():
         # Clamp log_scale inside loss to keep things sane
         log_scale_obs = jnp.clip(log_scale_obs, -2.0, 2.0)  # scales in [~0.14, ~7.39]
         x_opt = solve_inner(theta, log_scale_obs)
-        values = fg.unpack_state(x_opt, index)
+        values = wm.unpack_state(x_opt, index)
 
-        v0 = values[NodeId(0)]
-        v1 = values[NodeId(1)]
-        v2 = values[NodeId(2)]
+        v0 = values[v0_id]
+        v1 = values[v1_id]
+        v2 = values[v2_id]
 
         V = jnp.stack([v0, v1, v2], axis=0)  # (3,3)
         diff = V - gt_voxels
@@ -311,11 +287,11 @@ def main():
     theta_final, log_scale_final = unpack_params(p)
     log_scale_final = float(jnp.clip(log_scale_final, -2.0, 2.0))
     x_final = solve_inner(theta_final, log_scale_final)
-    values_final = fg.unpack_state(x_final, index)
+    values_final = wm.unpack_state(x_final, index)
 
-    v0_f = values_final[NodeId(0)]
-    v1_f = values_final[NodeId(1)]
-    v2_f = values_final[NodeId(2)]
+    v0_f = values_final[v0_id]
+    v1_f = values_final[v1_id]
+    v2_f = values_final[v2_id]
     V_final = jnp.stack([v0_f, v1_f, v2_f], axis=0)
 
     print("\n=== Final results after joint learning (theta + log_scale_obs) ===")

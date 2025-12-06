@@ -1,4 +1,3 @@
-
 import jax
 import jax.numpy as jnp
 
@@ -10,10 +9,10 @@ from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 def build_scenegraph():
     sg = SceneGraphWorld()
     wm = sg.wm
-    fg = wm.fg
 
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
+    # Register residuals at the WorldModel level.
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
 
     p0 = sg.add_pose_se3(
         jnp.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
@@ -53,15 +52,48 @@ def main():
 
     sg, p0, p1, p2 = build_scenegraph()
     wm = sg.wm
-    fg = wm.fg
 
     factor_type_order = ["prior", "odom_se3"]
     inner_cfg = InnerGDConfig(learning_rate=0.02, max_iters=40, max_step_norm=0.5)
     trainer = DSGTrainer(wm, factor_type_order, inner_cfg)
 
-    # Debug: residual at x0 with unit weights
-    residual_w = fg.build_residual_function_with_type_weights(factor_type_order)
-    x0, _ = fg.pack_state()
+    # Debug: residual at x0 with unit weights, using WorldModel-level residuals.
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
+    type_to_idx = {t: i for i, t in enumerate(factor_type_order)}
+
+    def residual_w(x: jnp.ndarray, log_scales: jnp.ndarray) -> jnp.ndarray:
+        """
+        Residual with per-type weights controlled by log_scales.
+
+        log_scales[i] corresponds to factor_type_order[i].
+        Missing types default to unit weight.
+        """
+        _, index = wm.pack_state()
+        var_values = wm.unpack_state(x, index)
+        res_list = []
+
+        for f in factors:
+            res_fn = residual_fns.get(f.type, None)
+            if res_fn is None:
+                raise ValueError(f"No residual fn registered for factor type '{f.type}'")
+
+            stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids], axis=0)
+            r = res_fn(stacked, f.params)
+
+            idx = type_to_idx.get(f.type, None)
+            if idx is not None:
+                scale = jnp.exp(log_scales[idx])
+            else:
+                scale = 1.0
+
+            r_scaled = scale * r
+            r_scaled = jnp.reshape(r_scaled, (-1,))
+            res_list.append(r_scaled)
+
+        return jnp.concatenate(res_list, axis=0)
+
+    x0, index0 = wm.pack_state()
     log_scales_init = jnp.array([0.0, 0.0], dtype=jnp.float32)
     r0 = residual_w(x0, log_scales_init)
     print("DEBUG r0:", r0)

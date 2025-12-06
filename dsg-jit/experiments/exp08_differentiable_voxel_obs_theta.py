@@ -3,8 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
     voxel_point_observation_residual,
@@ -16,30 +15,27 @@ from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
 
 def build_single_voxel_graph_with_param_obs():
     """
-    Build a tiny factor graph:
+    Build a tiny WorldModel-backed factor graph:
 
       - one voxel_cell variable v in R^3
       - prior: v ~ [0, 0, 0] (weak)
       - voxel_point_obs: v ~ point_world (we will treat point_world as a parameter)
 
     Returns:
-      fg, x_init, residual_fn(x, point_world), block_slices, manifold_types, voxel_slice, gt
+      wm, x_init, residual_fn(x, point_world), block_slices, manifold_types, voxel_slice, gt, base_point
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
     # Single voxel variable, intentionally off the ground truth
-    voxel0 = Variable(
-        id=NodeId(0),
-        type="voxel_cell",
+    voxel0_id = wm.add_variable(
+        var_type="voxel_cell",
         value=jnp.array([-0.5, 0.2, 0.0], dtype=jnp.float32),
     )
-    fg.add_variable(voxel0)
 
     # Prior on voxel at [0,0,0] (weak-ish)
-    f_prior = Factor(
-        id=FactorId(0),
-        type="prior",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel0_id,),
         params={"target": jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32)},
     )
 
@@ -48,42 +44,70 @@ def build_single_voxel_graph_with_param_obs():
     base_point = jnp.array([0.5, 0.0, 0.0], dtype=jnp.float32)
     weight_obs = sigma_to_weight(0.05)  # strong weight
 
-    f_obs = Factor(
-        id=FactorId(1),
-        type="voxel_point_obs",
-        var_ids=(NodeId(0),),
+    wm.add_factor(
+        f_type="voxel_point_obs",
+        var_ids=(voxel0_id,),
         params={
             "point_world": base_point,  # will be overridden in residual_fn
             "weight": weight_obs,
         },
     )
 
-    fg.add_factor(f_prior)
-    fg.add_factor(f_obs)
-
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
     # Pack state, manifold metadata
-    x_init, index = fg.pack_state()
-    block_slices, manifold_types = build_manifold_metadata(fg)
+    x_init, index = wm.pack_state()
+    packed_state = (x_init, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=wm.fg,
+    )
 
     # For this tiny graph, the voxel is the only variable; should occupy first 3 entries.
-    voxel_slice = index[NodeId(0)]
-    # Normalize to slice if index is a tuple (start, length)
-    if not isinstance(voxel_slice, slice):
-        start, length = voxel_slice
-        voxel_slice = slice(start, start + length)
+    voxel_slice = block_slices[voxel0_id]
 
     # Build parametric residual function: residual(x, point_world)
-    residual_param_fn, _ = fg.build_residual_function_voxel_point_param()
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry  # WorldModel's residual registry
+
+    def residual_param_fn(x: jnp.ndarray, point_world: jnp.ndarray) -> jnp.ndarray:
+        """
+        Residual function that treats point_world as a parameter, overriding
+        the stored 'point_world' for voxel_point_obs factors.
+        """
+        # Reconstruct per-variable values from x
+        var_values = wm.unpack_state(x, index)
+        res_list = []
+
+        for f in factors:
+            res_fn = residual_fns.get(f.type, None)
+            if res_fn is None:
+                raise ValueError(
+                    f"No residual fn registered for factor type '{f.type}'"
+                )
+
+            stacked = jnp.concatenate([var_values[vid] for vid in f.var_ids])
+
+            if f.type == "voxel_point_obs":
+                base_params = dict(f.params)
+                base_params["point_world"] = point_world
+                params = base_params
+            else:
+                params = f.params
+
+            r = res_fn(stacked, params)
+            w = params.get("weight", 1.0)
+            res_list.append(jnp.sqrt(w) * r)
+
+        return jnp.concatenate(res_list)
 
     # Ground-truth voxel position we want the solver to reach
     gt = jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32)
 
     return (
-        fg,
+        wm,
         x_init,
         residual_param_fn,
         block_slices,
@@ -96,7 +120,7 @@ def build_single_voxel_graph_with_param_obs():
 
 def main():
     (
-        fg,
+        wm,
         x_init,
         residual_fn_param,
         block_slices,

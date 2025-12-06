@@ -1,8 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.factor_graph import FactorGraph
-from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
+from dsg_jit.world.model import WorldModel
 
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.slam.measurements import (
@@ -22,16 +21,16 @@ def build_hybrid_graph():
       - priors on pose0 and voxel0
 
     Returns:
-        fg: FactorGraph
-        pose_ids: list[NodeId]   length 6
-        voxel_ids: list[NodeId]  length 6
+        wm: WorldModel
+        pose_ids: list of pose variable ids, length 6
+        voxel_ids: list of voxel variable ids, length 6
     """
-    fg = FactorGraph()
+    wm = WorldModel()
 
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
-    fg.register_residual("voxel_point_obs", voxel_point_observation_residual)
+    # Register residuals at the WorldModel level
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
 
     # ---- Variables ----
     n_poses = 6
@@ -54,18 +53,13 @@ def build_hybrid_graph():
             ],
             dtype=jnp.float32,
         )
-        nid = NodeId(i)
-        pose_ids.append(nid)
-        fg.add_variable(
-            Variable(
-                id=nid,
-                type="pose_se3",
-                value=init,
-            )
+        vid = wm.add_variable(
+            var_type="pose_se3",
+            value=init,
         )
+        pose_ids.append(vid)
 
     # Voxels: initial guesses near ground-truth centers x=0..5
-    voxel_offset = n_poses
     for i in range(n_voxels):
         x_gt = float(i)
         init = jnp.array(
@@ -76,57 +70,40 @@ def build_hybrid_graph():
             ],
             dtype=jnp.float32,
         )
-        nid = NodeId(voxel_offset + i)
-        voxel_ids.append(nid)
-        fg.add_variable(
-            Variable(
-                id=nid,
-                type="voxel_cell3d",  # treated as Euclidean by manifold code
-                value=init,
-            )
+        vid = wm.add_variable(
+            var_type="voxel_cell3d",  # treated as Euclidean by manifold code
+            value=init,
         )
+        voxel_ids.append(vid)
 
     # ---- Factors ----
-    fid = 0
 
     # Prior on pose0 at identity (tx=0, all else 0)
     pose0_target = jnp.zeros((6,), dtype=jnp.float32)
-    fg.add_factor(
-        Factor(
-            id=FactorId(fid),
-            type="prior",
-            var_ids=(pose_ids[0],),
-            params={"target": pose0_target},
-        )
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose_ids[0],),
+        params={"target": pose0_target},
     )
-    fid += 1
 
     # Weak prior on voxel0 near [0,0,0]
     voxel0_target = jnp.array([0.0, 0.0, 0.0], dtype=jnp.float32)
-    fg.add_factor(
-        Factor(
-            id=FactorId(fid),
-            type="prior",
-            var_ids=(voxel_ids[0],),
-            params={"target": voxel0_target},
-        )
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel_ids[0],),
+        params={"target": voxel0_target},
     )
-    fid += 1
 
     # Odom factors between consecutive poses: we will override "measurement"
     # in the experiment, but we still need a placeholder here.
     # measurement in se(3)-vector form: [dx, dy, dz, wx, wy, wz]
     for i in range(n_poses - 1):
         meas_placeholder = jnp.zeros((6,), dtype=jnp.float32)
-        fg.add_factor(
-            Factor(
-                id=FactorId(fid),
-                type="odom_se3",
-                var_ids=(pose_ids[i], pose_ids[i + 1]),
-                params={"measurement": meas_placeholder},
-            )
+        wm.add_factor(
+            f_type="odom_se3",
+            var_ids=(pose_ids[i], pose_ids[i + 1]),
+            params={"measurement": meas_placeholder},
         )
-        fid += 1
 
     # Voxel observation factors: one obs per voxel, each attached to
     # the nearest pose along the chain for simplicity.
@@ -140,20 +117,16 @@ def build_hybrid_graph():
         pid = pose_ids[pose_index]
 
         point_placeholder = jnp.zeros((3,), dtype=jnp.float32)
-        fg.add_factor(
-            Factor(
-                id=FactorId(fid),
-                type="voxel_point_obs",
-                var_ids=(pid, vid),
-                params={"point_world": point_placeholder},
-            )
+        wm.add_factor(
+            f_type="voxel_point_obs",
+            var_ids=(pid, vid),
+            params={"point_world": point_placeholder},
         )
-        fid += 1
 
-    return fg, pose_ids, voxel_ids
+    return wm, pose_ids, voxel_ids
 
 
-def build_param_residual(fg: FactorGraph):
+def build_param_residual(wm: WorldModel):
     """
     Build a residual function that treats both:
       - ALL odom_se3 measurements (per-factor se(3))
@@ -168,10 +141,10 @@ def build_param_residual(fg: FactorGraph):
     Returns:
         residual_fn(x, theta), index, n_odom, n_obs
     """
-    factors = list(fg.factors.values())
-    residual_fns = dict(fg.residual_fns)
+    factors = list(wm.fg.factors.values())
+    residual_fns = wm._residual_registry
 
-    _, index = fg.pack_state()
+    _, index = wm.pack_state()
 
     n_odom = sum(1 for f in factors if f.type == "odom_se3")
     n_obs = sum(1 for f in factors if f.type == "voxel_point_obs")
@@ -182,7 +155,7 @@ def build_param_residual(fg: FactorGraph):
         theta["odom"]: shape (n_odom, 6)
         theta["obs"]:  shape (n_obs, 3)
         """
-        var_values = fg.unpack_state(x, index)
+        var_values = wm.unpack_state(x, index)
         res_list = []
         odom_idx = 0
         obs_idx = 0
@@ -218,8 +191,8 @@ def build_param_residual(fg: FactorGraph):
 def main():
     print("=== 4.d – HERO Hybrid SE3 + Voxel joint param learning (exp16, GD inner) ===\n")
 
-    fg, pose_ids, voxel_ids = build_hybrid_graph()
-    residual_param, index, n_odom, n_obs = build_param_residual(fg)
+    wm, pose_ids, voxel_ids = build_hybrid_graph()
+    residual_param, index, n_odom, n_obs = build_param_residual(wm)
 
     # Initial parameters theta
     # Ground-truth odom should be ~[1,0,0,0,0,0] between poses; start biased.
@@ -254,7 +227,7 @@ def main():
     theta0 = {"odom": theta_odom0, "obs": theta_obs0}
 
     # Pack initial state once
-    x0, _ = fg.pack_state()
+    x0, _ = wm.pack_state()
 
     # Inner GD config (a bit conservative; we differentiate through this)
     gd_cfg = GDConfig(learning_rate=0.05, max_iters=80)
@@ -272,7 +245,7 @@ def main():
     #   - voxel centers x -> [0,1,2,3,4,5] and y -> 0
     def supervised_loss(theta: dict) -> jnp.ndarray:
         x_opt = inner_solve(theta)
-        values = fg.unpack_state(x_opt, index)
+        values = wm.unpack_state(x_opt, index)
 
         # Pose loss on last pose
         pose_last = values[pose_ids[-1]]
@@ -336,7 +309,7 @@ def main():
 
     # Final optimized state
     x_final = inner_solve(theta)
-    values = fg.unpack_state(x_final, index)
+    values = wm.unpack_state(x_final, index)
 
     print("\n=== Final optimized state ===")
     for i, pid in enumerate(pose_ids):
