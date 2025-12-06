@@ -5,8 +5,7 @@ import time
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.core.types import NodeId, Variable, FactorId, Factor
-from dsg_jit.core.factor_graph import FactorGraph
+from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,          # additive SE3 odometry
@@ -19,9 +18,11 @@ from dsg_jit.optimization.solvers import (
 from dsg_jit.slam.manifold import build_manifold_metadata
 
 
-def build_hybrid_graph(num_poses: int = 50, num_voxels: int = 500) -> FactorGraph:
+def build_hybrid_world_model(
+    num_poses: int = 50, num_voxels: int = 500
+) -> tuple[WorldModel, list[int]]:
     """
-    Hybrid SE3 + Voxel chain in one factor graph.
+    Hybrid SE3 + Voxel chain in one world model.
 
       - SE3 pose chain:
           pose0 --odom--> pose1 -- ... --> pose_{N-1}
@@ -36,7 +37,10 @@ def build_hybrid_graph(num_poses: int = 50, num_voxels: int = 500) -> FactorGrap
       - Euclidean voxel blocks
       - Mixed factor types through a single Gauss-Newton manifold solve.
     """
-    fg = FactorGraph()
+    wm = WorldModel()
+
+    pose_ids: list[int] = []
+    voxel_ids: list[int] = []
 
     # --- Add SE3 poses ---
     for i in range(num_poses):
@@ -46,36 +50,31 @@ def build_hybrid_graph(num_poses: int = 50, num_voxels: int = 500) -> FactorGrap
                 i + 0.05 * jnp.sin(0.1 * i),  # tx
                 0.05 * jnp.cos(0.15 * i),     # ty
                 0.0,                          # tz
-                0.0, 0.0, 0.0,                # rotation (small)
+                0.0,
+                0.0,
+                0.0,                          # rotation (small)
             ]
         )
-        v = Variable(id=NodeId(i), type="pose_se3", value=init_val)
-        fg.add_variable(v)
+        pose_id = wm.add_variable(var_type="pose_se3", value=init_val)
+        pose_ids.append(pose_id)
 
     # Prior on pose0 at the SE3 origin
-    fg.add_factor(
-        Factor(
-            id=FactorId(0),
-            type="prior",
-            var_ids=(NodeId(0),),
-            params={"target": jnp.zeros(6), "weight": 1.0},
-        )
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(pose_ids[0],),
+        params={"target": jnp.zeros(6), "weight": 1.0},
     )
 
     # Odom factors between poses: +1m in x, no rotation
     meas_se3 = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     for i in range(num_poses - 1):
-        fg.add_factor(
-            Factor(
-                id=FactorId(1 + i),
-                type="odom_se3",
-                var_ids=(NodeId(i), NodeId(i + 1)),
-                params={"measurement": meas_se3, "weight": 1.0},
-            )
+        wm.add_factor(
+            f_type="odom_se3",
+            var_ids=(pose_ids[i], pose_ids[i + 1]),
+            params={"measurement": meas_se3, "weight": 1.0},
         )
 
     # --- Add Voxel chain ---
-    voxel_offset_id = num_poses
     voxel_dim = 3
 
     for j in range(num_voxels):
@@ -87,48 +86,38 @@ def build_hybrid_graph(num_poses: int = 50, num_voxels: int = 500) -> FactorGrap
                 0.0,
             ]
         )
-        v = Variable(
-            id=NodeId(voxel_offset_id + j),
-            type="voxel",     # treated as Euclidean in manifold metadata
+        v_id = wm.add_variable(
+            var_type="voxel",  # treated as Euclidean in manifold metadata
             value=init_val,
         )
-        fg.add_variable(v)
+        voxel_ids.append(v_id)
 
     # Prior on voxel0 near the origin
-    fg.add_factor(
-        Factor(
-            id=FactorId(1 + (num_poses - 1)),  # continue factor IDs
-            type="prior",
-            var_ids=(NodeId(voxel_offset_id),),
-            params={"target": jnp.zeros(voxel_dim), "weight": 1.0},
-        )
+    wm.add_factor(
+        f_type="prior",
+        var_ids=(voxel_ids[0],),
+        params={"target": jnp.zeros(voxel_dim), "weight": 1.0},
     )
 
     # Smoothness factors between neighboring voxels:
     #   residual ~ (v_{j+1} - v_j) - offset
     # with offset ~ [1, 0, 0]
     offset = jnp.array([1.0, 0.0, 0.0])
-    base_factor_id = 1 + (num_poses - 1) + 1
     for j in range(num_voxels - 1):
-        f_id = FactorId(base_factor_id + j)
-        v_id_curr = NodeId(voxel_offset_id + j)
-        v_id_next = NodeId(voxel_offset_id + j + 1)
-
-        fg.add_factor(
-            Factor(
-                id=f_id,
-                type="voxel_smoothness",
-                var_ids=(v_id_curr, v_id_next),
-                params={"offset": offset, "weight": 1.0},
-            )
+        wm.add_factor(
+            f_type="voxel_smoothness",
+            var_ids=(voxel_ids[j], voxel_ids[j + 1]),
+            params={"offset": offset, "weight": 1.0},
         )
 
-    # Register residuals
-    fg.register_residual("prior", prior_residual)
-    fg.register_residual("odom_se3", odom_se3_residual)
-    fg.register_residual("voxel_smoothness", voxel_smoothness_residual)
+    # Register residuals on the world model
+    wm.register_residual("prior", prior_residual)
+    wm.register_residual("odom_se3", odom_se3_residual)
+    wm.register_residual("voxel_smoothness", voxel_smoothness_residual)
 
-    return fg
+    # We return the world model and the pose / voxel ID lists so the caller
+    # can interpret the optimized state.
+    return wm, pose_ids + voxel_ids
 
 
 def run_benchmark(
@@ -137,16 +126,24 @@ def run_benchmark(
     max_iters: int = 20,
     use_jit: bool = True,
 ):
-    print("=== Hybrid SE3 + Voxel Gauss-Newton Benchmark ===")
+    print("=== Hybrid SE3 + Voxel Gauss-Newton Benchmark (WorldModel) ===")
     print(
         f"num_poses = {num_poses}, num_voxels = {num_voxels}, "
         f"max_iters = {max_iters}, use_jit = {use_jit}"
     )
 
-    fg = build_hybrid_graph(num_poses=num_poses, num_voxels=num_voxels)
-    x0, index = fg.pack_state()
-    residual_fn = fg.build_residual_function()
-    block_slices, manifold_types = build_manifold_metadata(fg)
+    wm, ids = build_hybrid_world_model(num_poses=num_poses, num_voxels=num_voxels)
+
+    # Pack initial state and build the vmap-optimized residual
+    x0, index = wm.pack_state()
+    residual_fn = wm.build_residual()
+
+    # Build manifold metadata from the world model's factor graph and packed state
+    packed_state = (x0, index)
+    block_slices, manifold_types = build_manifold_metadata(
+        packed_state=packed_state,
+        fg=wm.fg,
+    )
 
     cfg = GNConfig(
         max_iters=max_iters,
@@ -182,13 +179,13 @@ def run_benchmark(
     print(f"Elapsed time: {elapsed * 1000:.3f} ms")
 
     # Quick sanity checks:
-    values = fg.unpack_state(x_opt, index)
+    values = wm.unpack_state(x_opt, index)
 
-    pose0 = values[NodeId(0)]
-    pose_last = values[NodeId(num_poses - 1)]
+    pose0 = values[ids[0]]
+    pose_last = values[ids[num_poses - 1]]
 
-    voxel0 = values[NodeId(num_poses)]
-    voxel_last = values[NodeId(num_poses + num_voxels - 1)]
+    voxel0 = values[ids[num_poses]]
+    voxel_last = values[ids[num_poses + num_voxels - 1]]
 
     print(f"pose0 (opt):     {pose0}")
     print(f"poseN-1 (opt):   {pose_last}")
