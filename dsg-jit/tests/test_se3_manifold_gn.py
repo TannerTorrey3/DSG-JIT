@@ -74,9 +74,9 @@ def test_se3_manifold_gn_two_poses_translation():
         assert float(p0_opt[i]) == pytest.approx(0.0, abs=1e-2)
 
     # pose1 ~ [1, 0, 0, 0, 0, 0]
-    assert float(p1_opt[0]) == pytest.approx(1.0, abs=5e-2)
-    assert float(p1_opt[1]) == pytest.approx(0.0, abs=5e-2)
-    assert float(p1_opt[2]) == pytest.approx(0.0, abs=5e-2)
-    assert float(p1_opt[3]) == pytest.approx(0.0, abs=5e-2)
-    assert float(p1_opt[4]) == pytest.approx(0.0, abs=5e-2)
-    assert float(p1_opt[5]) == pytest.approx(0.0, abs=5e-2)
+    assert float(p1_opt[0]) == pytest.approx(1.0, abs=5e-10)
+    assert float(p1_opt[1]) == pytest.approx(0.0, abs=5e-10)
+    assert float(p1_opt[2]) == pytest.approx(0.0, abs=5e-10)
+    assert float(p1_opt[3]) == pytest.approx(0.0, abs=5e-10)
+    assert float(p1_opt[4]) == pytest.approx(0.0, abs=5e-10)
+    assert float(p1_opt[5]) == pytest.approx(0.0, abs=5e-10)

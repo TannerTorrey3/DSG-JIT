@@ -53,7 +53,7 @@ nav:
         - Visualizing a Factor Graph in 3D: tutorials/visual_factor_graph.md
         - 3D Scene Graph Construction & Visualization: tutorials/scenegraph_3d.md
         - Scene Graph Demo - Rooms, Places, Poses, and Objects: tutorials/scenegraph_demo.md
-        - Dynamic Scene Graph Dem0: tutorials/dynamic_scenegraph_demo.md
+        - Dynamic Scene Graph Demo: tutorials/dynamic_scenegraph_demo.md
       - SE(3) & SLAM:
         - Manifold Geometry SE(3): tutorials/manifold_geometry_se3.md
         - Building a Semantic Scene Graph World: tutorials/scene_graph_world.md
@@ -64,7 +64,8 @@ nav:
         - Hybrid Differentiable Scene Graphs: tutorials/hybrid_dsg.md
         - Visualizing a Factor Graph in 3D: tutorials/visual_factor_graph.md
         - 3D Scene Graph Construction & Visualization: tutorials/scenegraph_3d.md
-        - Dynamic Scene Graph Dem0: tutorials/dynamic_scenegraph_demo.md
+        - Dynamic Scene Graph Demo: tutorials/dynamic_scenegraph_demo.md
+        - Sliding‑Window Optimization with Active Templates: tutorials/sliding_window.md
       - Voxel Grids & Spatial Fields:
         - Differentiable Voxel Observations: tutorials/differentiable_voxel_obs.md
         - Multi-Voxel Parameter Optimization: tutorials/multi_voxel_param.md
@@ -84,9 +85,10 @@ nav:
         - Hybrid SE(3) & Voxel Joint Parameter Learning: tutorials/hybrid_se3_voxel_joint_learning.md
         - Hybrid Differentiable Scene Graphs: tutorials/hybrid_dsg.md
         - 3D Scene Graph Construction & Visualization: tutorials/scenegraph_3d.md
-        - Dynamic Scene Graph Dem0: tutorials/dynamic_scenegraph_demo.md
+        - Dynamic Scene Graph Demo: tutorials/dynamic_scenegraph_demo.md
         - Range Sensor Dynamic Scene Graph: tutorials/range_sensor_dsg.md
         - Sensor DSG Mapping (End-to-End): tutorials/sensor_dsg_mapping.md
+        - Sliding‑Window Optimization with Active Templates: tutorials/sliding_window.md
       - Sensors & Fusion:
         - Range Sensor Dynamic Scene Graph: tutorials/range_sensor_dsg.md
         - Sensor Fusion Sandbox - Camera, LiDAR, and IMU Streams: tutorials/sensor_fusion_demo.md
@@ -104,6 +106,7 @@ nav:
         - Scene Graph Objects (JIT): tutorials/scene_graph_objects_jit.md
         - Differentiable Voxel Observations: tutorials/differentiable_voxel_obs.md
         - Visualizing a Factor Graph in 3D: tutorials/visual_factor_graph.md
+        - Sliding‑Window Optimization with Active Templates: tutorials/sliding_window.md
 
 plugins:
   - search
