@@ -1,0 +1,5934 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://TannerTorrey3.github.io/DSG-JIT/api/slam/">
+      
+      
+        <link rel="prev" href="../core/">
+      
+      
+        <link rel="next" href="../sensors/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.0">
+    
+    
+      
+        <title>SLAM - DSG-JIT</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.618322db.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#slam-modules" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="DSG-JIT" class="md-header__button md-logo" aria-label="DSG-JIT" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            DSG-JIT
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              SLAM
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TannerTorrey3/DSG-JIT" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    TannerTorrey3/DSG-JIT
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="DSG-JIT" class="md-nav__button md-logo" aria-label="DSG-JIT" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    DSG-JIT
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TannerTorrey3/DSG-JIT" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    TannerTorrey3/DSG-JIT
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SLAM
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SLAM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#slammanifold" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        slam.manifold
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="slam.manifold">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#slam.manifold--integration-with-the-optimizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration with the Optimizer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.manifold--design-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.manifold--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.manifold.build_manifold_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build_manifold_metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.manifold.get_manifold_for_var_type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_manifold_for_var_type
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slammeasurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        slam.measurements
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="slam.measurements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--1-priors-and-simple-euclidean-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Priors and Simple Euclidean Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--2-se3-slam-style-motion-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. SE(3) / SLAM-Style Motion Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--3-landmark-and-attachment-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Landmark and Attachment Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--4-voxel-grid-volumetric-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Voxel Grid / Volumetric Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--5-weighting-and-noise-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Weighting and Noise Models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--design-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.object_at_pose_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        object_at_pose_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.odom_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        odom_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.odom_se3_geodesic_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        odom_se3_geodesic_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.odom_se3_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        odom_se3_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_landmark_bearing_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_landmark_bearing_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_landmark_relative_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_landmark_relative_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_place_attachment_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_place_attachment_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_temporal_smoothness_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_temporal_smoothness_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_voxel_point_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_voxel_point_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.prior_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        prior_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.range_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        range_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.se3_chain_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        se3_chain_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.sigma_to_weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sigma_to_weight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.voxel_point_observation_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        voxel_point_observation_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.voxel_smoothness_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        voxel_smoothness_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slampipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        slam.pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.PoseGraphResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PoseGraphResult
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.pose_vectors_from_result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_vectors_from_result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.run_pose_graph_slam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_pose_graph_slam
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.update_worldmodel_from_solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        update_worldmodel_from_solution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.visualize_pose_graph_3d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        visualize_pose_graph_3d
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scene_graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scene Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../world/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    World Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_2" id="__nav_8_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/mini_world/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mini World Factor Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/manifold_geometry_se3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manifold Geometry SE(3)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_world/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building a Semantic Scene Graph World
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Working with Objects in Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/differentiable_voxel_obs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differentiable Voxel Observations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/visual_factor_graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizing a Factor Graph in 3D
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_3d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3D Scene Graph Construction & Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scene Graph Demo - Rooms, Places, Poses, and Objects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/dynamic_scenegraph_demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic Scene Graph Demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_3" id="__nav_8_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SE(3) & SLAM
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    SE(3) & SLAM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/manifold_geometry_se3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manifold Geometry SE(3)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_world/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building a Semantic Scene Graph World
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/dynamic_trajectories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic Trajectories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/differentiable_se3_odom_chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differentiable SE(3) Odometry Chain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_type_weights/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learnable Factor-Type Weights in a Scene Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_se3_voxel_joint_learning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid SE(3) & Voxel Joint Parameter Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_dsg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Differentiable Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/visual_factor_graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizing a Factor Graph in 3D
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_3d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3D Scene Graph Construction & Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/dynamic_scenegraph_demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic Scene Graph Demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/sliding_window/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sliding‑Window Optimization with Active Templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_4" id="__nav_8_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Voxel Grids & Spatial Fields
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Voxel Grids & Spatial Fields
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/differentiable_voxel_obs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differentiable Voxel Observations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/multi_voxel_param/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Voxel Parameter Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/trainer_voxel_point_multi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Voxel Point Observation Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/multi_voxel_param_weight/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joint Learning of Voxel Observation Parameters & Type Weights
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_se3_voxel_joint_learning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid SE(3) & Voxel Joint Parameter Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_dsg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Differentiable Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_5" id="__nav_8_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Static Scene Graphs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_world/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building a Semantic Scene Graph World
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Working with Objects in Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_objects_jit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scene Graph Objects (JIT)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/dynamic_trajectories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic Trajectories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scene Graph Demo - Rooms, Places, Poses, and Objects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_6" id="__nav_8_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Dynamic Scene Graphs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_type_weights/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learnable Factor-Type Weights in a Scene Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/trainer_voxel_point_multi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Voxel Point Observation Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_se3_voxel_joint_learning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid SE(3) & Voxel Joint Parameter Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_dsg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Differentiable Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_3d/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3D Scene Graph Construction & Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/dynamic_scenegraph_demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic Scene Graph Demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/range_sensor_dsg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Range Sensor Dynamic Scene Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/sensor_dsg_mapping/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensor DSG Mapping (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/sliding_window/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sliding‑Window Optimization with Active Templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_7" id="__nav_8_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensors & Fusion
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sensors & Fusion
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/range_sensor_dsg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Range Sensor Dynamic Scene Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/sensor_fusion_demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensor Fusion Sandbox - Camera, LiDAR, and IMU Streams
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/sensor_dsg_mapping/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sensor DSG Mapping (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_8" id="__nav_8_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learning & Hybrid Modules
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Learning & Hybrid Modules
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/multi_voxel_param/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Voxel Parameter Optimization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/differentiable_se3_odom_chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differentiable SE(3) Odometry Chain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/learn_type_weights/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learning Factor-Type Weights
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scenegraph_type_weights/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Learnable Factor-Type Weights in a Scene Graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/trainer_voxel_point_multi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Voxel Point Observation Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/multi_voxel_param_weight/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joint Learning of Voxel Observation Parameters & Type Weights
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_se3_voxel_joint_learning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid SE(3) & Voxel Joint Parameter Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/hybrid_dsg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hybrid Differentiable Scene Graphs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_8_9" id="__nav_8_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    JAX & JIT
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_8_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    JAX & JIT
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/scene_graph_objects_jit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scene Graph Objects (JIT)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/differentiable_voxel_obs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Differentiable Voxel Observations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/visual_factor_graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizing a Factor Graph in 3D
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/sliding_window/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sliding‑Window Optimization with Active Templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#slammanifold" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        slam.manifold
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="slam.manifold">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#slam.manifold--integration-with-the-optimizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration with the Optimizer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.manifold--design-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.manifold--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.manifold.build_manifold_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build_manifold_metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.manifold.get_manifold_for_var_type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_manifold_for_var_type
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slammeasurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        slam.measurements
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="slam.measurements">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--1-priors-and-simple-euclidean-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Priors and Simple Euclidean Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--2-se3-slam-style-motion-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. SE(3) / SLAM-Style Motion Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--3-landmark-and-attachment-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Landmark and Attachment Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--4-voxel-grid-volumetric-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Voxel Grid / Volumetric Factors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--5-weighting-and-noise-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Weighting and Noise Models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--design-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design Goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slam.measurements--notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.object_at_pose_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        object_at_pose_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.odom_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        odom_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.odom_se3_geodesic_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        odom_se3_geodesic_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.odom_se3_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        odom_se3_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_landmark_bearing_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_landmark_bearing_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_landmark_relative_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_landmark_relative_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_place_attachment_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_place_attachment_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_temporal_smoothness_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_temporal_smoothness_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.pose_voxel_point_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_voxel_point_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.prior_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        prior_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.range_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        range_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.se3_chain_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        se3_chain_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.sigma_to_weight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sigma_to_weight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.voxel_point_observation_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        voxel_point_observation_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.measurements.voxel_smoothness_residual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        voxel_smoothness_residual
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slampipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        slam.pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.PoseGraphResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PoseGraphResult
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.pose_vectors_from_result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pose_vectors_from_result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.run_pose_graph_slam" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_pose_graph_slam
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.update_worldmodel_from_solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        update_worldmodel_from_solution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slam.pipeline.visualize_pose_graph_3d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        visualize_pose_graph_3d
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="slam-modules">SLAM Modules</h1>
+<p>This section documents the differentiable SE(3) manifold operations, factor residuals, and SLAM-oriented measurement models.</p>
+<hr />
+<h2 id="slammanifold"><code>slam.manifold</code></h2>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+
+    <div class="doc doc-contents first">
+
+        <p>Manifold utilities for SE(3) and Euclidean variables in DSG-JIT.</p>
+<p>This module centralizes the <em>geometric</em> logic needed by manifold-aware
+optimization routines, in particular:</p>
+<pre><code>• SE(3) exponential / logarithm maps
+• Retraction and local parameterization for poses
+• Jacobian-friendly helpers for composing / inverting SE(3)
+• Metadata that maps variable types to their manifold model
+  (e.g. "pose_se3" → "se3", "place1d" → "euclidean")
+</code></pre>
+<p>The core idea is that the optimizer (e.g. Gauss–Newton) should work in
+a local tangent space while the <em>state</em> lives on a manifold (SE(3) for
+poses, ℝⁿ for Euclidean variables). This module provides:</p>
+<pre><code>• Primitive SE(3) operations:
+    - `se3_exp`, `se3_log`         (tangent ↔ group)
+    - `so3_exp`, `so3_log`         (rotation-only)
+    - `relative_pose_se3`          (pose_a⁻¹ ∘ pose_b)
+    - `se3_retract`                (pose ⊕ δξ update rule)
+
+• Manifold metadata helpers:
+    - `TYPE_TO_MANIFOLD`           (str → {"se3", "euclidean", ...})
+    - `get_manifold_for_var_type`
+    - `build_manifold_metadata`    (NodeId → slice, manifold type)
+</code></pre>
+<h3 id="slam.manifold--integration-with-the-optimizer">Integration with the Optimizer</h3>
+<p><code>optimization.solvers.gauss_newton_manifold</code> uses this module to:</p>
+<pre><code>1. Split the global state vector into blocks per variable.
+2. Decide which update rule to apply:
+    - SE(3) retraction for "pose_se3" blocks
+    - Plain addition for Euclidean blocks
+3. Keep the core solver logic generic while remaining
+   numerically stable on curved manifolds.
+</code></pre>
+<h3 id="slam.manifold--design-goals">Design Goals</h3>
+<p>• <strong>Numerical stability</strong>:
+    Use small-angle fallbacks and well-conditioned SE(3) operations to
+    avoid NaNs in optimization and differentiation.</p>
+<p>• <strong>Separation of concerns</strong>:
+    The factor graph and residuals should not hard-code SE(3) math; all
+    manifold operations live here, behind a clean API.</p>
+<p>• <strong>JAX-friendly</strong>:
+    All functions are written in a way that is compatible with JIT
+    compilation, <code>jax.grad</code>, and <code>jax.jvp</code> / <code>vmap</code>.</p>
+<h3 id="slam.manifold--notes">Notes</h3>
+<p>This module currently focuses on SE(3) + Euclidean manifolds, but the
+design allows extending to other manifolds (e.g. SO(2), quaternions,
+Lie groups for velocities) by:</p>
+<pre><code>• Adding new entries to `TYPE_TO_MANIFOLD`
+• Implementing the corresponding retract / exp / log primitives
+• Extending the manifold-aware solver dispatch if needed
+</code></pre>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.manifold.build_manifold_metadata" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">build_manifold_metadata</span><span class="p">(</span><span class="n">packed_state</span><span class="p">,</span> <span class="n">fg</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Build manifold metadata for a factor graph.</p>
+<p>This function inspects the variables in a :class:<code>~core.factor_graph.FactorGraph</code>
+and constructs two lookup tables that are consumed by
+manifold-aware solvers such as
+:func:<code>optimization.solvers.gauss_newton_manifold</code>:</p>
+<ul>
+<li><code>block_slices</code> maps each :class:<code>~core.types.NodeId</code> to a
+  :class:<code>slice</code> in the packed state vector.</li>
+<li><code>manifold_types</code> maps each :class:<code>~core.types.NodeId</code> to a
+  short string describing the manifold model (e.g. <code>"se3"</code> or
+  <code>"euclidean"</code>).</li>
+</ul>
+<p>The indices produced by :meth:<code>core.factor_graph.FactorGraph.pack_state</code>
+may be stored either as slices or as <code>(start, length)</code> tuples;
+this helper normalizes everything to proper Python <code>slice</code>
+objects so the solver does not need to handle multiple formats.</p>
+<p>:param fg: The factor graph whose variables should be analyzed to
+    construct manifold metadata.
+:return: A tuple <code>(block_slices, manifold_types)</code> where
+    <code>block_slices</code> is a mapping from :class:<code>~core.types.NodeId</code>
+    to :class:<code>slice</code> in the flat state vector, and
+    <code>manifold_types</code> is a mapping from :class:<code>~core.types.NodeId</code>
+    to a manifold model name string.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/manifold.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
+<span class="normal">103</span>
+<span class="normal">104</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span>
+<span class="normal">120</span>
+<span class="normal">121</span>
+<span class="normal">122</span>
+<span class="normal">123</span>
+<span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span>
+<span class="normal">147</span>
+<span class="normal">148</span>
+<span class="normal">149</span>
+<span class="normal">150</span>
+<span class="normal">151</span>
+<span class="normal">152</span>
+<span class="normal">153</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">build_manifold_metadata</span><span class="p">(</span>
+    <span class="n">packed_state</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">fg</span><span class="p">:</span> <span class="n">FactorGraph</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="n">NodeId</span><span class="p">,</span> <span class="nb">slice</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="n">NodeId</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build manifold metadata for a factor graph.</span>
+
+<span class="sd">    This function inspects the variables in a :class:`~core.factor_graph.FactorGraph`</span>
+<span class="sd">    and constructs two lookup tables that are consumed by</span>
+<span class="sd">    manifold-aware solvers such as</span>
+<span class="sd">    :func:`optimization.solvers.gauss_newton_manifold`:</span>
+
+<span class="sd">    * ``block_slices`` maps each :class:`~core.types.NodeId` to a</span>
+<span class="sd">      :class:`slice` in the packed state vector.</span>
+<span class="sd">    * ``manifold_types`` maps each :class:`~core.types.NodeId` to a</span>
+<span class="sd">      short string describing the manifold model (e.g. ``&quot;se3&quot;`` or</span>
+<span class="sd">      ``&quot;euclidean&quot;``).</span>
+
+<span class="sd">    The indices produced by :meth:`core.factor_graph.FactorGraph.pack_state`</span>
+<span class="sd">    may be stored either as slices or as ``(start, length)`` tuples;</span>
+<span class="sd">    this helper normalizes everything to proper Python ``slice``</span>
+<span class="sd">    objects so the solver does not need to handle multiple formats.</span>
+
+<span class="sd">    :param fg: The factor graph whose variables should be analyzed to</span>
+<span class="sd">        construct manifold metadata.</span>
+<span class="sd">    :return: A tuple ``(block_slices, manifold_types)`` where</span>
+<span class="sd">        ``block_slices`` is a mapping from :class:`~core.types.NodeId`</span>
+<span class="sd">        to :class:`slice` in the flat state vector, and</span>
+<span class="sd">        ``manifold_types`` is a mapping from :class:`~core.types.NodeId`</span>
+<span class="sd">        to a manifold model name string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">index</span> <span class="o">=</span> <span class="n">packed_state</span>
+
+    <span class="n">block_slices</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">NodeId</span><span class="p">,</span> <span class="nb">slice</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">manifold_types</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">NodeId</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">var</span> <span class="ow">in</span> <span class="n">fg</span><span class="o">.</span><span class="n">variables</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">index</span><span class="p">[</span><span class="n">nid</span><span class="p">]</span>
+
+        <span class="c1"># Normalize to a slice</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="nb">slice</span><span class="p">):</span>
+            <span class="n">sl</span> <span class="o">=</span> <span class="n">idx</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># assume (start, length)</span>
+            <span class="n">start</span><span class="p">,</span> <span class="n">length</span> <span class="o">=</span> <span class="n">idx</span>
+            <span class="n">sl</span> <span class="o">=</span> <span class="nb">slice</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">start</span> <span class="o">+</span> <span class="n">length</span><span class="p">)</span>
+
+        <span class="n">block_slices</span><span class="p">[</span><span class="n">nid</span><span class="p">]</span> <span class="o">=</span> <span class="n">sl</span>
+
+        <span class="n">manifold</span> <span class="o">=</span> <span class="n">get_manifold_for_var_type</span><span class="p">(</span><span class="n">var</span><span class="o">.</span><span class="n">type</span><span class="p">)</span>
+        <span class="n">manifold_types</span><span class="p">[</span><span class="n">nid</span><span class="p">]</span> <span class="o">=</span> <span class="n">manifold</span>
+
+    <span class="k">return</span> <span class="n">block_slices</span><span class="p">,</span> <span class="n">manifold_types</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.manifold.get_manifold_for_var_type" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">get_manifold_for_var_type</span><span class="p">(</span><span class="n">var_type</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return the manifold model name for a given variable type.</p>
+<p>This is a thin helper around :data:<code>TYPE_TO_MANIFOLD</code> that maps a
+high-level variable type tag (e.g. <code>"pose_se3"</code>, <code>"place1d"</code>)
+to the underlying manifold model used by manifold-aware solvers.</p>
+<p>:param var_type: Variable type string, such as <code>"pose_se3"</code>,
+    <code>"place1d"</code>, <code>"room1d"</code>, <code>"landmark3d"</code> or
+    <code>"voxel_cell"</code>.
+:return: The manifold model name (for example <code>"se3"</code> or
+    <code>"euclidean"</code>). If the type is unknown, <code>"euclidean"</code> is
+    returned by default.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/manifold.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">85</span>
+<span class="normal">86</span>
+<span class="normal">87</span>
+<span class="normal">88</span>
+<span class="normal">89</span>
+<span class="normal">90</span>
+<span class="normal">91</span>
+<span class="normal">92</span>
+<span class="normal">93</span>
+<span class="normal">94</span>
+<span class="normal">95</span>
+<span class="normal">96</span>
+<span class="normal">97</span>
+<span class="normal">98</span>
+<span class="normal">99</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_manifold_for_var_type</span><span class="p">(</span><span class="n">var_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the manifold model name for a given variable type.</span>
+
+<span class="sd">    This is a thin helper around :data:`TYPE_TO_MANIFOLD` that maps a</span>
+<span class="sd">    high-level variable type tag (e.g. ``&quot;pose_se3&quot;``, ``&quot;place1d&quot;``)</span>
+<span class="sd">    to the underlying manifold model used by manifold-aware solvers.</span>
+
+<span class="sd">    :param var_type: Variable type string, such as ``&quot;pose_se3&quot;``,</span>
+<span class="sd">        ``&quot;place1d&quot;``, ``&quot;room1d&quot;``, ``&quot;landmark3d&quot;`` or</span>
+<span class="sd">        ``&quot;voxel_cell&quot;``.</span>
+<span class="sd">    :return: The manifold model name (for example ``&quot;se3&quot;`` or</span>
+<span class="sd">        ``&quot;euclidean&quot;``). If the type is unknown, ``&quot;euclidean&quot;`` is</span>
+<span class="sd">        returned by default.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">TYPE_TO_MANIFOLD</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">var_type</span><span class="p">,</span> <span class="s2">&quot;euclidean&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><hr />
+<h2 id="slammeasurements"><code>slam.measurements</code></h2>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+
+    <div class="doc doc-contents first">
+
+        <p>Residual models (measurement factors) for DSG-JIT.</p>
+<p>This module defines the <em>measurement-level</em> building blocks used by the
+factor graph:</p>
+<pre><code>• Each function here implements a residual:
+      r(x; params) ∈ ℝᵏ
+  compatible with JAX differentiation and JIT compilation.
+
+• Factor types in the graph (e.g. "prior", "odom_se3_geodesic",
+  "voxel_point_obs") are mapped to these residual functions via
+  `FactorGraph.register_residual`.
+</code></pre>
+<p>Broadly, the residuals fall into several families:</p>
+<h3 id="slam.measurements--1-priors-and-simple-euclidean-factors">1. Priors and Simple Euclidean Factors</h3>
+<pre><code>• `prior_residual`:
+    Generic prior on any variable:
+        r = x − target
+
+Useful for:
+    - anchoring poses (pose0 ≈ identity)
+    - clamping scalar variables (places, rooms, weights, etc.)
+</code></pre>
+<h3 id="slam.measurements--2-se3-slam-style-motion-factors">2. SE(3) / SLAM-Style Motion Factors</h3>
+<pre><code>• `odom_se3_geodesic_residual`:
+    SE(3) relative pose constraint using the group logarithm:
+        r = log( meas⁻¹ ∘ (T_i⁻¹ ∘ T_j) )
+
+    Works on "pose_se3" variables and lives in se(3) (6D tangent).
+
+• (Optionally) additive variants:
+    - `odom_se3_additive_residual`
+      for simpler experiments where translation/rotation are treated
+      additively in ℝ⁶.
+</code></pre>
+<p>These encode frame-to-frame odometry, loop closures, and generic
+relative pose constraints between SE(3) nodes.</p>
+<h3 id="slam.measurements--3-landmark-and-attachment-factors">3. Landmark and Attachment Factors</h3>
+<pre><code>• `pose_landmark_relative_residual`:
+    Relative pose between a SE(3) pose and a landmark position,
+    typically enforcing:
+        T_pose ∘ landmark ≈ measurement
+
+• `pose_landmark_bearing_residual`:
+    Bearing-only constraint between a pose and a landmark (e.g.,
+    enforcing angular consistency between measurement and predicted
+    direction).
+
+• `pose_place_attachment_residual`:
+    Softly attaches a pose coordinate (e.g. x) to a 1D "place"
+    variable, used for 1D topological / metric alignment.
+</code></pre>
+<p>These connect metric states (poses, landmarks, places) into a coherent
+SLAM + scene-graph representation.</p>
+<h3 id="slam.measurements--4-voxel-grid-volumetric-factors">4. Voxel Grid / Volumetric Factors</h3>
+<pre><code>• `voxel_smoothness_residual`:
+    Encourages neighboring voxel centers to form a smooth chain or
+    grid. Used to regularize voxel grids representing surfaces or
+    1D/2D/3D structures.
+
+• `voxel_point_observation_residual`:
+    Ties a voxel cell to an observed point in world coordinates,
+    often used for learning voxel positions from point-like
+    observations.
+</code></pre>
+<p>These factors are key to the differentiable voxel experiments and
+hybrid SE3 + voxel benchmarks.</p>
+<h3 id="slam.measurements--5-weighting-and-noise-models">5. Weighting and Noise Models</h3>
+<p>Most residuals support per-factor weightings via a shared helper:</p>
+<pre><code>• `_apply_weight(r, params)`:
+    Applies scalar or diagonal weights to a residual, enabling:
+
+        - Hand-tuned noise models (e.g. σ⁻¹)
+        - Learnable factor-type weights (via log_scales)
+        - Consistent scaling for multi-term objectives
+</code></pre>
+<p>This is what allows the engine to support <em>learnable</em> factor weights in
+Phase 4 experiments (e.g. learning odom vs. observation trade-offs).</p>
+<h3 id="slam.measurements--design-goals">Design Goals</h3>
+<p>• <strong>Clear factor semantics</strong>:
+    Each residual corresponds to a named factor type used throughout
+    tests and experiments, so it’s obvious what each factor is doing.</p>
+<p>• <strong>Differentiable and JIT-friendly</strong>:
+    All residuals are written to be compatible with <code>jax.jit</code> and
+    <code>jax.grad</code>, enabling higher-level meta-learning and end-to-end
+    differentiable training loops.</p>
+<p>• <strong>Composable</strong>:
+    Residuals do not own the factor graph logic; they simply implement
+    r(x; params). All graph structure, manifold handling, and joint
+    optimization is handled in <code>core.factor_graph</code>, <code>slam.manifold</code>,
+    and <code>optimization.solvers</code>.</p>
+<h3 id="slam.measurements--notes">Notes</h3>
+<p>When adding a new factor type:</p>
+<pre><code>1. Implement a residual here:
+       def my_factor_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -&gt; jnp.ndarray
+
+2. Register it with the factor graph:
+       fg.register_residual("my_factor", my_factor_residual)
+
+3. (Optionally) add tests under `tests/` and, if relevant, a
+   differentiable experiment under `experiments/`.
+</code></pre>
+<p>This pattern keeps the measurement models centralized and makes the
+engine easy to extend for new research ideas.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.object_at_pose_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">object_at_pose_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Residual tying a 3D object position to a pose translation.</p>
+<p>Interprets <code>x</code> as <code>[pose(6), object(3)]</code> and encourages the
+object position to coincide with the pose translation plus an
+optional fixed offset.</p>
+<p>:param x: Stacked state block <code>[pose(6), object(3)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing integer fields
+    <code>"pose_dim"</code> and <code>"obj_dim"</code>, and optionally <code>"offset"</code>
+    (a 3D vector) and a weight handled by :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 3D residual <code>object - (pose_translation + offset)</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">336</span>
+<span class="normal">337</span>
+<span class="normal">338</span>
+<span class="normal">339</span>
+<span class="normal">340</span>
+<span class="normal">341</span>
+<span class="normal">342</span>
+<span class="normal">343</span>
+<span class="normal">344</span>
+<span class="normal">345</span>
+<span class="normal">346</span>
+<span class="normal">347</span>
+<span class="normal">348</span>
+<span class="normal">349</span>
+<span class="normal">350</span>
+<span class="normal">351</span>
+<span class="normal">352</span>
+<span class="normal">353</span>
+<span class="normal">354</span>
+<span class="normal">355</span>
+<span class="normal">356</span>
+<span class="normal">357</span>
+<span class="normal">358</span>
+<span class="normal">359</span>
+<span class="normal">360</span>
+<span class="normal">361</span>
+<span class="normal">362</span>
+<span class="normal">363</span>
+<span class="normal">364</span>
+<span class="normal">365</span>
+<span class="normal">366</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">object_at_pose_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Residual tying a 3D object position to a pose translation.</span>
+
+<span class="sd">    Interprets ``x`` as ``[pose(6), object(3)]`` and encourages the</span>
+<span class="sd">    object position to coincide with the pose translation plus an</span>
+<span class="sd">    optional fixed offset.</span>
+
+<span class="sd">    :param x: Stacked state block ``[pose(6), object(3)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing integer fields</span>
+<span class="sd">        ``&quot;pose_dim&quot;`` and ``&quot;obj_dim&quot;``, and optionally ``&quot;offset&quot;``</span>
+<span class="sd">        (a 3D vector) and a weight handled by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 3D residual ``object - (pose_translation + offset)``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pose_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s2">&quot;pose_dim&quot;</span><span class="p">])</span>
+    <span class="n">obj_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s2">&quot;obj_dim&quot;</span><span class="p">])</span>
+
+    <span class="k">assert</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">pose_dim</span> <span class="o">+</span> <span class="n">obj_dim</span>
+
+    <span class="n">pose</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">pose_dim</span><span class="p">]</span>
+    <span class="n">obj</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">pose_dim</span> <span class="p">:</span> <span class="n">pose_dim</span> <span class="o">+</span> <span class="n">obj_dim</span><span class="p">]</span>
+
+    <span class="n">offset</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;offset&quot;</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
+    <span class="n">offset</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">offset</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">3</span><span class="p">,)</span>
+
+    <span class="n">t</span> <span class="o">=</span> <span class="n">pose</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span>  <span class="c1"># tx, ty, tz</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">obj</span> <span class="o">-</span> <span class="p">(</span><span class="n">t</span> <span class="o">+</span> <span class="n">offset</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_apply_weight</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.odom_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">odom_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Simple odometry-style residual in Euclidean space.</p>
+<p>Interprets <code>x</code> as a concatenation of two poses <code>pose0</code> and
+<code>pose1</code> in R^d and enforces an additive odometry relation</p>
+<p><code>(pose1 - pose0) - measurement = 0</code>.</p>
+<p>:param x: Stacked pose vector <code>[pose0, pose1]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"measurement"</code> with
+    the desired relative displacement.
+:type params: Dict[str, jnp.ndarray]
+:return: Euclidean odometry residual.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">205</span>
+<span class="normal">206</span>
+<span class="normal">207</span>
+<span class="normal">208</span>
+<span class="normal">209</span>
+<span class="normal">210</span>
+<span class="normal">211</span>
+<span class="normal">212</span>
+<span class="normal">213</span>
+<span class="normal">214</span>
+<span class="normal">215</span>
+<span class="normal">216</span>
+<span class="normal">217</span>
+<span class="normal">218</span>
+<span class="normal">219</span>
+<span class="normal">220</span>
+<span class="normal">221</span>
+<span class="normal">222</span>
+<span class="normal">223</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">odom_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Simple odometry-style residual in Euclidean space.</span>
+
+<span class="sd">    Interprets ``x`` as a concatenation of two poses ``pose0`` and</span>
+<span class="sd">    ``pose1`` in R^d and enforces an additive odometry relation</span>
+
+<span class="sd">    ``(pose1 - pose0) - measurement = 0``.</span>
+
+<span class="sd">    :param x: Stacked pose vector ``[pose0, pose1]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;measurement&quot;`` with</span>
+<span class="sd">        the desired relative displacement.</span>
+<span class="sd">    :type params: Dict[str, jnp.ndarray]</span>
+<span class="sd">    :return: Euclidean odometry residual.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dim</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">pose0</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">dim</span><span class="p">]</span>
+    <span class="n">pose1</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">dim</span><span class="p">:]</span>
+    <span class="n">meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;measurement&quot;</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">pose1</span> <span class="o">-</span> <span class="n">pose0</span><span class="p">)</span> <span class="o">-</span> <span class="n">meas</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.odom_se3_geodesic_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">odom_se3_geodesic_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Experimental SE(3) geodesic residual using <code>relative_pose_se3</code>.</p>
+<p>Interprets <code>x</code> as two 6D poses in se(3) and uses
+:func:<code>core.math3d.relative_pose_se3</code> to compute the estimated
+relative pose before subtracting the provided measurement.</p>
+<p>:param x: Stacked pose vector <code>[pose0(6), pose1(6)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"measurement"</code> with
+    the desired relative pose in se(3), and optionally a weight
+    understood by :func:<code>_apply_weight</code>.
+:type params: Dict[str, jnp.ndarray]
+:return: Geodesic SE(3) odometry residual in se(3).
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">278</span>
+<span class="normal">279</span>
+<span class="normal">280</span>
+<span class="normal">281</span>
+<span class="normal">282</span>
+<span class="normal">283</span>
+<span class="normal">284</span>
+<span class="normal">285</span>
+<span class="normal">286</span>
+<span class="normal">287</span>
+<span class="normal">288</span>
+<span class="normal">289</span>
+<span class="normal">290</span>
+<span class="normal">291</span>
+<span class="normal">292</span>
+<span class="normal">293</span>
+<span class="normal">294</span>
+<span class="normal">295</span>
+<span class="normal">296</span>
+<span class="normal">297</span>
+<span class="normal">298</span>
+<span class="normal">299</span>
+<span class="normal">300</span>
+<span class="normal">301</span>
+<span class="normal">302</span>
+<span class="normal">303</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">odom_se3_geodesic_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Experimental SE(3) geodesic residual using ``relative_pose_se3``.</span>
+
+<span class="sd">    Interprets ``x`` as two 6D poses in se(3) and uses</span>
+<span class="sd">    :func:`core.math3d.relative_pose_se3` to compute the estimated</span>
+<span class="sd">    relative pose before subtracting the provided measurement.</span>
+
+<span class="sd">    :param x: Stacked pose vector ``[pose0(6), pose1(6)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;measurement&quot;`` with</span>
+<span class="sd">        the desired relative pose in se(3), and optionally a weight</span>
+<span class="sd">        understood by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: Dict[str, jnp.ndarray]</span>
+<span class="sd">    :return: Geodesic SE(3) odometry residual in se(3).</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">12</span><span class="p">,</span> <span class="s2">&quot;odom_se3_geodesic_residual expects two 6D poses stacked.&quot;</span>
+
+    <span class="n">pose0</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">6</span><span class="p">]</span>
+    <span class="n">pose1</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">6</span><span class="p">:]</span>
+    <span class="n">meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;measurement&quot;</span><span class="p">]</span>
+
+    <span class="n">xi_est</span> <span class="o">=</span> <span class="n">relative_pose_se3</span><span class="p">(</span><span class="n">pose0</span><span class="p">,</span> <span class="n">pose1</span><span class="p">)</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">xi_est</span> <span class="o">-</span> <span class="n">meas</span>
+    <span class="k">return</span> <span class="n">_apply_weight</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.odom_se3_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">odom_se3_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>SE(3)-style odometry residual in a 6D vector parameterization.</p>
+<p>Treats each pose as a 6-vector <code>[tx, ty, tz, wx, wy, wz]</code> and a
+6D measurement in the same parameterization. The residual is</p>
+<p><code>(pose_j - pose_i) - measurement</code>.</p>
+<p>This is a simple additive model in R^6 and is used as the workhorse
+SE(3) chain factor in many experiments.</p>
+<p>:param x: Stacked pose vector <code>[pose_i(6), pose_j(6)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"measurement"</code> with
+    the desired relative pose in R^6.
+:type params: Dict[str, jnp.ndarray]
+:return: SE(3) odometry residual in R^6.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">229</span>
+<span class="normal">230</span>
+<span class="normal">231</span>
+<span class="normal">232</span>
+<span class="normal">233</span>
+<span class="normal">234</span>
+<span class="normal">235</span>
+<span class="normal">236</span>
+<span class="normal">237</span>
+<span class="normal">238</span>
+<span class="normal">239</span>
+<span class="normal">240</span>
+<span class="normal">241</span>
+<span class="normal">242</span>
+<span class="normal">243</span>
+<span class="normal">244</span>
+<span class="normal">245</span>
+<span class="normal">246</span>
+<span class="normal">247</span>
+<span class="normal">248</span>
+<span class="normal">249</span>
+<span class="normal">250</span>
+<span class="normal">251</span>
+<span class="normal">252</span>
+<span class="normal">253</span>
+<span class="normal">254</span>
+<span class="normal">255</span>
+<span class="normal">256</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">odom_se3_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    SE(3)-style odometry residual in a 6D vector parameterization.</span>
+
+<span class="sd">    Treats each pose as a 6-vector ``[tx, ty, tz, wx, wy, wz]`` and a</span>
+<span class="sd">    6D measurement in the same parameterization. The residual is</span>
+
+<span class="sd">    ``(pose_j - pose_i) - measurement``.</span>
+
+<span class="sd">    This is a simple additive model in R^6 and is used as the workhorse</span>
+<span class="sd">    SE(3) chain factor in many experiments.</span>
+
+<span class="sd">    :param x: Stacked pose vector ``[pose_i(6), pose_j(6)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;measurement&quot;`` with</span>
+<span class="sd">        the desired relative pose in R^6.</span>
+<span class="sd">    :type params: Dict[str, jnp.ndarray]</span>
+<span class="sd">    :return: SE(3) odometry residual in R^6.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1">#residual true Newton Solver for pure SE(3)</span>
+    <span class="c1">#TODO replace with true Newton Solver</span>
+    <span class="n">dim</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">//</span> <span class="mi">2</span>  <span class="c1"># should be 6</span>
+    <span class="n">pose_i</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">dim</span><span class="p">]</span>
+    <span class="n">pose_j</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">dim</span><span class="p">:]</span>
+    <span class="n">meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;measurement&quot;</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="p">(</span><span class="n">pose_j</span> <span class="o">-</span> <span class="n">pose_i</span><span class="p">)</span> <span class="o">-</span> <span class="n">meas</span>
+    <span class="k">return</span> <span class="n">r</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.pose_landmark_bearing_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pose_landmark_bearing_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Bearing-only residual between a pose and a 3D landmark.</p>
+<p>Interprets <code>x</code> as <code>[pose(6), landmark(3)]</code> and compares the
+predicted bearing from the pose to the landmark against a measured
+bearing vector.</p>
+<p>:param x: Stacked state block <code>[pose(6), landmark(3)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"bearing_meas"</code>
+    (a 3D bearing vector in the pose frame). Any weighting is
+    applied upstream.
+:type params: dict
+:return: 3D residual <code>bearing_pred - bearing_meas</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">423</span>
+<span class="normal">424</span>
+<span class="normal">425</span>
+<span class="normal">426</span>
+<span class="normal">427</span>
+<span class="normal">428</span>
+<span class="normal">429</span>
+<span class="normal">430</span>
+<span class="normal">431</span>
+<span class="normal">432</span>
+<span class="normal">433</span>
+<span class="normal">434</span>
+<span class="normal">435</span>
+<span class="normal">436</span>
+<span class="normal">437</span>
+<span class="normal">438</span>
+<span class="normal">439</span>
+<span class="normal">440</span>
+<span class="normal">441</span>
+<span class="normal">442</span>
+<span class="normal">443</span>
+<span class="normal">444</span>
+<span class="normal">445</span>
+<span class="normal">446</span>
+<span class="normal">447</span>
+<span class="normal">448</span>
+<span class="normal">449</span>
+<span class="normal">450</span>
+<span class="normal">451</span>
+<span class="normal">452</span>
+<span class="normal">453</span>
+<span class="normal">454</span>
+<span class="normal">455</span>
+<span class="normal">456</span>
+<span class="normal">457</span>
+<span class="normal">458</span>
+<span class="normal">459</span>
+<span class="normal">460</span>
+<span class="normal">461</span>
+<span class="normal">462</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pose_landmark_bearing_residual</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Bearing-only residual between a pose and a 3D landmark.</span>
+
+<span class="sd">    Interprets ``x`` as ``[pose(6), landmark(3)]`` and compares the</span>
+<span class="sd">    predicted bearing from the pose to the landmark against a measured</span>
+<span class="sd">    bearing vector.</span>
+
+<span class="sd">    :param x: Stacked state block ``[pose(6), landmark(3)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;bearing_meas&quot;``</span>
+<span class="sd">        (a 3D bearing vector in the pose frame). Any weighting is</span>
+<span class="sd">        applied upstream.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 3D residual ``bearing_pred - bearing_meas``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pose</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">6</span><span class="p">]</span>
+    <span class="n">landmark</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">6</span><span class="p">:</span><span class="mi">9</span><span class="p">]</span>
+
+    <span class="n">bearing_meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;bearing_meas&quot;</span><span class="p">]</span>  <span class="c1"># (3,)</span>
+
+    <span class="n">T</span> <span class="o">=</span> <span class="n">se3_exp</span><span class="p">(</span><span class="n">pose</span><span class="p">)</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+    <span class="n">landmark_pose</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="p">(</span><span class="n">landmark</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">safe_normalize</span><span class="p">(</span><span class="n">v</span><span class="p">):</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">v</span> <span class="o">/</span> <span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+
+    <span class="n">bearing_pred</span> <span class="o">=</span> <span class="n">safe_normalize</span><span class="p">(</span><span class="n">landmark_pose</span><span class="p">)</span>
+    <span class="n">bearing_meas</span> <span class="o">=</span> <span class="n">safe_normalize</span><span class="p">(</span><span class="n">bearing_meas</span><span class="p">)</span>
+
+    <span class="n">residual</span> <span class="o">=</span> <span class="n">bearing_pred</span> <span class="o">-</span> <span class="n">bearing_meas</span>
+    <span class="k">return</span> <span class="n">residual</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.pose_landmark_relative_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pose_landmark_relative_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Relative pose–landmark residual in SE(3).</p>
+<p>Interprets <code>x</code> as <code>[pose(6), landmark(3)]</code> and enforces that the
+landmark, expressed in the pose frame, matches a measured 3D point.</p>
+<p>:param x: Stacked state block <code>[pose(6), landmark(3)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"measurement"</code>
+    (a 3D point in the pose frame). Any weighting is applied
+    upstream by :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 3D residual between predicted and measured landmark
+    positions in the pose frame.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">389</span>
+<span class="normal">390</span>
+<span class="normal">391</span>
+<span class="normal">392</span>
+<span class="normal">393</span>
+<span class="normal">394</span>
+<span class="normal">395</span>
+<span class="normal">396</span>
+<span class="normal">397</span>
+<span class="normal">398</span>
+<span class="normal">399</span>
+<span class="normal">400</span>
+<span class="normal">401</span>
+<span class="normal">402</span>
+<span class="normal">403</span>
+<span class="normal">404</span>
+<span class="normal">405</span>
+<span class="normal">406</span>
+<span class="normal">407</span>
+<span class="normal">408</span>
+<span class="normal">409</span>
+<span class="normal">410</span>
+<span class="normal">411</span>
+<span class="normal">412</span>
+<span class="normal">413</span>
+<span class="normal">414</span>
+<span class="normal">415</span>
+<span class="normal">416</span>
+<span class="normal">417</span>
+<span class="normal">418</span>
+<span class="normal">419</span>
+<span class="normal">420</span>
+<span class="normal">421</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pose_landmark_relative_residual</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Relative pose–landmark residual in SE(3).</span>
+
+<span class="sd">    Interprets ``x`` as ``[pose(6), landmark(3)]`` and enforces that the</span>
+<span class="sd">    landmark, expressed in the pose frame, matches a measured 3D point.</span>
+
+<span class="sd">    :param x: Stacked state block ``[pose(6), landmark(3)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;measurement&quot;``</span>
+<span class="sd">        (a 3D point in the pose frame). Any weighting is applied</span>
+<span class="sd">        upstream by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 3D residual between predicted and measured landmark</span>
+<span class="sd">        positions in the pose frame.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pose</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">6</span><span class="p">]</span>
+    <span class="n">landmark</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">6</span><span class="p">:</span><span class="mi">9</span><span class="p">]</span>
+
+    <span class="n">meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;measurement&quot;</span><span class="p">]</span>  <span class="c1"># (3,)</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">se3_exp</span><span class="p">(</span><span class="n">pose</span><span class="p">)</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+    <span class="c1"># landmark expressed in pose frame</span>
+    <span class="n">landmark_pose</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="p">(</span><span class="n">landmark</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span>
+
+    <span class="n">residual</span> <span class="o">=</span> <span class="n">landmark_pose</span> <span class="o">-</span> <span class="n">meas</span>
+    <span class="k">return</span> <span class="n">residual</span>  <span class="c1"># weight is applied via _apply_weight in FactorGraph</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.pose_place_attachment_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pose_place_attachment_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Residual tying a scalar place variable to one coordinate of a pose.</p>
+<p>Interprets <code>x</code> as <code>[pose, place]</code> and enforces that the place
+value tracks a particular coordinate of the pose (e.g., x-position).</p>
+<p>:param x: Stacked state block <code>[pose, place]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary with integer entries
+    <code>"pose_dim"</code>, <code>"place_dim"</code>, and <code>"pose_coord_index"</code>
+    indicating the layout of <code>x</code> and which pose coordinate to
+    attach to. May also contain a weight handled by
+    :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 1D residual enforcing <code>place[0] ≈ pose[pose_coord_index]</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">305</span>
+<span class="normal">306</span>
+<span class="normal">307</span>
+<span class="normal">308</span>
+<span class="normal">309</span>
+<span class="normal">310</span>
+<span class="normal">311</span>
+<span class="normal">312</span>
+<span class="normal">313</span>
+<span class="normal">314</span>
+<span class="normal">315</span>
+<span class="normal">316</span>
+<span class="normal">317</span>
+<span class="normal">318</span>
+<span class="normal">319</span>
+<span class="normal">320</span>
+<span class="normal">321</span>
+<span class="normal">322</span>
+<span class="normal">323</span>
+<span class="normal">324</span>
+<span class="normal">325</span>
+<span class="normal">326</span>
+<span class="normal">327</span>
+<span class="normal">328</span>
+<span class="normal">329</span>
+<span class="normal">330</span>
+<span class="normal">331</span>
+<span class="normal">332</span>
+<span class="normal">333</span>
+<span class="normal">334</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pose_place_attachment_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Residual tying a scalar place variable to one coordinate of a pose.</span>
+
+<span class="sd">    Interprets ``x`` as ``[pose, place]`` and enforces that the place</span>
+<span class="sd">    value tracks a particular coordinate of the pose (e.g., x-position).</span>
+
+<span class="sd">    :param x: Stacked state block ``[pose, place]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary with integer entries</span>
+<span class="sd">        ``&quot;pose_dim&quot;``, ``&quot;place_dim&quot;``, and ``&quot;pose_coord_index&quot;``</span>
+<span class="sd">        indicating the layout of ``x`` and which pose coordinate to</span>
+<span class="sd">        attach to. May also contain a weight handled by</span>
+<span class="sd">        :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 1D residual enforcing ``place[0] ≈ pose[pose_coord_index]``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pose_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s2">&quot;pose_dim&quot;</span><span class="p">])</span>
+    <span class="n">place_dim</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s2">&quot;place_dim&quot;</span><span class="p">])</span>
+    <span class="n">coord_idx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">params</span><span class="p">[</span><span class="s2">&quot;pose_coord_index&quot;</span><span class="p">])</span>
+
+    <span class="k">assert</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">pose_dim</span> <span class="o">+</span> <span class="n">place_dim</span>
+
+    <span class="n">pose</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">pose_dim</span><span class="p">]</span>
+    <span class="n">place</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">pose_dim</span> <span class="p">:</span> <span class="n">pose_dim</span> <span class="o">+</span> <span class="n">place_dim</span><span class="p">]</span>
+
+    <span class="c1"># Make it 1D of length 1, not scalar</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">place</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">pose</span><span class="p">[</span><span class="n">coord_idx</span><span class="p">]])</span>
+    <span class="k">return</span> <span class="n">_apply_weight</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.pose_temporal_smoothness_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pose_temporal_smoothness_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Temporal smoothness residual between two SE(3) poses.</p>
+<p>Interprets <code>x</code> as <code>[pose_t, pose_t1]</code> in R^6 and penalizes the
+difference <code>pose_t1 - pose_t</code>.</p>
+<p>:param x: Stacked state block <code>[pose_t(6), pose_t1(6)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary, optionally containing a weight
+    handled by :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 6D temporal smoothness residual.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">368</span>
+<span class="normal">369</span>
+<span class="normal">370</span>
+<span class="normal">371</span>
+<span class="normal">372</span>
+<span class="normal">373</span>
+<span class="normal">374</span>
+<span class="normal">375</span>
+<span class="normal">376</span>
+<span class="normal">377</span>
+<span class="normal">378</span>
+<span class="normal">379</span>
+<span class="normal">380</span>
+<span class="normal">381</span>
+<span class="normal">382</span>
+<span class="normal">383</span>
+<span class="normal">384</span>
+<span class="normal">385</span>
+<span class="normal">386</span>
+<span class="normal">387</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pose_temporal_smoothness_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Temporal smoothness residual between two SE(3) poses.</span>
+
+<span class="sd">    Interprets ``x`` as ``[pose_t, pose_t1]`` in R^6 and penalizes the</span>
+<span class="sd">    difference ``pose_t1 - pose_t``.</span>
+
+<span class="sd">    :param x: Stacked state block ``[pose_t(6), pose_t1(6)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary, optionally containing a weight</span>
+<span class="sd">        handled by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 6D temporal smoothness residual.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dim</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">pose_t</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="n">dim</span><span class="p">]</span>
+    <span class="n">pose_t1</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="n">dim</span><span class="p">:]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">pose_t1</span> <span class="o">-</span> <span class="n">pose_t</span>
+    <span class="k">return</span> <span class="n">_apply_weight</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.pose_voxel_point_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pose_voxel_point_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Residual between a pose and a voxel center given a point measurement.</p>
+<p>Interprets <code>x</code> as <code>[pose(6), voxel_center(3)]</code>. The measurement
+is a point expressed in the pose frame; it is projected into the
+world frame and compared against the voxel center.</p>
+<p>:param x: Stacked state block <code>[pose(6), voxel_center(3)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"point_meas"</code>
+    (a 3D point in the pose frame). Any weighting is applied
+    upstream by :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 3D residual <code>voxel_center - predicted_world_point</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">464</span>
+<span class="normal">465</span>
+<span class="normal">466</span>
+<span class="normal">467</span>
+<span class="normal">468</span>
+<span class="normal">469</span>
+<span class="normal">470</span>
+<span class="normal">471</span>
+<span class="normal">472</span>
+<span class="normal">473</span>
+<span class="normal">474</span>
+<span class="normal">475</span>
+<span class="normal">476</span>
+<span class="normal">477</span>
+<span class="normal">478</span>
+<span class="normal">479</span>
+<span class="normal">480</span>
+<span class="normal">481</span>
+<span class="normal">482</span>
+<span class="normal">483</span>
+<span class="normal">484</span>
+<span class="normal">485</span>
+<span class="normal">486</span>
+<span class="normal">487</span>
+<span class="normal">488</span>
+<span class="normal">489</span>
+<span class="normal">490</span>
+<span class="normal">491</span>
+<span class="normal">492</span>
+<span class="normal">493</span>
+<span class="normal">494</span>
+<span class="normal">495</span>
+<span class="normal">496</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pose_voxel_point_residual</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Residual between a pose and a voxel center given a point measurement.</span>
+
+<span class="sd">    Interprets ``x`` as ``[pose(6), voxel_center(3)]``. The measurement</span>
+<span class="sd">    is a point expressed in the pose frame; it is projected into the</span>
+<span class="sd">    world frame and compared against the voxel center.</span>
+
+<span class="sd">    :param x: Stacked state block ``[pose(6), voxel_center(3)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;point_meas&quot;``</span>
+<span class="sd">        (a 3D point in the pose frame). Any weighting is applied</span>
+<span class="sd">        upstream by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 3D residual ``voxel_center - predicted_world_point``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pose</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">6</span><span class="p">]</span>
+    <span class="n">voxel</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">6</span><span class="p">:</span><span class="mi">9</span><span class="p">]</span>  <span class="c1"># voxel center in world frame</span>
+
+    <span class="n">point_meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;point_meas&quot;</span><span class="p">]</span>  <span class="c1"># (3,)</span>
+
+    <span class="n">T</span> <span class="o">=</span> <span class="n">se3_exp</span><span class="p">(</span><span class="n">pose</span><span class="p">)</span>          <span class="c1"># 4x4</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+    <span class="n">world_point</span> <span class="o">=</span> <span class="n">R</span> <span class="o">@</span> <span class="n">point_meas</span> <span class="o">+</span> <span class="n">t</span>  <span class="c1"># predicted world point from this measurement</span>
+
+    <span class="n">residual</span> <span class="o">=</span> <span class="n">voxel</span> <span class="o">-</span> <span class="n">world_point</span>
+    <span class="k">return</span> <span class="n">residual</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.prior_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">prior_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Simple prior on a single variable.</p>
+<p>Computes <code>residual = x - target</code> for any vector dimension.</p>
+<p>:param x: Current variable value (flattened state block).
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"target"</code> and
+    optionally a weight understood by :func:<code>_apply_weight</code>.
+:type params: Dict[str, jnp.ndarray]
+:return: Prior residual <code>x - target</code> (possibly reweighted).
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">186</span>
+<span class="normal">187</span>
+<span class="normal">188</span>
+<span class="normal">189</span>
+<span class="normal">190</span>
+<span class="normal">191</span>
+<span class="normal">192</span>
+<span class="normal">193</span>
+<span class="normal">194</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span>
+<span class="normal">200</span>
+<span class="normal">201</span>
+<span class="normal">202</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">prior_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Simple prior on a single variable.</span>
+
+<span class="sd">    Computes ``residual = x - target`` for any vector dimension.</span>
+
+<span class="sd">    :param x: Current variable value (flattened state block).</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;target&quot;`` and</span>
+<span class="sd">        optionally a weight understood by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: Dict[str, jnp.ndarray]</span>
+<span class="sd">    :return: Prior residual ``x - target`` (possibly reweighted).</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;target&quot;</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">x</span> <span class="o">-</span> <span class="n">target</span>
+    <span class="k">return</span> <span class="n">_apply_weight</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.range_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">range_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Range-only residual between a pose and a 3D target.</p>
+<p>This residual assumes that <code>x</code> is the concatenation of a 6D SE(3)
+pose (in se(3) vector form) and a 3D target position::</p>
+<pre><code>x = [pose_se3(6), target(3)]
+</code></pre>
+<p>Only the translational part of the pose is used. The residual is::</p>
+<pre><code>r = ||target - t|| - r_meas
+</code></pre>
+<p>where <code>t</code> is the pose translation and <code>r_meas</code> is the measured
+range. A scalar weight is applied in the same way as other residuals
+via :func:<code>_apply_weight</code>.</p>
+<p>:param x: Concatenated pose and target state, shape <code>(9,)</code>.
+:param params: Parameter dictionary with keys:
+    - <code>"range"</code>: scalar or length-1 array containing the
+      measured range.
+    - <code>"weight"</code> (optional): scalar weight to apply. If omitted,
+      a weight of <code>1.0</code> is used by :func:<code>_apply_weight</code>.
+:return: Residual vector of shape <code>(1,)</code> (after weighting).</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">548</span>
+<span class="normal">549</span>
+<span class="normal">550</span>
+<span class="normal">551</span>
+<span class="normal">552</span>
+<span class="normal">553</span>
+<span class="normal">554</span>
+<span class="normal">555</span>
+<span class="normal">556</span>
+<span class="normal">557</span>
+<span class="normal">558</span>
+<span class="normal">559</span>
+<span class="normal">560</span>
+<span class="normal">561</span>
+<span class="normal">562</span>
+<span class="normal">563</span>
+<span class="normal">564</span>
+<span class="normal">565</span>
+<span class="normal">566</span>
+<span class="normal">567</span>
+<span class="normal">568</span>
+<span class="normal">569</span>
+<span class="normal">570</span>
+<span class="normal">571</span>
+<span class="normal">572</span>
+<span class="normal">573</span>
+<span class="normal">574</span>
+<span class="normal">575</span>
+<span class="normal">576</span>
+<span class="normal">577</span>
+<span class="normal">578</span>
+<span class="normal">579</span>
+<span class="normal">580</span>
+<span class="normal">581</span>
+<span class="normal">582</span>
+<span class="normal">583</span>
+<span class="normal">584</span>
+<span class="normal">585</span>
+<span class="normal">586</span>
+<span class="normal">587</span>
+<span class="normal">588</span>
+<span class="normal">589</span>
+<span class="normal">590</span>
+<span class="normal">591</span>
+<span class="normal">592</span>
+<span class="normal">593</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">range_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Range-only residual between a pose and a 3D target.</span>
+
+<span class="sd">    This residual assumes that ``x`` is the concatenation of a 6D SE(3)</span>
+<span class="sd">    pose (in se(3) vector form) and a 3D target position::</span>
+
+<span class="sd">        x = [pose_se3(6), target(3)]</span>
+
+<span class="sd">    Only the translational part of the pose is used. The residual is::</span>
+
+<span class="sd">        r = ||target - t|| - r_meas</span>
+
+<span class="sd">    where ``t`` is the pose translation and ``r_meas`` is the measured</span>
+<span class="sd">    range. A scalar weight is applied in the same way as other residuals</span>
+<span class="sd">    via :func:`_apply_weight`.</span>
+
+<span class="sd">    :param x: Concatenated pose and target state, shape ``(9,)``.</span>
+<span class="sd">    :param params: Parameter dictionary with keys:</span>
+<span class="sd">        - ``&quot;range&quot;``: scalar or length-1 array containing the</span>
+<span class="sd">          measured range.</span>
+<span class="sd">        - ``&quot;weight&quot;`` (optional): scalar weight to apply. If omitted,</span>
+<span class="sd">          a weight of ``1.0`` is used by :func:`_apply_weight`.</span>
+<span class="sd">    :return: Residual vector of shape ``(1,)`` (after weighting).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Split state: first 6 are se(3) (pose), last 3 are 3D target position.</span>
+    <span class="n">pose</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">6</span><span class="p">]</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">6</span><span class="p">:</span><span class="mi">9</span><span class="p">]</span>
+
+    <span class="c1"># Translation component of the pose.</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">pose</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span>
+
+    <span class="c1"># Euclidean distance between pose translation and target.</span>
+    <span class="n">diff</span> <span class="o">=</span> <span class="n">target</span> <span class="o">-</span> <span class="n">t</span>
+    <span class="n">dist</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">diff</span><span class="p">)</span>
+
+    <span class="c1"># Measured range can be a scalar or length-1 array.</span>
+    <span class="n">r_meas</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;range&quot;</span><span class="p">]</span>
+    <span class="n">r_meas</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">r_meas</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(())</span>
+
+    <span class="c1"># Residual: predicted - measured.</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">dist</span> <span class="o">-</span> <span class="n">r_meas</span>
+
+    <span class="c1"># Wrap as 1D vector and apply weight.</span>
+    <span class="n">r_vec</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">r</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_apply_weight</span><span class="p">(</span><span class="n">r_vec</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.se3_chain_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">se3_chain_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Alias for SE(3) chain / odometry residual used in visualization.</p>
+<p>This is a thin wrapper around :func:<code>odom_se3_residual</code>, so that
+experiments and visualization code can refer to a semantically
+descriptive name ("se3_chain") without duplicating logic.</p>
+<p>:param x: Stacked pose vector <code>[pose_i(6), pose_j(6)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"measurement"</code> with
+    the desired relative pose in R^6.
+:type params: Dict[str, jnp.ndarray]
+:return: SE(3) chain residual produced by :func:<code>odom_se3_residual</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">260</span>
+<span class="normal">261</span>
+<span class="normal">262</span>
+<span class="normal">263</span>
+<span class="normal">264</span>
+<span class="normal">265</span>
+<span class="normal">266</span>
+<span class="normal">267</span>
+<span class="normal">268</span>
+<span class="normal">269</span>
+<span class="normal">270</span>
+<span class="normal">271</span>
+<span class="normal">272</span>
+<span class="normal">273</span>
+<span class="normal">274</span>
+<span class="normal">275</span>
+<span class="normal">276</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">se3_chain_residual</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Alias for SE(3) chain / odometry residual used in visualization.</span>
+
+<span class="sd">    This is a thin wrapper around :func:`odom_se3_residual`, so that</span>
+<span class="sd">    experiments and visualization code can refer to a semantically</span>
+<span class="sd">    descriptive name (&quot;se3_chain&quot;) without duplicating logic.</span>
+
+<span class="sd">    :param x: Stacked pose vector ``[pose_i(6), pose_j(6)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;measurement&quot;`` with</span>
+<span class="sd">        the desired relative pose in R^6.</span>
+<span class="sd">    :type params: Dict[str, jnp.ndarray]</span>
+<span class="sd">    :return: SE(3) chain residual produced by :func:`odom_se3_residual`.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">odom_se3_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.sigma_to_weight" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sigma_to_weight</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Convert standard deviation(s) to an information-style weight.</p>
+<p>For a scalar standard deviation <code>sigma</code>, this returns <code>1 / sigma**2</code>.
+For a vector of standard deviations, it returns the elementwise
+inverse-variance <code>1 / sigma[i]**2</code>.</p>
+<p>:param sigma: Scalar or vector of standard deviations.
+:type sigma: Union[float, jnp.ndarray]
+:return: Scalar or vector of weights <code>1 / sigma**2</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">170</span>
+<span class="normal">171</span>
+<span class="normal">172</span>
+<span class="normal">173</span>
+<span class="normal">174</span>
+<span class="normal">175</span>
+<span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span>
+<span class="normal">181</span>
+<span class="normal">182</span>
+<span class="normal">183</span>
+<span class="normal">184</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">sigma_to_weight</span><span class="p">(</span><span class="n">sigma</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert standard deviation(s) to an information-style weight.</span>
+
+<span class="sd">    For a scalar standard deviation ``sigma``, this returns ``1 / sigma**2``.</span>
+<span class="sd">    For a vector of standard deviations, it returns the elementwise</span>
+<span class="sd">    inverse-variance ``1 / sigma[i]**2``.</span>
+
+<span class="sd">    :param sigma: Scalar or vector of standard deviations.</span>
+<span class="sd">    :type sigma: Union[float, jnp.ndarray]</span>
+<span class="sd">    :return: Scalar or vector of weights ``1 / sigma**2``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">s</span> <span class="o">*</span> <span class="n">s</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.voxel_point_observation_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">voxel_point_observation_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Observation factor tying a voxel center to a world-frame point.</p>
+<p>Interprets <code>x</code> as <code>[voxel_center(3)]</code> and encourages it to match
+an observed point in world coordinates.</p>
+<p>:param x: State block containing a single voxel center.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"point_world"</code>
+    (a 3D point in the world frame). Any weighting is applied
+    upstream by :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 3D residual <code>voxel_center - point_world</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">525</span>
+<span class="normal">526</span>
+<span class="normal">527</span>
+<span class="normal">528</span>
+<span class="normal">529</span>
+<span class="normal">530</span>
+<span class="normal">531</span>
+<span class="normal">532</span>
+<span class="normal">533</span>
+<span class="normal">534</span>
+<span class="normal">535</span>
+<span class="normal">536</span>
+<span class="normal">537</span>
+<span class="normal">538</span>
+<span class="normal">539</span>
+<span class="normal">540</span>
+<span class="normal">541</span>
+<span class="normal">542</span>
+<span class="normal">543</span>
+<span class="normal">544</span>
+<span class="normal">545</span>
+<span class="normal">546</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">voxel_point_observation_residual</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Observation factor tying a voxel center to a world-frame point.</span>
+
+<span class="sd">    Interprets ``x`` as ``[voxel_center(3)]`` and encourages it to match</span>
+<span class="sd">    an observed point in world coordinates.</span>
+
+<span class="sd">    :param x: State block containing a single voxel center.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;point_world&quot;``</span>
+<span class="sd">        (a 3D point in the world frame). Any weighting is applied</span>
+<span class="sd">        upstream by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 3D residual ``voxel_center - point_world``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">voxel</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">point_world</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;point_world&quot;</span><span class="p">]</span>  <span class="c1"># (3,)</span>
+    <span class="k">return</span> <span class="n">voxel</span> <span class="o">-</span> <span class="n">point_world</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.measurements.voxel_smoothness_residual" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">voxel_smoothness_residual</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Smoothness / grid regularity constraint between two voxel centers.</p>
+<p>Interprets <code>x</code> as <code>[voxel_i(3), voxel_j(3)]</code> and penalizes the
+deviation from an expected offset between neighboring voxels.</p>
+<p>:param x: Stacked state block <code>[voxel_i(3), voxel_j(3)]</code>.
+:type x: jnp.ndarray
+:param params: Parameter dictionary containing <code>"offset"</code> (a 3D
+    expected difference <code>voxel_j - voxel_i</code>) and optionally a
+    weight handled by :func:<code>_apply_weight</code>.
+:type params: dict
+:return: 3D residual <code>(voxel_j - voxel_i) - offset</code>.
+:rtype: jnp.ndarray</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/measurements.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">498</span>
+<span class="normal">499</span>
+<span class="normal">500</span>
+<span class="normal">501</span>
+<span class="normal">502</span>
+<span class="normal">503</span>
+<span class="normal">504</span>
+<span class="normal">505</span>
+<span class="normal">506</span>
+<span class="normal">507</span>
+<span class="normal">508</span>
+<span class="normal">509</span>
+<span class="normal">510</span>
+<span class="normal">511</span>
+<span class="normal">512</span>
+<span class="normal">513</span>
+<span class="normal">514</span>
+<span class="normal">515</span>
+<span class="normal">516</span>
+<span class="normal">517</span>
+<span class="normal">518</span>
+<span class="normal">519</span>
+<span class="normal">520</span>
+<span class="normal">521</span>
+<span class="normal">522</span>
+<span class="normal">523</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">voxel_smoothness_residual</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Smoothness / grid regularity constraint between two voxel centers.</span>
+
+<span class="sd">    Interprets ``x`` as ``[voxel_i(3), voxel_j(3)]`` and penalizes the</span>
+<span class="sd">    deviation from an expected offset between neighboring voxels.</span>
+
+<span class="sd">    :param x: Stacked state block ``[voxel_i(3), voxel_j(3)]``.</span>
+<span class="sd">    :type x: jnp.ndarray</span>
+<span class="sd">    :param params: Parameter dictionary containing ``&quot;offset&quot;`` (a 3D</span>
+<span class="sd">        expected difference ``voxel_j - voxel_i``) and optionally a</span>
+<span class="sd">        weight handled by :func:`_apply_weight`.</span>
+<span class="sd">    :type params: dict</span>
+<span class="sd">    :return: 3D residual ``(voxel_j - voxel_i) - offset``.</span>
+<span class="sd">    :rtype: jnp.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">voxel_i</span> <span class="o">=</span> <span class="n">x</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">voxel_j</span> <span class="o">=</span> <span class="n">x</span><span class="p">[</span><span class="mi">3</span><span class="p">:</span><span class="mi">6</span><span class="p">]</span>
+
+    <span class="n">offset</span> <span class="o">=</span> <span class="n">params</span><span class="p">[</span><span class="s2">&quot;offset&quot;</span><span class="p">]</span>  <span class="c1"># (3,)</span>
+
+    <span class="n">residual</span> <span class="o">=</span> <span class="p">(</span><span class="n">voxel_j</span> <span class="o">-</span> <span class="n">voxel_i</span><span class="p">)</span> <span class="o">-</span> <span class="n">offset</span>
+    <span class="k">return</span> <span class="n">residual</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="slampipeline"><code>slam.pipeline</code></h2>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+
+    <div class="doc doc-contents first">
+
+        <p>High-level SLAM pipelines built on top of DSG-JIT.</p>
+<p>This module provides small, composable helpers that glue together:</p>
+<ul>
+<li>WorldModel / SceneGraphWorld</li>
+<li>Sensors + SensorFusionManager</li>
+<li>FactorGraph + Gauss-Newton optimizer</li>
+</ul>
+<p>The intent is that experiments (or ROS2 nodes) call into these
+functions rather than reimplementing the same boilerplate in every file.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="slam.pipeline.PoseGraphResult" class="doc doc-heading">
+              <code class="highlight language-python"><span class="n">PoseGraphResult</span><span class="p">(</span><span class="n">x_opt</span><span class="p">,</span> <span class="n">pose_ids</span><span class="p">,</span> <span class="n">landmark_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Result of a pose-graph SLAM solve.</p>
+<p>:param x_opt: Optimized stacked state vector.
+:type x_opt: jax.numpy.ndarray
+:param pose_ids: List of node ids corresponding to poses in the graph.
+:type pose_ids: list[int]
+:param landmark_ids: Optional list of landmark node ids, if present.
+:type landmark_ids: list[int] | None</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.pipeline.pose_vectors_from_result" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pose_vectors_from_result</span><span class="p">(</span><span class="n">wm</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Extract SE(3) pose vectors from an optimized solution.</p>
+<p>:param wm:
+    The world model that owns the variables.
+:type wm: world.model.WorldModel
+:param result:
+    Optimization result describing pose node ids and the stacked state.
+:type result: PoseGraphResult</p>
+<p>:return:
+    Mapping from pose node id -&gt; pose vector (6,).
+:rtype: dict[int, jax.numpy.ndarray]</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/pipeline.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">147</span>
+<span class="normal">148</span>
+<span class="normal">149</span>
+<span class="normal">150</span>
+<span class="normal">151</span>
+<span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span>
+<span class="normal">155</span>
+<span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span>
+<span class="normal">159</span>
+<span class="normal">160</span>
+<span class="normal">161</span>
+<span class="normal">162</span>
+<span class="normal">163</span>
+<span class="normal">164</span>
+<span class="normal">165</span>
+<span class="normal">166</span>
+<span class="normal">167</span>
+<span class="normal">168</span>
+<span class="normal">169</span>
+<span class="normal">170</span>
+<span class="normal">171</span>
+<span class="normal">172</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">pose_vectors_from_result</span><span class="p">(</span>
+    <span class="n">wm</span><span class="p">:</span> <span class="n">WorldModel</span><span class="p">,</span>
+    <span class="n">result</span><span class="p">:</span> <span class="n">PoseGraphResult</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract SE(3) pose vectors from an optimized solution.</span>
+
+<span class="sd">    :param wm:</span>
+<span class="sd">        The world model that owns the variables.</span>
+<span class="sd">    :type wm: world.model.WorldModel</span>
+<span class="sd">    :param result:</span>
+<span class="sd">        Optimization result describing pose node ids and the stacked state.</span>
+<span class="sd">    :type result: PoseGraphResult</span>
+
+<span class="sd">    :return:</span>
+<span class="sd">        Mapping from pose node id -&gt; pose vector (6,).</span>
+<span class="sd">    :rtype: dict[int, jax.numpy.ndarray]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">x_opt</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">x_opt</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">index</span> <span class="o">=</span> <span class="n">wm</span><span class="o">.</span><span class="n">pack_state</span><span class="p">()</span>
+
+    <span class="n">out</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">pose_ids</span><span class="p">:</span>
+        <span class="n">sl</span> <span class="o">=</span> <span class="n">index</span><span class="p">[</span><span class="n">nid</span><span class="p">]</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">nid</span><span class="p">]</span> <span class="o">=</span> <span class="n">x_opt</span><span class="p">[</span><span class="n">sl</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">out</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.pipeline.run_pose_graph_slam" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">run_pose_graph_slam</span><span class="p">(</span><span class="n">wm</span><span class="p">,</span> <span class="n">cfg</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Run Gauss-Newton on the pose/landmark graph in <code>wm.fg</code>.</p>
+<p>This treats whatever is currently in the WorldModel's factor graph as
+the SLAM problem. It does not modify <code>wm</code> in-place; it returns the
+optimized stacked state and helper lists for extracting poses/landmarks.</p>
+<p>Typical usage:</p>
+<p>.. code-block:: python</p>
+<pre><code>result = run_pose_graph_slam(wm)
+poses = [result.x_opt[index[nid]] for nid in result.pose_ids]
+</code></pre>
+<p>:param wm:
+    The world model containing a FactorGraph with SE(3) pose variables
+    (and optionally landmark variables) plus factors (odom, priors,
+    range/bearing, etc.).
+:type wm: world.model.WorldModel
+:param cfg:
+    Configuration for the Gauss-Newton solver. If <code>None</code>, a default
+    <code>GNConfig</code> is used.
+:type cfg: core.types.GNConfig | None</p>
+<p>:return:
+    A :class:<code>PoseGraphResult</code> containing the optimized stacked state
+    vector and node-id lists for poses and landmarks.
+:rtype: PoseGraphResult</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/pipeline.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 51</span>
+<span class="normal"> 52</span>
+<span class="normal"> 53</span>
+<span class="normal"> 54</span>
+<span class="normal"> 55</span>
+<span class="normal"> 56</span>
+<span class="normal"> 57</span>
+<span class="normal"> 58</span>
+<span class="normal"> 59</span>
+<span class="normal"> 60</span>
+<span class="normal"> 61</span>
+<span class="normal"> 62</span>
+<span class="normal"> 63</span>
+<span class="normal"> 64</span>
+<span class="normal"> 65</span>
+<span class="normal"> 66</span>
+<span class="normal"> 67</span>
+<span class="normal"> 68</span>
+<span class="normal"> 69</span>
+<span class="normal"> 70</span>
+<span class="normal"> 71</span>
+<span class="normal"> 72</span>
+<span class="normal"> 73</span>
+<span class="normal"> 74</span>
+<span class="normal"> 75</span>
+<span class="normal"> 76</span>
+<span class="normal"> 77</span>
+<span class="normal"> 78</span>
+<span class="normal"> 79</span>
+<span class="normal"> 80</span>
+<span class="normal"> 81</span>
+<span class="normal"> 82</span>
+<span class="normal"> 83</span>
+<span class="normal"> 84</span>
+<span class="normal"> 85</span>
+<span class="normal"> 86</span>
+<span class="normal"> 87</span>
+<span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
+<span class="normal"> 99</span>
+<span class="normal">100</span>
+<span class="normal">101</span>
+<span class="normal">102</span>
+<span class="normal">103</span>
+<span class="normal">104</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span>
+<span class="normal">120</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run_pose_graph_slam</span><span class="p">(</span>
+    <span class="n">wm</span><span class="p">:</span> <span class="n">WorldModel</span><span class="p">,</span>
+    <span class="n">cfg</span><span class="p">:</span> <span class="n">GNConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PoseGraphResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run Gauss-Newton on the pose/landmark graph in ``wm.fg``.</span>
+
+<span class="sd">    This treats whatever is currently in the WorldModel&#39;s factor graph as</span>
+<span class="sd">    the SLAM problem. It does not modify ``wm`` in-place; it returns the</span>
+<span class="sd">    optimized stacked state and helper lists for extracting poses/landmarks.</span>
+
+<span class="sd">    Typical usage:</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">        result = run_pose_graph_slam(wm)</span>
+<span class="sd">        poses = [result.x_opt[index[nid]] for nid in result.pose_ids]</span>
+
+<span class="sd">    :param wm:</span>
+<span class="sd">        The world model containing a FactorGraph with SE(3) pose variables</span>
+<span class="sd">        (and optionally landmark variables) plus factors (odom, priors,</span>
+<span class="sd">        range/bearing, etc.).</span>
+<span class="sd">    :type wm: world.model.WorldModel</span>
+<span class="sd">    :param cfg:</span>
+<span class="sd">        Configuration for the Gauss-Newton solver. If ``None``, a default</span>
+<span class="sd">        ``GNConfig`` is used.</span>
+<span class="sd">    :type cfg: core.types.GNConfig | None</span>
+
+<span class="sd">    :return:</span>
+<span class="sd">        A :class:`PoseGraphResult` containing the optimized stacked state</span>
+<span class="sd">        vector and node-id lists for poses and landmarks.</span>
+<span class="sd">    :rtype: PoseGraphResult</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">cfg</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">cfg</span> <span class="o">=</span> <span class="n">GNConfig</span><span class="p">()</span>
+
+    <span class="n">fg</span><span class="p">:</span> <span class="n">FactorGraph</span> <span class="o">=</span> <span class="n">wm</span><span class="o">.</span><span class="n">fg</span>
+
+    <span class="c1"># Pack initial state</span>
+    <span class="n">x0</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">wm</span><span class="o">.</span><span class="n">pack_state</span><span class="p">()</span>
+    <span class="n">residual_fn</span> <span class="o">=</span> <span class="n">wm</span><span class="o">.</span><span class="n">build_residual</span><span class="p">()</span>
+
+    <span class="c1"># Manifold types: we already stored these per-variable in the graph.</span>
+    <span class="n">manifold_types</span> <span class="o">=</span> <span class="n">build_manifold_metadata</span><span class="p">(</span><span class="n">packed_state</span><span class="o">=</span><span class="n">wm</span><span class="o">.</span><span class="n">pack_state</span><span class="p">(),</span><span class="n">fg</span><span class="o">=</span><span class="n">fg</span><span class="p">)</span>
+
+
+
+    <span class="c1"># Solve</span>
+    <span class="n">x_opt</span> <span class="o">=</span> <span class="n">gauss_newton_manifold</span><span class="p">(</span>
+        <span class="n">residual_fn</span><span class="p">,</span>
+        <span class="n">x0</span><span class="p">,</span>
+        <span class="n">manifold_types</span><span class="p">,</span>
+        <span class="n">cfg</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Build convenience lists for poses / landmarks.</span>
+    <span class="n">pose_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">landmark_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">wm</span><span class="o">.</span><span class="n">fg</span><span class="o">.</span><span class="n">variables</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">v</span><span class="o">.</span><span class="n">manifold</span> <span class="o">==</span> <span class="s2">&quot;se3&quot;</span><span class="p">:</span>
+            <span class="n">pose_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">v</span><span class="o">.</span><span class="n">manifold</span> <span class="o">==</span> <span class="s2">&quot;R3&quot;</span><span class="p">:</span>
+            <span class="n">landmark_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">PoseGraphResult</span><span class="p">(</span>
+        <span class="n">x_opt</span><span class="o">=</span><span class="n">x_opt</span><span class="p">,</span>
+        <span class="n">pose_ids</span><span class="o">=</span><span class="nb">sorted</span><span class="p">(</span><span class="n">pose_ids</span><span class="p">),</span>
+        <span class="n">landmark_ids</span><span class="o">=</span><span class="nb">sorted</span><span class="p">(</span><span class="n">landmark_ids</span><span class="p">)</span> <span class="k">if</span> <span class="n">landmark_ids</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.pipeline.update_worldmodel_from_solution" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">update_worldmodel_from_solution</span><span class="p">(</span><span class="n">wm</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Write optimized variables from a :class:<code>PoseGraphResult</code> back into <code>wm</code>.</p>
+<p>This is a small helper so that downstream code (DSG construction,
+visualization, dataset export) can reflect the optimized state.</p>
+<p>:param wm:
+    The world model whose factor-graph variables will be updated in-place.
+:type wm: world.model.WorldModel
+:param result:
+    Output from :func:<code>run_pose_graph_slam</code>, containing the optimized
+    stacked state vector.
+:type result: PoseGraphResult</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/pipeline.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">123</span>
+<span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">update_worldmodel_from_solution</span><span class="p">(</span><span class="n">wm</span><span class="p">:</span> <span class="n">WorldModel</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">PoseGraphResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Write optimized variables from a :class:`PoseGraphResult` back into ``wm``.</span>
+
+<span class="sd">    This is a small helper so that downstream code (DSG construction,</span>
+<span class="sd">    visualization, dataset export) can reflect the optimized state.</span>
+
+<span class="sd">    :param wm:</span>
+<span class="sd">        The world model whose factor-graph variables will be updated in-place.</span>
+<span class="sd">    :type wm: world.model.WorldModel</span>
+<span class="sd">    :param result:</span>
+<span class="sd">        Output from :func:`run_pose_graph_slam`, containing the optimized</span>
+<span class="sd">        stacked state vector.</span>
+<span class="sd">    :type result: PoseGraphResult</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">fg</span> <span class="o">=</span> <span class="n">wm</span><span class="o">.</span><span class="n">fg</span>
+    <span class="n">x_opt</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">x_opt</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">index</span> <span class="o">=</span> <span class="n">wm</span><span class="o">.</span><span class="n">pack_state</span><span class="p">()</span>  <span class="c1"># re-pack to get consistent slices</span>
+
+    <span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">sl</span> <span class="ow">in</span> <span class="n">index</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">fg</span><span class="o">.</span><span class="n">variables</span><span class="p">[</span><span class="n">nid</span><span class="p">]</span>
+        <span class="n">v</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">x_opt</span><span class="p">[</span><span class="n">sl</span><span class="p">]</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="slam.pipeline.visualize_pose_graph_3d" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">visualize_pose_graph_3d</span><span class="p">(</span><span class="n">wm</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+</h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Convenience helper to plot the current factor graph in 3D.</p>
+<p>This simply calls :func:<code>world.visualization.plot_factor_graph_3d</code>
+with the world's underlying :class:<code>FactorGraph</code>.</p>
+<p>:param wm:
+    World model whose factor graph will be visualized.
+:type wm: world.model.WorldModel
+:param title:
+    Optional plot title.
+:type title: str | None</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>dsg-jit/dsg_jit/slam/pipeline.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">175</span>
+<span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span>
+<span class="normal">181</span>
+<span class="normal">182</span>
+<span class="normal">183</span>
+<span class="normal">184</span>
+<span class="normal">185</span>
+<span class="normal">186</span>
+<span class="normal">187</span>
+<span class="normal">188</span>
+<span class="normal">189</span>
+<span class="normal">190</span>
+<span class="normal">191</span>
+<span class="normal">192</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">visualize_pose_graph_3d</span><span class="p">(</span>
+    <span class="n">wm</span><span class="p">:</span> <span class="n">WorldModel</span><span class="p">,</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convenience helper to plot the current factor graph in 3D.</span>
+
+<span class="sd">    This simply calls :func:`world.visualization.plot_factor_graph_3d`</span>
+<span class="sd">    with the world&#39;s underlying :class:`FactorGraph`.</span>
+
+<span class="sd">    :param wm:</span>
+<span class="sd">        World model whose factor graph will be visualized.</span>
+<span class="sd">    :type wm: world.model.WorldModel</span>
+<span class="sd">    :param title:</span>
+<span class="sd">        Optional plot title.</span>
+<span class="sd">    :type title: str | None</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">plot_factor_graph_3d</span><span class="p">(</span><span class="n">wm</span><span class="o">.</span><span class="n">fg</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><hr />
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.tracking", "content.code.annotate", "content.tabs.link", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.7a47a382.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.e71a0d61.min.js"></script>
+      
+    
+  </body>
+</html>
