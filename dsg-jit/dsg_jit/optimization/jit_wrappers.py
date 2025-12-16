@@ -83,12 +83,12 @@ functions and keep logic purely functional wherever possible.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 
-from dsg_jit.optimization.solvers import gauss_newton, GNConfig
+from dsg_jit.optimization.solvers import gauss_newton, gauss_newton_manifold, GNConfig
 
 if TYPE_CHECKING:
     # Imported only for static type checking to avoid circular import
@@ -98,6 +98,11 @@ if TYPE_CHECKING:
 @dataclass
 class JittedGN:
     """JIT-compiled Gauss–Newton solver for a fixed world model-backed factor graph.
+
+    Note
+    ----
+    This wrapper targets the Euclidean solver :func:`gauss_newton`. For
+    SE(3)/manifold problems use :class:`JittedGNManifold` instead.
 
     This lightweight wrapper stores a jitted solve function and the
     configuration used to build it. Typical usage:
@@ -176,3 +181,86 @@ class JittedGN:
         """
         residual_fn = wm.build_residual()
         return JittedGN.from_residual(residual_fn, cfg)
+
+
+@dataclass
+class JittedGNManifold:
+    """JIT-compiled manifold Gauss–Newton solver for a fixed graph.
+
+    This wrapper is intended for SLAM-style problems where the packed state
+    vector is a concatenation of manifold variables (e.g., SE(3) poses and
+    R^3 landmarks). It closes over the residual function and manifold
+    metadata and returns a single jitted solve function.
+
+    Typical usage::
+
+        residual_fn = wm.build_residual()
+        manifold_types, block_slices = build_manifold_metadata(...)
+        cfg = GNConfig(max_iters=1)
+        jgn = JittedGNManifold.from_residual(residual_fn, manifold_types, block_slices, cfg)
+        x_opt = jgn(x0)
+
+    IMPORTANT:
+        To avoid repeated compilation, construct this once and reuse it for
+        every incremental step. Ensure the shapes/dtypes of ``x0`` and the
+        residual output remain constant across steps (template mode).
+
+    :param fn: JIT-compiled function mapping ``x0`` -> ``x_opt``.
+    :param cfg: Gauss–Newton configuration.
+    """
+
+    fn: Callable[[jnp.ndarray], jnp.ndarray]
+    cfg: GNConfig
+
+    def __call__(self, x0: jnp.ndarray) -> jnp.ndarray:
+        """Run the jitted manifold Gauss–Newton solve."""
+        return self.fn(x0)
+
+    @staticmethod
+    def from_residual(
+        residual_fn: Callable[[jnp.ndarray], jnp.ndarray],
+        manifold_types: Any,
+        block_slices: Any,
+        cfg: GNConfig,
+    ) -> "JittedGNManifold":
+        """Construct a :class:`JittedGNManifold` from residual + metadata.
+
+        :param residual_fn: Residual function ``r(x)``.
+        :param manifold_types: Per-block manifold type strings.
+        :param block_slices: Per-block slices into the packed vector.
+        :param cfg: Solver configuration.
+        :return: A reusable, jitted solver.
+        """
+
+        def solve(x0: jnp.ndarray) -> jnp.ndarray:
+            return gauss_newton_manifold(
+                residual_fn=residual_fn,
+                x0=x0,
+                manifold_types=manifold_types,
+                block_slices=block_slices,
+                cfg=cfg,
+            )
+
+        # JIT the whole solve; cfg/manifold metadata are closed over.
+        jitted = jax.jit(solve)
+        return JittedGNManifold(fn=jitted, cfg=cfg)
+
+    @staticmethod
+    def from_world_model(
+        wm: "WorldModel",
+        manifold_types: list[str],
+        block_slices: list[slice],
+        cfg: GNConfig,
+    ) -> "JittedGNManifold":
+        """Construct a manifold GN solver directly from a :class:`WorldModel`.
+
+        This helper obtains the residual via :meth:`WorldModel.build_residual`.
+
+        :param wm: World model.
+        :param manifold_types: Per-block manifold types.
+        :param block_slices: Per-block slices.
+        :param cfg: Solver configuration.
+        :return: A reusable, jitted solver.
+        """
+        residual_fn = wm.build_residual()
+        return JittedGNManifold.from_residual(residual_fn=residual_fn, manifold_types=manifold_types, block_slices=block_slices, cfg=cfg)

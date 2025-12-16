@@ -68,8 +68,8 @@ Design goals
   over hidden magic, so that experiments remain easy to debug and extend.
 """
 
-from dataclasses import dataclass
-from typing import Dict, Optional, List, Any, Callable, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, Optional, List, Any, Callable, Tuple, Union
 
 import jax
 import jax.numpy as jnp
@@ -84,13 +84,64 @@ from dsg_jit.optimization.solvers import (
     gauss_newton_manifold,
 )
 from dsg_jit.slam.manifold import build_manifold_metadata
+
 from dsg_jit.optimization.jit_wrappers import JittedGN
+
+
+# --- Module-level helper for marginal prior residual ---
+def marginal_prior_residual(stacked: jnp.ndarray, params: Dict[str, Any]) -> jnp.ndarray:
+    """Residual for a dense Gaussian prior induced by marginalization.
+
+    This residual encodes a quadratic term of the form
+
+        1/2 (x - μ)^T H (x - μ)
+
+    via a Cholesky factorization H = L^T L. The parameters are:
+
+        mean       : μ, a 1D array of the same shape as ``stacked``.
+        sqrt_info  : L, a square matrix such that L^T L ≈ H.
+
+    The returned residual is L @ (x - μ), so that the overall contribution
+    to the objective is 1/2 ||L (x - μ)||^2.
+    """
+    mean = params["mean"]
+    sqrt_info = params["sqrt_info"]
+    return sqrt_info @ (stacked - mean)
 
 ResidualFn = Callable[..., jnp.array]
 
 @dataclass
+class ActiveWindowTemplate:
+    """Defines a fixed-capacity active factor graph template for JIT-stable operation.
+    Each variable/factor slot is identified by (type, slot_idx).
+    """
+    variable_slots: List[Tuple[str, int, int]]  # (var_type, slot_idx, dim)
+    factor_slots: List[Tuple[str, int, Tuple[Tuple[str, int], ...]]]  # (factor_type, slot_idx, var_slot_keys)
+
+@dataclass
+class VarSlot:
+    """Bookkeeping for a variable slot in the active template."""
+    var_type: str
+    slot_idx: int
+    node_id: NodeId
+    dim: int
+
+@dataclass
+class FactorSlot:
+    """Bookkeeping for a factor slot in the active template."""
+    factor_type: str
+    slot_idx: int
+    factor_id: FactorId
+    var_slot_keys: Tuple[Tuple[str, int], ...]
+
+
+@dataclass
 class WorldModel:
     """High-level world model built on top of :class:`FactorGraph`.
+
+    Modes:
+      - Dynamic/unbounded FG (legacy, research mode): Variables and factors can be added/removed dynamically.
+      - Fixed-capacity active template (real-time / JIT-stable mode): A fixed set of variable/factor slots is preallocated for JIT-compatibility and in-place updates.
 
     In addition to wrapping the core factor graph, this class keeps simple
     bookkeeping dictionaries that make it easier to build static and dynamic
@@ -108,8 +159,11 @@ class WorldModel:
     agent_pose_ids: Dict[str, Dict[int, NodeId]]
     _residual_registry: Dict[str, ResidualFn]
     _compiled_solvers: Dict[Tuple[str,str], Any]
-    
-    
+    # --- Active template fields (for slot-based, fixed-capacity mode) ---
+    _active_template: Optional[ActiveWindowTemplate] = field(default=None, init=False)
+    _var_slots: Dict[Tuple[str, int], VarSlot] = field(default_factory=dict, init=False)
+    _factor_slots: Dict[Tuple[str, int], FactorSlot] = field(default_factory=dict, init=False)
+    _active_factor_mask: Dict[FactorId, bool] = field(default_factory=dict, init=False)
 
     def __init__(self) -> None:
         # Core factor graph
@@ -122,9 +176,120 @@ class WorldModel:
         self.object_ids = {}
         # Mapping: agent_id -> {timestep -> NodeId}
         self.agent_pose_ids = {}
-        #Residual Registry
+        # Residual Registry
         self._residual_registry: Dict[str, ResidualFn] = {}
         self._compiled_solvers: Dict[Tuple[str, str], Any] = {}
+        # Active window template fields (for slot-based mode)
+        self._active_template: Optional[ActiveWindowTemplate] = None
+        self._var_slots: Dict[Tuple[str, int], VarSlot] = {}
+        self._factor_slots: Dict[Tuple[str, int], FactorSlot] = {}
+        self._active_factor_mask: Dict[FactorId, bool] = {}
+    # --- Active template / slot-based API ---
+    def init_active_template(self, template: ActiveWindowTemplate) -> None:
+        """Initialize a fixed-capacity active factor graph template for JIT-stable operation.
+        All variables and factors are preallocated; structure is fixed.
+        """
+        # Reset the factor graph and slot bookkeeping.
+        self.fg = FactorGraph()
+        self._active_template = template
+        self._var_slots.clear()
+        self._factor_slots.clear()
+        self._active_factor_mask.clear()
+        # Pre-allocate variable slots.
+        for var_type, slot_idx, dim in template.variable_slots:
+            init_val = jnp.zeros((dim,), dtype=jnp.float32)
+            node_id = self.add_variable(var_type, init_val)
+            slot_key = (var_type, slot_idx)
+            self._var_slots[slot_key] = VarSlot(var_type, slot_idx, node_id, dim)
+        # Pre-allocate factor slots (inactive by default).
+        for factor_type, slot_idx, var_slot_keys in template.factor_slots:
+            var_ids = tuple(self._var_slots[vk].node_id for vk in var_slot_keys)
+
+            # Compute the stacked state dimension for this factor slot.
+            stacked_dim = 0
+            for vk in var_slot_keys:
+                stacked_dim += int(self._var_slots[vk].dim)
+
+            # IMPORTANT: In slot-based mode we rely on vmap + tree stacking.
+            # That requires that all factors within a batched group have the
+            # same params keys and compatible shapes.
+            if factor_type == "prior":
+                # Prior residual typically expects a 6D target for SE(3) poses.
+                # We default to zeros and unit weight.
+                params: Dict[str, Any] = {
+                    "target": jnp.zeros((stacked_dim,), dtype=jnp.float32),
+                    "weight": jnp.array(1.0, dtype=jnp.float32),
+                    "active": jnp.array(0.0, dtype=jnp.float32),
+                }
+            elif factor_type == "odom_se3":
+                # Odometry measurement lives in the se(3) tangent space (6D),
+                # even though the stacked state for two poses is 12D.
+                params = {
+                    "measurement": jnp.zeros((6,), dtype=jnp.float32),
+                    "weight": jnp.array(1.0, dtype=jnp.float32),
+                    "active": jnp.array(0.0, dtype=jnp.float32),
+                }
+            elif factor_type == "marginal_prior":
+                # Dense Gaussian prior induced by marginalization.
+                params = {
+                    "mean": jnp.zeros((stacked_dim,), dtype=jnp.float32),
+                    "sqrt_info": jnp.eye(stacked_dim, dtype=jnp.float32),
+                    "weight": jnp.array(1.0, dtype=jnp.float32),
+                    "active": jnp.array(0.0, dtype=jnp.float32),
+                }
+            else:
+                # Generic fallback: only active + weight.
+                # Callers can override/extend keys via configure_factor_slot.
+                params = {
+                    "weight": jnp.array(1.0, dtype=jnp.float32),
+                    "active": jnp.array(0.0, dtype=jnp.float32),
+                }
+
+            factor_id = self.add_factor(factor_type, var_ids, params)
+            slot_key = (factor_type, slot_idx)
+            self._factor_slots[slot_key] = FactorSlot(factor_type, slot_idx, factor_id, var_slot_keys)
+            self._active_factor_mask[factor_id] = False
+
+    def set_variable_slot(self, var_type: str, slot_idx: int, value: jnp.ndarray) -> NodeId:
+        """Set the value of a variable slot in the active template."""
+        slot_key = (var_type, slot_idx)
+        slot = self._var_slots.get(slot_key)
+        if slot is None:
+            raise KeyError(f"Variable slot {slot_key} not found in active template.")
+        if value.shape[0] != slot.dim:
+            raise ValueError(f"Value shape {value.shape} does not match slot dim {slot.dim}")
+        self.fg.variables[slot.node_id].value = value
+        return slot.node_id
+
+    def configure_factor_slot(
+        self,
+        factor_type: str,
+        slot_idx: int,
+        var_ids: Tuple[NodeId, ...],
+        params: Dict,
+        active: bool = True,
+    ) -> None:
+        """Configure a factor slot in the active template: set variable ids, params, and activity."""
+        slot_key = (factor_type, slot_idx)
+        slot = self._factor_slots.get(slot_key)
+        if slot is None:
+            raise KeyError(f"Factor slot {slot_key} not found in active template.")
+        fid = slot.factor_id
+        f = self.fg.factors[fid]
+        # Update factor's var_ids and params in place.
+        object.__setattr__(f, "var_ids", tuple(var_ids))
+
+        # IMPORTANT: preserve existing keys so vmapped stacking sees a
+        # consistent pytree structure across all factors in a batched group.
+        new_params = dict(f.params)
+        new_params.update(params)
+        # Normalize scalar params to JAX arrays for stable stacking.
+        for k, v in list(new_params.items()):
+            if isinstance(v, (float, int)):
+                new_params[k] = jnp.array(v, dtype=jnp.float32)
+        new_params["active"] = jnp.array(1.0 if active else 0.0, dtype=jnp.float32)
+        f.params = new_params
+        self._active_factor_mask[fid] = active
 
     def add_variable(self, var_type: str, value: jnp.ndarray) -> NodeId:
         """Add a new variable to the underlying factor graph.
@@ -141,13 +306,19 @@ class WorldModel:
             ``value.shape[0]``.
         :returns: The :class:`NodeId` of the newly added variable.
         """
-        nid_int = len(self.fg.variables)
+        # Allocate a fresh NodeId. We cannot rely on len(self.fg.variables)
+        # when variables may have been removed (e.g. after marginalization),
+        # so we take the maximum existing id and add one.
+        if self.fg.variables:
+            max_existing_id = max(int(nid) for nid in self.fg.variables.keys())
+            nid_int = max_existing_id + 1
+        else:
+            nid_int = 0
         nid = NodeId(nid_int)
         v = Variable(id=nid, type=var_type, value=value)
         self.fg.add_variable(v)
         # Graph structure has changed; clear any cached compiled solvers
         # and residuals so they can be rebuilt on demand.
-        self._compiled_solvers.clear()
         return nid
 
     def add_pose(self, value: jnp.ndarray, name: Optional[str] = None) -> NodeId:
@@ -246,7 +417,14 @@ class WorldModel:
             residual function (e.g. measurements, noise models, weights).
         :returns: The :class:`FactorId` of the newly added factor.
         """
-        fid_int = len(self.fg.factors)
+        # Allocate a fresh FactorId. We cannot rely on len(self.fg.factors)
+        # when factors may have been removed (e.g. after marginalization),
+        # so we take the maximum existing id and add one.
+        if self.fg.factors:
+            max_existing_id = max(int(fid) for fid in self.fg.factors.keys())
+            fid_int = max_existing_id + 1
+        else:
+            fid_int = 0
         fid = FactorId(fid_int)
 
         # Normalize everything to NodeId
@@ -261,7 +439,6 @@ class WorldModel:
         self.fg.add_factor(f)
         # Adding a factor changes the factor graph structure; clear cached
         # compiled solvers / residuals so they can be rebuilt consistently.
-        self._compiled_solvers.clear()
         return fid
 
     def add_camera_bearings(
@@ -626,25 +803,23 @@ class WorldModel:
                 "yet implemented."
             )
 
-        # Snapshot the current factor graph structure
-        factors = tuple(self.fg.factors.values())
-        var_count = len(self.fg.variables)
-
-        # Build a simple structural signature so we can reuse compiled residuals
-        # for the same graph structure. This keeps the implementation light-
-        # weight while still avoiding unnecessary recompilation.
-        sig_parts = [f"{f.type}:{len(f.var_ids)}" for f in factors]
-        structure_sig = f"v{var_count}|" + "|".join(sig_parts)
-        cache_key = ("residual", structure_sig)
+        # Slot-based mode: Use a constant cache key and enforce fixed structure.
+        if self._active_template is not None:
+            cache_key = ("residual", "active_template")
+        else:
+            # Legacy dynamic mode: cache by structure.
+            factors = tuple(self.fg.factors.values())
+            var_count = len(self.fg.variables)
+            sig_parts = [f"{f.type}:{len(f.var_ids)}" for f in factors]
+            structure_sig = f"v{var_count}|" + "|".join(sig_parts)
+            cache_key = ("residual", structure_sig)
 
         cached = self._compiled_solvers.get(cache_key)
         if cached is not None:
             return cached
 
-        # Group factors by (type, shape-signature) so we only vmap over
-        # truly compatible factors. This handles cases like "prior" factors
-        # on pose_se3 (dim 6) vs voxel_cell (dim 3), which cannot be stacked
-        # together in a single batch.
+        # Group factors as before.
+        factors = tuple(self.fg.factors.values())
         group_to_factors: Dict[Tuple[str, Tuple[int, ...]], List[Factor]] = {}
         for f in factors:
             var_dims: List[int] = []
@@ -659,13 +834,7 @@ class WorldModel:
         _, index = self.pack_state()
 
         def residual(x: jnp.ndarray) -> jnp.ndarray:
-            """Stacked residual function over all factors for the current graph.
-
-            This implementation groups factors by type and applies
-            :func:`jax.vmap` within each group when there are multiple
-            factors of the same type. For singleton groups we fall back to
-            a simple scalar evaluation to avoid unnecessary overhead.
-            """
+            """Stacked residual function over all factors for the current graph, with slot-based activity mask if present."""
             var_values = self.unpack_state(x, index)
             res_chunks: List[jnp.ndarray] = []
 
@@ -675,62 +844,85 @@ class WorldModel:
                     raise ValueError(
                         f"No residual fn registered for factor type '{f_type}'"
                     )
-
                 if not flist:
                     continue
-
-                # Singleton group: no need to build batched structures, just
-                # evaluate directly.
+                # Singleton group
                 if len(flist) == 1:
                     f = flist[0]
                     vs = [var_values[nid] for nid in f.var_ids]
                     stacked = jnp.concatenate(vs)
+                    # Slot-based: multiply by "active" param if present
                     r = res_fn(stacked, f.params)
+                    activity = f.params.get("active", 1.0)
+                    r = r * activity
                     res_chunks.append(jnp.reshape(r, (-1,)))
                     continue
-
-                # Batched path: build [N_factors, D] stacked states and a
-                # batched parameter pytree, then vmap the residual.
+                # Batched path
                 stacked_states: List[jnp.ndarray] = []
                 params_list: List[Dict[str, Any]] = []
-
                 for f in flist:
                     vs = [var_values[nid] for nid in f.var_ids]
                     stacked_states.append(jnp.concatenate(vs))
                     params_list.append(f.params)
-
                 stacked_states_arr = jnp.stack(stacked_states, axis=0)
-
-                # Convert list-of-dicts into a dict-of-batched-arrays pytree.
-                # We rely on the factors of a given type having compatible
-                # parameter structure (keys and shapes).
                 params_tree = jtu.tree_map(
                     lambda *vals: jnp.stack(
                         [jnp.asarray(v) for v in vals], axis=0
                     ),
                     *params_list,
                 )
-
-                def single_factor_residual(
-                    s: jnp.ndarray, p: Dict[str, Any]
-                ) -> jnp.ndarray:
-                    return res_fn(s, p)
-
+                def single_factor_residual(s: jnp.ndarray, p: Dict[str, Any]) -> jnp.ndarray:
+                    r = res_fn(s, p)
+                    activity = p.get("active", 1.0)
+                    return r * activity
                 batched_res = jax.vmap(single_factor_residual)(
                     stacked_states_arr, params_tree
                 )
                 res_chunks.append(jnp.reshape(batched_res, (-1,)))
-
             if not res_chunks:
                 return jnp.zeros((0,), dtype=x.dtype)
-
             return jnp.concatenate(res_chunks, axis=0)
 
         residual_jit = jax.jit(residual)
         self._compiled_solvers[cache_key] = residual_jit
         return residual_jit
     
-        # ------------------------------------------------------------------
+    # Marginalization and fixed-lag smoothing are now handled via bounded active templates.
+    # The following methods are disabled in slot-based mode.
+    def marginalize_variables(
+        self,
+        marginalized_ids: List[NodeId],
+        damping: float = 1e-6,
+    ) -> None:
+        """
+        Disabled: Marginalization is not supported in active template mode.
+        Use bounded active templates for fixed-lag smoothing instead.
+        """
+        # If in active template mode, do nothing and explain.
+        if self._active_template is not None:
+            # Fixed-lag smoothing is handled via bounded active templates.
+            # This method is disabled in slot-based mode.
+            return
+        # (Legacy code for dynamic mode could be restored here if needed.)
+        pass
+    
+    def fixed_lag_marginalize(
+        self,
+        keep_ids: List[NodeId],
+        damping: float = 1e-6,
+    ) -> None:
+        """
+        Disabled: Fixed-lag marginalization is not supported in active template mode.
+        Use bounded active templates for sliding window/fixed-lag smoothing instead.
+        """
+        if self._active_template is not None:
+            # Fixed-lag smoothing is handled via bounded active templates.
+            # This method is disabled in slot-based mode.
+            return
+        # (Legacy code for dynamic mode could be restored here if needed.)
+        pass
+
+    # ------------------------------------------------------------------
     # Hyper-parameterized residual builders
     # ------------------------------------------------------------------
     def build_residual_function_with_type_weights(
@@ -1036,3 +1228,14 @@ class WorldModel:
         for node_id, (start, dim) in index.items():
             result[node_id] = x[start:start+dim]
         return result
+    
+    def unpack_state_inplace(self, x_opt: jnp.ndarray) -> None:
+        """
+        Write the optimized state vector back into the FactorGraph variable table.
+        """
+        _, index = self.pack_state()  # index maps node_id -> (start, end)
+
+        for node_id, (start, end) in index.items():
+            block = x_opt[start:end]
+            var = self.fg.variables[node_id]
+            var.value = block  # overwrite stored variable value

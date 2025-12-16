@@ -77,7 +77,7 @@ poses), extend the manifold handling logic in the manifold-aware solver.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Dict, Iterable, List, Mapping, Sequence, Tuple, Union, Any
 
 import jax
 import jax.numpy as jnp
@@ -217,8 +217,8 @@ def gauss_newton(residual_fn: ObjectiveFn, x0: jnp.ndarray, cfg: GNConfig) -> jn
 def gauss_newton_manifold(
     residual_fn: ObjectiveFn,
     x0: jnp.ndarray,
-    block_slices: Dict,     # NodeId -> slice
-    manifold_types: Dict,   # NodeId -> "se3" / "euclidean"
+    block_slices: Union[Mapping[Any, slice], Sequence[Tuple[Any, slice]]],
+    manifold_types: Union[Mapping[Any, str], Sequence[Tuple[Any, str]]],
     cfg: GNConfig,
 ) -> jnp.ndarray:
     """Manifold-aware Gauss–Newton solver.
@@ -235,9 +235,11 @@ def gauss_newton_manifold(
     :param x0: Initial flat state vector of shape ``(n,)``.
     :type x0: jnp.ndarray
     :param block_slices: Mapping from node identifier to slice in ``x`` defining that variable's block.
-    :type block_slices: Dict
+                         May be a dict or a sequence of (node_id, slice) pairs.
+    :type block_slices: Union[Mapping[Any, slice], Sequence[Tuple[Any, slice]]]
     :param manifold_types: Mapping from node identifier to manifold label (e.g. ``"se3"`` or ``"euclidean"``).
-    :type manifold_types: Dict
+                           May be a dict or a sequence of (node_id, manifold_type) pairs.
+    :type manifold_types: Union[Mapping[Any, str], Sequence[Tuple[Any, str]]]
     :param cfg: Gauss–Newton configuration (iterations, damping, step-norm clamp).
     :type cfg: GNConfig
     :return: Optimized state vector after manifold-aware Gauss–Newton iterations.
@@ -264,22 +266,38 @@ def gauss_newton_manifold(
         step_norm = jnp.linalg.norm(delta)
         scale = jnp.minimum(1.0, cfg.max_step_norm / (step_norm + 1e-9))
         delta_scaled = scale * delta
-
-        # Apply updates per variable block using the right manifold
+        
         x_new = x
-        for nid, sl in block_slices.items():
-            d_i = delta_scaled[sl]
-            x_i = x[sl]
-            mtype = manifold_types[nid]
 
-            if mtype == "se3":
-                # Interpret d_i as a twist in se(3) and apply left retraction
-                x_i_new = se3_retract_left(x_i, -d_i)
-            else:
-                # Euclidean update
-                x_i_new = x_i - d_i
+        if isinstance(block_slices, Mapping) and isinstance(manifold_types, Mapping):
+            # Legacy path: dict lookups.
+            for nid, sl in block_slices.items():
+                d_i = delta_scaled[sl]
+                x_i = x[sl]
+                mtype = manifold_types.get(nid, "euclidean")
 
-            x_new = x_new.at[sl].set(x_i_new)
+                if mtype == "se3":
+                    # Interpret d_i as a twist in se(3) and apply left retraction
+                    x_i_new = se3_retract_left(x_i, -d_i)
+                else:
+                    # Euclidean update
+                    x_i_new = x_i - d_i
+
+                x_new = x_new.at[sl].set(x_i_new)
+        else:
+            # JAX-friendly path: iterate in lockstep over (nid, slice) and (nid, mtype)
+            # without dict indexing. `block_slices` and `manifold_types` are expected
+            # to be aligned and ordered consistently.
+            for (nid, sl), (_, mtype) in zip(block_slices, manifold_types):
+                d_i = delta_scaled[sl]
+                x_i = x[sl]
+
+                if mtype == "se3":
+                    x_i_new = se3_retract_left(x_i, -d_i)
+                else:
+                    x_i_new = x_i - d_i
+
+                x_new = x_new.at[sl].set(x_i_new)
 
         x = x_new
 

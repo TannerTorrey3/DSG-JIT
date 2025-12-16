@@ -34,10 +34,7 @@ Typical Usage
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, Callable, Tuple, List
-
-import jax
-import jax.numpy as jnp
+from typing import Dict
 
 from dsg_jit.core.types import NodeId, FactorId, Variable, Factor
 
@@ -77,5 +74,3 @@ class FactorGraph:
         """
         assert factor.id not in self.factors
         self.factors[factor.id] = factor
-
-

@@ -402,8 +402,8 @@ def plot_factor_graph_3d(fg: FactorGraph, show_labels: bool = True) -> None:
 
 def plot_scenegraph_3d(
     sg: Any,
-    x_opt: Any,
-    index: Dict[Any, Union[slice, tuple]],
+    x_opt: Any = None,
+    index: Optional[Dict[Any, Union[slice, tuple]]] = None,
     title: str = "Scene Graph 3D",
     dsg: Optional[Any] = None,
 ) -> None:
@@ -411,16 +411,22 @@ def plot_scenegraph_3d(
     Render a 3D scene graph with rooms, places, objects, place attachments,
     and optional agent trajectories.
 
+    This function supports two modes:
+    - If ``sg`` exposes a ``_memory`` attribute (the SceneGraph memory layer introduced in ``SceneGraphWorld``),
+      node positions are read from this memory and ``x_opt`` and ``index`` are ignored.
+    - If no memory is present, the function falls back to the previous behavior using ``x_opt`` and ``index``
+      to decode node states.
+
     :param sg: Scene-graph world instance. It is expected to expose
         attributes such as ``rooms``, ``places``, ``objects``,
         ``place_parents``, ``object_parents``, and ``place_attachments``,
         following the conventions used by :class:`SceneGraphWorld`.
-    :param x_opt: Optimized flat state vector (e.g. from
+    :param x_opt: (Optional) Optimized flat state vector (e.g. from
         :meth:`WorldModel.pack_state`), containing the current estimates
-        of all node states.
-    :param index: Mapping from node identifier to either a slice or
+        of all node states. Not required if ``sg`` exposes a ``_memory`` layer.
+    :param index: (Optional) Mapping from node identifier to either a slice or
         ``(start, dim)`` tuple describing where that node’s state lives
-        inside ``x_opt``.
+        inside ``x_opt``. Not required if ``sg`` exposes a ``_memory`` layer.
     :param title: Optional figure title for the Matplotlib 3D axes.
     :param dsg: Optional dynamic scene graph used to overlay agent
         trajectories. It should expose an iterable ``agents`` attribute
@@ -428,30 +434,147 @@ def plot_scenegraph_3d(
         returns an array of shape ``(T, 6)`` or ``(T, 3)``.
     :return: None. The function creates and displays a Matplotlib 3D figure.
     """
-    # Convert state to numpy array
-    x = np.asarray(x_opt)
+    has_memory = hasattr(sg, "_memory")
+    mem = getattr(sg, "_memory", None)
 
-    def _slice_for(nid: Any) -> slice:
-        """Normalize index[nid] to a Python slice."""
-        idx = index[nid]
-        if isinstance(idx, slice):
-            return idx
-        start, length = idx
-        return slice(start, start + length)
+    def _partition_memory_by_type() -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        """
+        Derive rooms / places / objects mappings from the SceneGraphWorld
+        memory layer when explicit dictionaries (sg.rooms, sg.places,
+        sg.objects) are not available or are empty.
+
+        This assumes each memory entry is a small dataclass-like object
+        exposing ``node_id`` and ``var_type`` attributes, where
+        ``var_type`` starts with e.g. ``"room"``, ``"place"``, or
+        ``"object"`` / ``"voxel"``.
+        """
+        rooms_m: Dict[str, Any] = {}
+        places_m: Dict[str, Any] = {}
+        objects_m: Dict[str, Any] = {}
+        if not has_memory or mem is None:
+            return rooms_m, places_m, objects_m
+
+        # Iterate over stored node states and group by var_type prefix.
+        for state in getattr(mem, "values", lambda: [])():
+            vt = getattr(state, "var_type", "")
+            nid = getattr(state, "node_id", None)
+            if nid is None:
+                continue
+            # Construct simple human-readable names when no explicit names exist.
+            if vt.startswith("room"):
+                key = f"room_{nid}"
+                rooms_m[key] = nid
+            elif vt.startswith("place"):
+                key = f"place_{nid}"
+                places_m[key] = nid
+            elif vt.startswith("object") or vt.startswith("voxel"):
+                key = f"obj_{nid}"
+                objects_m[key] = nid
+        return rooms_m, places_m, objects_m
+
+    def _has_state(nid: Any) -> bool:
+        """
+        Check whether we have a stored state for the given node id.
+
+        When using SceneGraphWorld memory, we support both integer keys
+        and arbitrary NodeId-like keys by trying ``nid`` directly first
+        and then falling back to ``int(nid)`` if conversion is possible.
+        """
+        if has_memory:
+            # Try raw key as-is
+            try:
+                if nid in mem:
+                    return True
+            except TypeError:
+                # Some key types may not support `in` with this nid
+                pass
+            # Fallback: try integer-cast key
+            try:
+                nid_int = int(nid)
+            except (TypeError, ValueError):
+                return False
+            return nid_int in mem
+        if index is None:
+            return False
+        return nid in index
 
     def _vec(nid: Any) -> np.ndarray:
-        """Return 1D vector for node nid from x."""
-        sl = _slice_for(nid)
-        v = x[sl]
-        return np.asarray(v).reshape(-1)
+        if has_memory:
+            # Support both direct nid keys and integer-cast keys.
+            state = None
+            # Try raw nid first
+            try:
+                state = mem.get(nid)  # type: ignore[call-arg]
+            except AttributeError:
+                # If _memory is not a Mapping, fall back to direct indexing
+                try:
+                    state = mem[nid]  # type: ignore[index]
+                except Exception:
+                    state = None
+            if state is None:
+                # Fallback: try integer-cast key
+                try:
+                    nid_int = int(nid)
+                except (TypeError, ValueError):
+                    raise KeyError(f"No state in SceneGraph memory for node id={nid!r}")
+                try:
+                    state = mem.get(nid_int)  # type: ignore[call-arg]
+                except AttributeError:
+                    state = mem[nid_int]  # type: ignore[index]
+            if state is None:
+                raise KeyError(f"No state in SceneGraph memory for node id={nid!r}")
+            v = np.asarray(state.value).reshape(-1)
+            return v
+        if index is None or x_opt is None:
+            raise ValueError("x_opt and index must be provided when SceneGraph memory is not available")
+        idx = index[nid]
+        if isinstance(idx, slice):
+            sl = idx
+        else:
+            start, length = idx
+            sl = slice(start, start + length)
+        v = np.asarray(x_opt[sl]).reshape(-1)
+        return v
 
-    # Safely grab scene-graph structures (with defaults if missing)
+    # Safely grab scene-graph structures (with defaults if missing).
     rooms = getattr(sg, "rooms", {}) or {}
     places = getattr(sg, "places", {}) or {}
     objects = getattr(sg, "objects", {}) or {}
+
+    # If we have a memory layer but no explicit named dicts, derive them from memory.
+    if has_memory and mem is not None:
+        if not rooms or not isinstance(rooms, dict):
+            mem_rooms, mem_places, mem_objects = _partition_memory_by_type()
+            # Only fill in from memory when each layer is empty; this way,
+            # user-provided names (if any) take precedence.
+            if not rooms:
+                rooms = mem_rooms
+            if not places:
+                places = mem_places
+            if not objects:
+                objects = mem_objects
+
     place_parents = getattr(sg, "place_parents", {}) or {}
     object_parents = getattr(sg, "object_parents", {}) or {}
     attachments = getattr(sg, "place_attachments", []) or []
+
+    # -------------------------------------------------
+    # Collect pose node ids (for rendering trajectories / agent poses).
+    # We look in both the memory layer and the place-attachment edges.
+    pose_ids: set[Any] = set()
+
+    # From attachments: first element of each tuple is assumed to be a pose node id.
+    for pose_nid, _ in attachments:
+        pose_ids.add(pose_nid)
+
+    # From memory: any node whose var_type starts with "pose" is treated as a pose.
+    if has_memory and mem is not None:
+        for state in getattr(mem, "values", lambda: [])():
+            vt = getattr(state, "var_type", "")
+            if vt.startswith("pose"):
+                nid = getattr(state, "node_id", None)
+                if nid is not None:
+                    pose_ids.add(nid)
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
@@ -464,6 +587,8 @@ def plot_scenegraph_3d(
     # ------------------------------
     first_room = next(iter(rooms), None)
     for name, nid in rooms.items():
+        if not _has_state(nid):
+            continue
         p = _vec(nid)
         if p.shape[0] < 3:
             # If we only have 1D, pad to 3D for visualization
@@ -486,6 +611,8 @@ def plot_scenegraph_3d(
     # ------------------------------
     first_place = next(iter(places), None)
     for name, nid in places.items():
+        if not _has_state(nid):
+            continue
         p = _vec(nid)
         if p.shape[0] < 3:
             p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
@@ -506,6 +633,8 @@ def plot_scenegraph_3d(
     # ------------------------------
     first_obj = next(iter(objects), None)
     for name, nid in objects.items():
+        if not _has_state(nid):
+            continue
         p = _vec(nid)
         if p.shape[0] < 3:
             p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
@@ -522,10 +651,32 @@ def plot_scenegraph_3d(
         )
 
     # ------------------------------
+    # Poses: agent pose nodes (small spheres)
+    # ------------------------------
+    first_pose = next(iter(pose_ids), None)
+    for nid in pose_ids:
+        if not _has_state(nid):
+            continue
+        p = _vec(nid)
+        if p.shape[0] < 3:
+            p = np.pad(p, (0, 3 - p.shape[0]), mode="constant")
+        all_pts.append(p[:3])
+        label = "pose" if nid == first_pose else ""
+        ax.scatter(
+            p[0],
+            p[1],
+            p[2],
+            s=30,
+            marker="o",
+            alpha=1.0,
+            label=label,
+        )
+
+    # ------------------------------
     # Hierarchical edges: room -> place, place -> object
     # ------------------------------
     for place_nid, room_nid in place_parents.items():
-        if place_nid not in index or room_nid not in index:
+        if not (_has_state(place_nid) and _has_state(room_nid)):
             continue
         p = _vec(place_nid)
         r = _vec(room_nid)
@@ -543,7 +694,7 @@ def plot_scenegraph_3d(
         )
 
     for obj_nid, place_nid in object_parents.items():
-        if obj_nid not in index or place_nid not in index:
+        if not (_has_state(obj_nid) and _has_state(place_nid)):
             continue
         o = _vec(obj_nid)
         p = _vec(place_nid)
@@ -564,7 +715,7 @@ def plot_scenegraph_3d(
     # Place attachments: pose -> place (dashed)
     # ------------------------------
     for pose_nid, place_nid in attachments:
-        if pose_nid not in index or place_nid not in index:
+        if not (_has_state(pose_nid) and _has_state(place_nid)):
             continue
         pose = _vec(pose_nid)
         plc = _vec(place_nid)
