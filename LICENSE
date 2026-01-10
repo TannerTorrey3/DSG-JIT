@@ -1,21 +1,106 @@
-MIT License
+Business Source License 1.1
 
-Copyright (c) 2025 Tanner Kocher
+Copyright © 2026 Tanner Kocher
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Licensed under the Business Source License, Version 1.1 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+    https://mariadb.com/bsl11/
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+-------------------------------------------------------------------------------
+
+Parameters
+
+Licensor:
+Tanner Kocher
+
+Licensed Work:
+DSG-JIT (Differentiable Scene Graph – Just-In-Time Optimization Engine),
+including all source code, documentation, build scripts, configuration files,
+and other materials contained in this repository.
+
+Change Date:
+January 1, 2030
+
+Change License:
+Apache License, Version 2.0
+
+Use Limitation:
+The Licensed Work may not be used, modified, distributed, or made available,
+in whole or in part, for any commercial purpose, including but not limited to:
+
+1. Offering the Licensed Work as a product or service.
+2. Using the Licensed Work as part of a commercial robotics system,
+   autonomy stack, SLAM system, scene-graph engine, world-model middleware,
+   or similar product.
+3. Providing the Licensed Work to third parties, whether as software,
+   a hosted service, or embedded in hardware.
+4. Creating derivative works of the Licensed Work for redistribution.
+5. Using the Licensed Work in any revenue-generating activity,
+   including Robotics-as-a-Service (RaaS), Software-as-a-Service (SaaS),
+   or OEM product offerings.
+
+For the avoidance of doubt, the following uses ARE permitted prior to the
+Change Date, provided they do not violate the Use Limitation above:
+
+- Non-commercial research
+- Academic use
+- Internal evaluation
+- Prototyping and testing without redistribution
+
+-------------------------------------------------------------------------------
+
+Terms
+
+1. Grant of Rights
+
+Subject to the terms and conditions of this License, the Licensor hereby grants
+you a non-exclusive, non-transferable, non-sublicensable, limited license to use
+the Licensed Work in accordance with the Use Limitation.
+
+2. Restrictions
+
+Any use of the Licensed Work that violates the Use Limitation automatically
+terminates this License. All rights not expressly granted are reserved by the
+Licensor.
+
+3. No Trademark Rights
+
+This License does not grant permission to use the trade names, trademarks,
+service marks, or logos of the Licensor, including "DSG-JIT".
+
+4. Disclaimer of Warranty
+
+THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+5. Limitation of Liability
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+OUT OF, OR IN CONNECTION WITH THE LICENSED WORK OR THE USE OR OTHER DEALINGS IN
+THE LICENSED WORK.
+
+6. Termination
+
+This License terminates automatically upon violation of its terms. Upon
+termination, you must cease all use of the Licensed Work.
+
+-------------------------------------------------------------------------------
+
+Change License
+
+On the Change Date, the Licensed Work will automatically be made available under
+the Apache License, Version 2.0, unless the Licensor publishes a different
+license for the Licensed Work prior to that date.
+
+-------------------------------------------------------------------------------
+
+Commercial Licensing
+
+Commercial licenses, OEM licenses, and partnership agreements are available.
+
+Contact:
+tannerkocher2@gmail.com
