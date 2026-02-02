@@ -10,8 +10,6 @@ The goal is to:
 * Keep I/O and parsing logic separate from the core optimization engine.
 * Provide small, explicit dataclasses for each dataset family.
 * Avoid heavy dependencies (no hard requirement on OpenCV, etc.).
-
-**
 """
 
 from .tum_rgbd import TumRgbdFrame, load_tum_rgbd_sequence
