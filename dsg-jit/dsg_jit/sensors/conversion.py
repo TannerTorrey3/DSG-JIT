@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Tanner Kocher
-# SPDX-License-Identifier: Business Source License 1.1
+# SPDX-License-Identifier: Business Source License 1.1.
 
 """
 Conversion utilities from sensor measurements to factor-graph factors.
