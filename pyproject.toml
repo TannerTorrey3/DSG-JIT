@@ -8,7 +8,7 @@ version = "0.7.1"
 description = "Differentiable Scene Graphs with JAX-based factor graphs and SLAM tooling."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Business Source License 1.1" }
 
 authors = [
   { name = "Tanner Kocher" }
