@@ -1,5 +1,5 @@
 # Copyright (c) 2025.
-# This file is part of DSG-JIT, released under the MIT License.
+# This file is part of DSG-JIT, released under the Business Source License 1.1
 """
 Residual models (measurement factors) for DSG-JIT.
 
