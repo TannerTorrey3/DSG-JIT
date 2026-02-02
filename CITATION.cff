@@ -32,9 +32,9 @@ abstract: >
   and a high-performance manifold Gauss–Newton solver accelerated via JIT
   compilation.
 
-version: "0.1.0"
+version: "0.1.1"
 date-released: "2025-11-20"
-license: "MIT"
+license: "Business Source License 1.1"
 
 software-citation:
   type: software
