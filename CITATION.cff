@@ -34,7 +34,7 @@ abstract: >
 
 version: "0.1.0"
 date-released: "2025-11-20"
-license: "MIT"
+license: "Business Source License 1.1"
 
 software-citation:
   type: software

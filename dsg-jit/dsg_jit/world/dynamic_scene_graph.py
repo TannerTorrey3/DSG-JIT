@@ -1,5 +1,5 @@
 # Copyright (c) 2025 Tanner Kocher
-# This file is part of DSG-JIT, released under the Business Source License 1.1
+# This file is part of DSG-JIT, released under the Business Source License 1.1.
 
 """Dynamic scene-graph utilities built on top of :mod:`world.scene_graph`.
 
