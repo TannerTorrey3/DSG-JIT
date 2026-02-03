@@ -66,6 +66,7 @@ import jax.numpy as jnp
 
 from dsg_jit.core.types import NodeId
 from dsg_jit.world.model import WorldModel
+from dsg_jit.telemetry import telemetry_span, bucket_count
 from dsg_jit.slam.measurements import (
     prior_residual,
     odom_se3_residual,
@@ -200,6 +201,7 @@ class SceneGraphWorld:
         self.wm.register_residual("voxel_point_obs", voxel_point_observation_residual)
         self.wm.register_residual("range", range_residual)
 
+    @telemetry_span(component="scene_graph", op="enable_active_template")
     def enable_active_template(self, template) -> None:
         """Enable fixed-capacity active-template mode.
 
@@ -276,9 +278,11 @@ class SceneGraphWorld:
         self._factor_memory[fid] = rec
         return fid
 
+    @telemetry_span(component="scene_graph", op="get_factor_memory")
     def get_factor_memory(self):
         return self._factor_memory
 
+    @telemetry_span(component="scene_graph", op="deactivate_factors_for_vars")
     def deactivate_factors_for_vars(self, var_ids: Sequence[int]):
         vid_set = set(int(v) for v in var_ids)
         for rec in self._factor_memory.values():
@@ -349,6 +353,7 @@ class SceneGraphWorld:
         )
     # --- Variable helpers ---
 
+    @telemetry_span(component="scene_graph", op="add_pose_se3")
     def add_pose_se3(self, value: jnp.ndarray) -> int:
         """
         Add a generic SE(3) pose variable.
@@ -363,6 +368,7 @@ class SceneGraphWorld:
         self._remember_node(nid, "pose_se3", jnp.asarray(value))
         return nid
 
+    @telemetry_span(component="scene_graph", op="add_place1d")
     def add_place1d(self, x: float) -> int:
         """
         Add a 1D place variable.
@@ -378,6 +384,7 @@ class SceneGraphWorld:
         self._remember_node(nid, "place1d", value)
         return nid
 
+    @telemetry_span(component="scene_graph", op="add_room1d")
     def add_room1d(self, x: jnp.ndarray) -> int:
         """
         Add a 1D 'room' variable (just a scalar, wrapped as a length-1 vector).
@@ -404,6 +411,7 @@ class SceneGraphWorld:
         self.room_nodes[name] = nid
         return nid
 
+    @telemetry_span(component="scene_graph", op="add_place3d")
     def add_place3d(self, name: str, xyz) -> int:
         """
         Add a 3D place node (R^3) with a human-readable name.
@@ -423,6 +431,7 @@ class SceneGraphWorld:
         self.place_nodes[name] = nid_int
         return nid_int
 
+    @telemetry_span(component="scene_graph", op="add_room")
     def add_room(self, name: str, center) -> int:
         """
         Add a 3D room node (R^3 center) with a semantic name.
@@ -444,6 +453,7 @@ class SceneGraphWorld:
         self.room_nodes[name] = nid_int
         return nid_int
     
+    @telemetry_span(component="scene_graph", op="add_object3d")
     def add_object3d(self, xyz) -> int:
         """
         Add an object with 3D position (R^3).
@@ -460,6 +470,7 @@ class SceneGraphWorld:
         self._remember_node(nid_int, "object3d", xyz)
         return nid_int
 
+    @telemetry_span(component="scene_graph", op="add_named_object3d")
     def add_named_object3d(self, name: str, xyz) -> int:
         """
         Add a 3D object and register it under a semantic name.
@@ -472,6 +483,7 @@ class SceneGraphWorld:
         self.object_nodes[name] = obj_id
         return obj_id
     
+    @telemetry_span(component="scene_graph", op="add_agent_pose_se3")
     def add_agent_pose_se3(self, agent: str, t: int, value: jnp.ndarray) -> int:
         """
         Add an SE(3) pose for a given agent at a specific timestep.
@@ -491,6 +503,7 @@ class SceneGraphWorld:
 
     # --- Factor helpers ---
 
+    @telemetry_span(component="scene_graph", op="add_prior_pose_identity")
     def add_prior_pose_identity(self, pose_id: int) -> int:
         sigma = self.noise.prior_pose_sigma
         weight = sigma_to_weight(sigma)  # scalar
@@ -516,6 +529,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="add_odom_se3_additive")
     def add_odom_se3_additive(
         self,
         pose_i: int,
@@ -563,6 +577,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="add_odom_se3_geodesic")
     def add_odom_se3_geodesic(
         self,
         pose_i: int,
@@ -612,6 +627,7 @@ class SceneGraphWorld:
         )
         return int(fid)
     
+    @telemetry_span(component="scene_graph", op="add_range_measurement")
     def add_range_measurement(
         self,
         pose_nid: int,
@@ -664,6 +680,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="add_agent_range_measurement")
     def add_agent_range_measurement(
         self,
         agent: str,
@@ -706,6 +723,7 @@ class SceneGraphWorld:
             weight=weight,
         )
 
+    @telemetry_span(component="scene_graph", op="add_agent_pose_place_attachment", safe_args={"coord_index"})
     def add_agent_pose_place_attachment(
         self,
         agent: str,
@@ -742,6 +760,7 @@ class SceneGraphWorld:
             sigma=sigma,
         )
 
+    @telemetry_span(component="scene_graph", op="add_agent_temporal_smoothness")
     def add_agent_temporal_smoothness(
         self,
         agent: str,
@@ -779,6 +798,7 @@ class SceneGraphWorld:
             sigma=sigma,
         )
 
+    @telemetry_span(component="scene_graph", op="add_agent_pose_landmark_relative")
     def add_agent_pose_landmark_relative(
         self,
         agent: str,
@@ -816,6 +836,7 @@ class SceneGraphWorld:
             sigma=sigma,
         )
 
+    @telemetry_span(component="scene_graph", op="add_agent_pose_landmark_bearing")
     def add_agent_pose_landmark_bearing(
         self,
         agent: str,
@@ -852,6 +873,7 @@ class SceneGraphWorld:
             sigma=sigma,
         )
 
+    @telemetry_span(component="scene_graph", op="add_agent_pose_voxel_point")
     def add_agent_pose_voxel_point(
         self,
         agent: str,
@@ -888,6 +910,7 @@ class SceneGraphWorld:
             sigma=sigma,
         )
 
+    @telemetry_span(component="scene_graph", op="attach_pose_to_place_x")
     def attach_pose_to_place_x(self, pose_id: int, place_id: int) -> int:
         """
         Attach a pose to a 1D place along the x-coordinate.
@@ -928,6 +951,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="attach_pose_to_room_x")
     def attach_pose_to_room_x(self, pose_id: int, room_id: int) -> int:
         """
         Attach a pose to a 1D room along the x-coordinate.
@@ -969,6 +993,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="add_place_attachment", safe_args={"coord_index"})
     def add_place_attachment(
         self,
         pose_id: int,
@@ -1030,6 +1055,7 @@ class SceneGraphWorld:
         )
         return int(fid)
     
+    @telemetry_span(component="scene_graph", op="add_room_place_edge")
     def add_room_place_edge(self, room_id: int, place_id: int) -> None:
         """
         Register a semantic edge between a room node and a place node.
@@ -1052,6 +1078,7 @@ class SceneGraphWorld:
             relation="room-place",
         )
 
+    @telemetry_span(component="scene_graph", op="add_object_room_edge")
     def add_object_room_edge(self, object_id: int, room_id: int) -> None:
         """
         Register a semantic edge between an object node and a room node.
@@ -1074,6 +1101,7 @@ class SceneGraphWorld:
             relation="object-room",
         )
     
+    @telemetry_span(component="scene_graph", op="attach_object_to_pose")
     def attach_object_to_pose(
         self,
         pose_id: int,
@@ -1123,6 +1151,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="get_object3d")
     def get_object3d(self, obj_id: int) -> jnp.ndarray:
         """
         Return the current 3D position of an object.
@@ -1135,6 +1164,7 @@ class SceneGraphWorld:
             raise KeyError(f"No object registered in SceneGraph memory for id={oid}")
         return self._memory[oid].value
     
+    @telemetry_span(component="scene_graph", op="add_temporal_smoothness")
     def add_temporal_smoothness(
         self,
         pose_id_t: int,
@@ -1173,6 +1203,7 @@ class SceneGraphWorld:
         )
         return int(fid)
     
+    @telemetry_span(component="scene_graph", op="add_pose_landmark_relative")
     def add_pose_landmark_relative(
         self,
         pose_id: int,
@@ -1219,9 +1250,10 @@ class SceneGraphWorld:
             params,
         )
         return int(fid)
-    
+
     # ---- Landmark helpers ----
 
+    @telemetry_span(component="scene_graph", op="add_landmark3d")
     def add_landmark3d(self, xyz) -> int:
         """
         Add a 3D landmark node (R^3).
@@ -1237,53 +1269,7 @@ class SceneGraphWorld:
         self._remember_node(nid_int, "landmark3d", value)
         return nid_int
 
-    def add_pose_landmark_relative(
-        self,
-        pose_id: int,
-        landmark_id: int,
-        measurement,
-        sigma: float | None = None,
-    ) -> int:
-        """
-        Add a relative measurement between a pose and a 3D landmark.
-
-        The measurement is expressed in the pose frame.
-
-        :param pose_id: Node id of the SE(3) pose variable.
-        :param landmark_id: Node id of the 3D landmark variable.
-        :param measurement: Iterable of length 3 giving the expected landmark
-            position in the pose frame.
-        :param sigma: Optional noise standard deviation. If ``None``,
-            :attr:`SceneGraphNoiseConfig.pose_landmark_sigma` is used.
-        :return: Integer factor id of the created relative landmark constraint.
-        """
-        meas = jnp.array(measurement, dtype=jnp.float32).reshape(3,)
-
-        if sigma is None:
-            sigma = self.noise.pose_landmark_sigma
-        weight = sigma_to_weight(sigma)
-
-        params = {
-            "measurement": meas,
-            "weight": weight,
-        }
-        remembered = self._remember_factor(
-            f_type="pose_landmark_relative",
-            var_ids=(pose_id, landmark_id),
-            params=params,
-            relation="factor:pose_landmark_relative",
-        )
-        if self._active_template_enabled:
-            self._assign_factor_slot("pose_landmark_relative", (pose_id, landmark_id), params, active=True)
-            return int(remembered)
-
-        fid = self.wm.add_factor(
-            "pose_landmark_relative",
-            (pose_id, landmark_id),
-            params,
-        )
-        return int(fid)
-
+    @telemetry_span(component="scene_graph", op="add_pose_landmark_bearing")
     def add_pose_landmark_bearing(
         self,
         pose_id: int,
@@ -1330,8 +1316,9 @@ class SceneGraphWorld:
         )
         return int(fid)
     
-        # ---- Voxel helpers ----
+    # ---- Voxel helpers ----
 
+    @telemetry_span(component="scene_graph", op="add_voxel_cell")
     def add_voxel_cell(self, xyz) -> int:
         """
         Add a voxel cell center in world coordinates (R^3).
@@ -1347,6 +1334,7 @@ class SceneGraphWorld:
         self._remember_node(nid_int, "voxel_cell", value)
         return nid_int
 
+    @telemetry_span(component="scene_graph", op="add_pose_voxel_point")
     def add_pose_voxel_point(
         self,
         pose_id: int,
@@ -1392,6 +1380,7 @@ class SceneGraphWorld:
         )
         return int(fid)
 
+    @telemetry_span(component="scene_graph", op="add_voxel_smoothness")
     def add_voxel_smoothness(
         self,
         voxel_i_id: int,
@@ -1439,6 +1428,7 @@ class SceneGraphWorld:
     
     # ---- Voxel observation helpers ----
 
+    @telemetry_span(component="scene_graph", op="add_voxel_point_observation")
     def add_voxel_point_observation(
         self,
         voxel_id: int,
@@ -1484,6 +1474,16 @@ class SceneGraphWorld:
 
     # --- Optimization / access ---
 
+    @telemetry_span(
+        component="scene_graph",
+        op="optimize_active_batch",
+        safe_args={"iters"},
+        shape_fn=lambda self, **kw: {
+            "graph.nodes_bucket": bucket_count(len(self.wm.fg.variables)),
+            "graph.edges_bucket": bucket_count(len(self.wm.fg.factors)),
+            "iterations_bucket": bucket_count(kw.get("iters", 5)),
+        }
+    )
     def optimize_active_batch(self, iters: int = 5, damping: float = 1e-3) -> None:
         """Optimize only the currently active bounded FG (active-template mode).
         
@@ -1508,6 +1508,16 @@ class SceneGraphWorld:
             if nid_int in self._memory:
                 self._memory[nid_int].value = var.value
 
+    @telemetry_span(
+        component="scene_graph",
+        op="optimize_global_offline",
+        safe_args={"iters"},
+        shape_fn=lambda self, **kw: {
+            "graph.nodes_bucket": bucket_count(len(self._memory)),
+            "graph.edges_bucket": bucket_count(len(self._factor_memory)),
+            "iterations_bucket": bucket_count(kw.get("iters", 40)),
+        }
+    )
     def optimize_global_offline(self, iters: int = 40, damping: float = 1e-3) -> None:
         """Full batch optimization over the entire persistent SceneGraph memory.
         
@@ -1549,6 +1559,16 @@ class SceneGraphWorld:
                 if orig in self._memory:
                     self._memory[orig].value = var.value
 
+    @telemetry_span(
+        component="scene_graph",
+        op="optimize",
+        safe_args={"method", "iters"},
+        shape_fn=lambda self, **kw: {
+            "graph.nodes_bucket": bucket_count(len(self.wm.fg.variables)),
+            "graph.edges_bucket": bucket_count(len(self.wm.fg.factors)),
+            "iterations_bucket": bucket_count(kw.get("iters", 40)),
+        }
+    )
     def optimize(self, method: str = "gn", iters: int = 40) -> None:
         """
         Run nonlinear optimization over the current factor graph.
@@ -1566,6 +1586,7 @@ class SceneGraphWorld:
             if nid_int in self._memory:
                 self._memory[nid_int].value = var.value
 
+    @telemetry_span(component="scene_graph", op="get_pose")
     def get_pose(self, pose_id: int) -> jnp.ndarray:
         """
         Return the current SE(3) pose value.
@@ -1578,6 +1599,7 @@ class SceneGraphWorld:
             raise KeyError(f"No pose registered in SceneGraph memory for id={pid}")
         return self._memory[pid].value
 
+    @telemetry_span(component="scene_graph", op="get_place")
     def get_place(self, place_id: int) -> float:
         """
         Return the current scalar value of a 1D place.
@@ -1590,6 +1612,7 @@ class SceneGraphWorld:
             raise KeyError(f"No place registered in SceneGraph memory for id={pid}")
         return float(self._memory[pid].value[0])
 
+    @telemetry_span(component="scene_graph", op="dump_state")
     def dump_state(self) -> Dict[int, jnp.ndarray]:
         """
         Return a snapshot of all variable values in the world.
@@ -1598,6 +1621,7 @@ class SceneGraphWorld:
         """
         return {nid: state.value for nid, state in self._memory.items()}
     
+    @telemetry_span(component="scene_graph", op="visualize_web")
     def visualize_web(
         self,
         host: str = "127.0.0.1",

@@ -64,7 +64,10 @@ from typing import Dict
 
 import jax.numpy as jnp
 
+from dsg_jit.telemetry import telemetry_span
 
+
+@telemetry_span(component="scene_graph", op="room_centroid_residual")
 def room_centroid_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
     Compute a residual enforcing that a room's position matches the centroid of its member places.
@@ -112,6 +115,8 @@ def room_centroid_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jn
 
     return room - centroid
 
+
+@telemetry_span(component="scene_graph", op="pose_place_attachment_residual")
 def pose_place_attachment_residual(x: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """
     Residual tying a place's position to a pose's translation component.
