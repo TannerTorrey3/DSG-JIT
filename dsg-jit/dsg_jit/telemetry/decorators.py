@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, Optional, Set, TypeVar, Union
 
 from dsg_jit.telemetry.config import get_telemetry_config
 from dsg_jit.telemetry.identity import get_install_id, get_session_id
+from dsg_jit.telemetry.client import _get_client, reset_client
 from dsg_jit.telemetry.sanitize import (
     bucket_count,
     get_error_code,
@@ -39,83 +40,7 @@ from dsg_jit.telemetry.sanitize import (
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-# Lazy-initialized client reference
-_client: Optional["TelemetryClient"] = None
 _session_started: bool = False
-
-
-class TelemetryClient:
-    """Minimal telemetry client for collecting and exporting spans.
-
-    This is a lightweight implementation that collects spans in memory
-    and batches them for export. In v1, export is best-effort and
-    failures are silently ignored.
-    """
-
-    def __init__(self) -> None:
-        self._spans: list[Dict[str, Any]] = []
-        self._enabled: bool = True
-        self._export_failed_count: int = 0
-        self._max_export_failures: int = 5
-
-    def record_span(self, span: Dict[str, Any]) -> None:
-        """Record a span for later export.
-
-        :param span: The span data dictionary.
-        """
-        if not self._enabled:
-            return
-
-        config = get_telemetry_config()
-        if not config.enabled:
-            return
-
-        # Apply sampling for success spans (errors always recorded per spec)
-        attrs = span.get("attributes", {})
-        is_error = attrs.get("dsgjit.status") == "error"
-        if not is_error and not config.should_sample_success():
-            return
-
-        self._spans.append(span)
-
-        # Batch export when we have enough spans
-        if len(self._spans) >= 128:
-            self._try_export()
-
-    def _try_export(self) -> None:
-        """Attempt to export accumulated spans.
-
-        Failures are silently ignored per spec - telemetry should
-        never crash user code.
-        """
-        if not self._spans:
-            return
-
-        config = get_telemetry_config()
-        if not config.endpoint:
-            self._spans.clear()
-            return
-
-        # In v1, we just clear the spans
-        # Full OTLP export will be implemented by Team A
-        if config.debug:
-            import sys
-            for span in self._spans:
-                print(f"[TELEMETRY DEBUG] {span}", file=sys.stderr)
-
-        self._spans.clear()
-
-    def disable(self) -> None:
-        """Disable the client after repeated failures."""
-        self._enabled = False
-
-
-def _get_client() -> TelemetryClient:
-    """Get or create the singleton telemetry client."""
-    global _client
-    if _client is None:
-        _client = TelemetryClient()
-    return _client
 
 
 def _emit_session_start(entry_component: str) -> None:
@@ -313,6 +238,6 @@ def telemetry_span(
 
 def reset_telemetry_state() -> None:
     """Reset telemetry state (mainly for testing)."""
-    global _client, _session_started
-    _client = None
+    global _session_started
+    reset_client()
     _session_started = False
