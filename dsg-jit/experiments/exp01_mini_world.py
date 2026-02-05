@@ -5,6 +5,7 @@ import jax.numpy as jnp
 from dsg_jit.world.model import WorldModel
 from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
 from dsg_jit.scene_graph.relations import room_centroid_residual
+from dsg_jit.telemetry import telemetry_span
 
 
 def setup_mini_world() -> WorldModel:
@@ -114,6 +115,7 @@ def print_world_state(wm: WorldModel, pose_ids, place_ids, room_id, label: str):
     print(f"room: x={float(rv[0]):.3f}")
 
 
+@telemetry_span(component="experiment", op="exp01_mini_world")
 def main():
     wm, pose_ids, place_ids, room_id = setup_mini_world()
 

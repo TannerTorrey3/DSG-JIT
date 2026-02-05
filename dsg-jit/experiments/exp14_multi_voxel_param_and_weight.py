@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from dsg_jit.world.model import WorldModel
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.slam.measurements import (
+from dsg_jit.telemetry import telemetry_span
     prior_residual,
     voxel_point_observation_residual,  # registered as "voxel_point_obs"
 )
@@ -168,6 +169,7 @@ def build_residual_param_and_weight(wm):
     return residual, index
 
 
+@telemetry_span(component="experiment", op="exp14_multi_voxel_param_and_weight")
 def main():
     print("=== 4.c.2 – Joint learning of voxel obs params and type weight (exp14) ===\n")
 

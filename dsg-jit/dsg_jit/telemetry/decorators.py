@@ -52,26 +52,32 @@ def _emit_session_start(entry_component: str) -> None:
 
     config = get_telemetry_config()
 
+    attrs = {
+        "ix.install_id": get_install_id(),
+        "ix.session_id": get_session_id(),
+        "dsgjit.version": _get_version(),
+        "runtime.python": platform.python_version(),
+        "runtime.os": platform.system().lower(),
+        "runtime.arch": platform.machine(),
+        "dsgjit.component": entry_component,
+        "dsgjit.op": "session.start",
+        "dsgjit.status": "ok",
+        "dsgjit.backend": _get_backend(),
+        "dsgjit.backend_available": _get_backend_available(),
+        "dsgjit.telemetry_level": config.level,
+        "dsgjit.entry_component": entry_component,
+        "dsgjit.telemetry_enabled": config.enabled,
+    }
+
+    # Add custom tag if set (e.g., "exp01", "benchmark_run_1")
+    if config.tag:
+        attrs["dsgjit.tag"] = config.tag
+
     span = {
         "name": "dsgjit.session.start",
         "timestamp": time.time(),
         "duration_ms": 0,
-        "attributes": {
-            "ix.install_id": get_install_id(),
-            "ix.session_id": get_session_id(),
-            "dsgjit.version": _get_version(),
-            "runtime.python": platform.python_version(),
-            "runtime.os": platform.system().lower(),
-            "runtime.arch": platform.machine(),
-            "dsgjit.component": entry_component,
-            "dsgjit.op": "session.start",
-            "dsgjit.status": "ok",
-            "dsgjit.backend": _get_backend(),
-            "dsgjit.backend_available": _get_backend_available(),
-            "dsgjit.telemetry_level": config.level,
-            "dsgjit.entry_component": entry_component,
-            "dsgjit.telemetry_enabled": config.enabled,
-        },
+        "attributes": attrs,
     }
     _get_client().record_span(span)
 
@@ -177,6 +183,10 @@ def telemetry_span(
                 "dsgjit.backend": _get_backend(),
                 "dsgjit.telemetry_level": config.level,
             }
+
+            # Add custom tag if set (e.g., "exp01", "benchmark_run_1")
+            if config.tag:
+                attributes["dsgjit.tag"] = config.tag
 
             # Extract safe args if specified
             if safe_args:

@@ -20,7 +20,7 @@ The telemetry pipeline has two sides:
       │                                   ↑
       ▼                               configured via
   BatchSpanProcessor ← exporter.py    DSGJIT_TELEMETRY_ENDPOINT
-      │                               (default: https://telemetry.ix-infra.com)
+      │                               (default: https://telemetry.ix-infra.com/v1/traces)
       ▼
   OTLPSpanExporter  ← exporter.py
       │

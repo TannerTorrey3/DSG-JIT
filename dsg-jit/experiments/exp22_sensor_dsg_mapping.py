@@ -38,6 +38,7 @@ from dsg_jit.sensors.lidar import LidarMeasurement
 from dsg_jit.sensors.imu import IMUMeasurement
 from dsg_jit.sensors.streams import FunctionStream
 from dsg_jit.sensors.conversion import (
+from dsg_jit.telemetry import telemetry_span
     raw_sample_to_camera_measurement,
     raw_sample_to_lidar_measurement,
     raw_sample_to_imu_measurement,
@@ -254,6 +255,7 @@ def add_range_factors_from_lidar(
 # Main experiment
 # -----------------------------------------------------------------------------
 
+@telemetry_span(component="experiment", op="exp22_sensor_dsg_mapping")
 def main():
     # -------------------------------------------------------------------------
     # 1) Build world + scene graph

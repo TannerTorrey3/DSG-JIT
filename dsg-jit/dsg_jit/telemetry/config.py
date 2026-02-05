@@ -9,6 +9,7 @@ Environment Variables:
     DSGJIT_TELEMETRY_ENDPOINT: URL (default https://telemetry.ix-infra.com)
     DSGJIT_TELEMETRY_SAMPLE_RATE: 0.0-1.0 (default 0.20) - Success span sampling
     DSGJIT_TELEMETRY_DEBUG: 1|0 (default 0) - Enable debug logging
+    DSGJIT_TELEMETRY_TAG: string (default "") - Custom tag for experiment/run identification
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ class TelemetryConfig:
     endpoint: str
     sample_rate: float
     debug: bool
+    tag: str  # Custom tag for experiment/run identification
 
     def should_sample_success(self) -> bool:
         """Check if success spans should be sampled at current rate."""
@@ -62,7 +64,7 @@ def get_telemetry_config() -> TelemetryConfig:
 
     endpoint = os.environ.get(
         "DSGJIT_TELEMETRY_ENDPOINT",
-        "https://telemetry.ix-infra.com"
+        "https://telemetry.ix-infra.com/v1/traces"
     )
 
     sample_rate_str = os.environ.get("DSGJIT_TELEMETRY_SAMPLE_RATE", "0.20")
@@ -75,12 +77,20 @@ def get_telemetry_config() -> TelemetryConfig:
     debug_str = os.environ.get("DSGJIT_TELEMETRY_DEBUG", "0")
     debug = debug_str.lower() in ("1", "true", "yes", "on")
 
+    # Custom tag for experiment/run identification (e.g., "exp01", "benchmark_run_1")
+    tag = os.environ.get("DSGJIT_TELEMETRY_TAG", "")
+    # Sanitize tag: max 64 chars, alphanumeric + underscore + hyphen only
+    if tag:
+        import re
+        tag = re.sub(r'[^a-zA-Z0-9_\-]', '_', tag)[:64]
+
     _config = TelemetryConfig(
         enabled=enabled,
         level=level,
         endpoint=endpoint,
         sample_rate=sample_rate,
         debug=debug,
+        tag=tag,
     )
     return _config
 

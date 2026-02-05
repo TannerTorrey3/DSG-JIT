@@ -4,6 +4,7 @@ import jax.numpy as jnp
 from dsg_jit.world.scene_graph import SceneGraphWorld
 from dsg_jit.world.training import DSGTrainer, InnerGDConfig
 from dsg_jit.slam.measurements import prior_residual, odom_se3_residual
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_scenegraph():
@@ -47,6 +48,7 @@ def build_scenegraph():
     return sg, p0, p1, p2
 
 
+@telemetry_span(component="experiment", op="exp12_scenegraph_learnable_type_weights")
 def main():
     print("=== SceneGraph Learnable Type Weight Experiment (#12, Trainer) ===\n")
 

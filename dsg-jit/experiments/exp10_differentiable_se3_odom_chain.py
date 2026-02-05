@@ -9,6 +9,7 @@ from dsg_jit.slam.measurements import (
     odom_se3_residual,  # additive SE3 residual (no geodesic manifold here)
 )
 from dsg_jit.optimization.solvers import GDConfig, gradient_descent  # first-order solver
+from dsg_jit.telemetry import telemetry_span
 
 
 def _to_slice(idx):
@@ -162,6 +163,7 @@ def build_se3_chain_with_param_odom():
     )
 
 
+@telemetry_span(component="experiment", op="exp10_differentiable_se3_odom_chain")
 def main():
     (
         wm,

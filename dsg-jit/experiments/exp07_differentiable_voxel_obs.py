@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 
 from dsg_jit.world.model import WorldModel
+from dsg_jit.telemetry import telemetry_span
 from dsg_jit.slam.measurements import (
     prior_residual,
     voxel_point_observation_residual,
@@ -79,6 +80,7 @@ def build_single_voxel_graph():
     return wm, x_init, residual_fn, block_slices, manifold_types, voxel_slice, target
 
 
+@telemetry_span(component="experiment", op="exp07_differentiable_voxel_obs")
 def main():
     wm, x_init, residual_fn, block_slices, manifold_types, voxel_slice, target = (
         build_single_voxel_graph()

@@ -4,6 +4,7 @@ import jax.numpy as jnp
 from dsg_jit.world.model import WorldModel
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.slam.measurements import (
+from dsg_jit.telemetry import telemetry_span
     prior_residual,
     odom_se3_residual,                 # additive SE3 odom residual (R^6)
     voxel_point_observation_residual,  # your voxel_point_obs residual name
@@ -223,6 +224,7 @@ def solve_inner(residual_param, x0: jnp.ndarray, theta, gd_cfg: GDConfig):
 # 4. Outer supervised loss and joint learning of theta
 # -------------------------------------------------------------------
 
+@telemetry_span(component="experiment", op="exp15_hybrid_se3_voxel_joint_learning")
 def main():
     print("=== 4.d – Hybrid SE3 + Voxel joint param learning (exp15) ===\n")
 

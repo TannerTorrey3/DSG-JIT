@@ -62,6 +62,22 @@ shown in parentheses.
 | `DSGJIT_TELEMETRY_ENDPOINT` | URL | `https://telemetry.ix-infra.com` | Where spans are POSTed; set to empty string to disable export |
 | `DSGJIT_TELEMETRY_SAMPLE_RATE` | `0.0`–`1.0` | `0.20` | Fraction of *success* spans kept (errors are always kept) |
 | `DSGJIT_TELEMETRY_DEBUG` | `1` / `0` | `0` | Print every span to stderr before export |
+| `DSGJIT_TELEMETRY_TAG` | string | (empty) | Custom tag added to all spans (e.g., experiment name, run ID) |
+
+### Tag your experiment runs
+
+Use the tag to identify specific experiments or benchmark runs:
+
+```bash
+# Running exp01
+DSGJIT_TELEMETRY_TAG=exp01_mini_world python experiments/exp01_mini_world.py
+
+# Running a benchmark
+DSGJIT_TELEMETRY_TAG=benchmark_se3_v2 python benchmarks/bench_gauss_newton_se3.py
+```
+
+The tag appears as `dsgjit.tag` in every span, making it easy to filter
+and group telemetry data by experiment.
 
 ### Disable telemetry entirely
 
@@ -78,21 +94,109 @@ made.
 export DSGJIT_TELEMETRY_ENDPOINT=http://localhost:4318/v1/traces
 ```
 
-Spans will be POSTed as a JSON payload to that URL.  The expected body
-shape is:
+---
+
+## Transport Details
+
+### Protocol
+
+Telemetry is sent via **OTLP/HTTP** (OpenTelemetry Protocol over HTTP):
+
+- **Endpoint:** `POST https://telemetry.ix-infra.com/v1/traces`
+- **Content-Type:** `application/json` (OTLP JSON encoding)
+- **Max payload:** 64 KB
+- **Max spans per request:** 200
+
+### Required Headers
+
+Every request includes these headers for rate limiting and routing:
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `X-Ix-Install-Id` | UUIDv4 | Persistent anonymous install ID |
+| `X-Ix-Session-Id` | UUIDv4 | Per-process session ID |
+| `X-Ix-Pkg-Version` | semver | DSG-JIT version (e.g., `0.7.1`) |
+| `X-Ix-Telemetry-Level` | `minimal`/`standard`/`debug` | Current telemetry level |
+
+### Payload Format (OTLP JSON)
 
 ```json
 {
-  "spans": [
-    {
-      "name": "dsgjit.<component>.<op>",
-      "timestamp": 1706000000.123,
-      "duration_ms": 42.7,
-      "attributes": { ... }
-    }
-  ]
+  "resourceSpans": [{
+    "resource": {
+      "attributes": [
+        {"key": "service.name", "value": {"stringValue": "dsg-jit"}}
+      ]
+    },
+    "scopeSpans": [{
+      "scope": {"name": "dsg_jit.telemetry"},
+      "spans": [
+        {
+          "name": "dsgjit.world.optimize",
+          "startTimeUnixNano": "1706000000123000000",
+          "endTimeUnixNano": "1706000000165700000",
+          "attributes": [
+            {"key": "dsgjit.component", "value": {"stringValue": "world"}},
+            {"key": "dsgjit.op", "value": {"stringValue": "optimize"}},
+            {"key": "dsgjit.status", "value": {"stringValue": "ok"}}
+          ]
+        }
+      ]
+    }]
+  }]
 }
 ```
+
+---
+
+## Span Attributes
+
+### Common Attributes (on every span)
+
+| Attribute | Type | Example | Description |
+|-----------|------|---------|-------------|
+| `ix.install_id` | string | `a1b2c3d4-...` | Persistent anonymous install UUID |
+| `ix.session_id` | string | `e5f6g7h8-...` | Per-process session UUID |
+| `dsgjit.version` | string | `0.7.1` | Package version |
+| `runtime.python` | string | `3.11.7` | Python version |
+| `runtime.os` | string | `linux` | Operating system |
+| `runtime.arch` | string | `x86_64` | CPU architecture |
+| `dsgjit.component` | string | `world` | Component name |
+| `dsgjit.op` | string | `optimize` | Operation name |
+| `dsgjit.status` | string | `ok`/`error` | Operation status |
+| `dsgjit.backend` | string | `cpu`/`gpu`/`tpu` | Compute backend |
+| `dsgjit.telemetry_level` | string | `standard` | Current level |
+
+### Error Attributes (only on error spans)
+
+| Attribute | Type | Example | Description |
+|-----------|------|---------|-------------|
+| `error.type` | string | `ValueError` | Exception class name (never message) |
+| `error.code` | string | `invalid_argument` | Error category code |
+| `error.component` | string | `world` | Component where error occurred |
+| `error.op` | string | `optimize` | Operation where error occurred |
+
+### Error Code Categories
+
+| Code | Triggered By |
+|------|--------------|
+| `invalid_argument` | ValueError, TypeError, KeyError, IndexError |
+| `shape_mismatch` | ShapeError |
+| `not_initialized` | NotImplementedError |
+| `convergence_failure` | ConvergenceError |
+| `numerical_issue` | FloatingPointError, OverflowError, ZeroDivisionError |
+| `backend_error` | RuntimeError |
+| `io_error` | IOError, OSError, FileNotFoundError |
+| `unknown_error` | Any other exception |
+
+### Bucketed Shape Attributes (optional)
+
+| Attribute | Buckets |
+|-----------|---------|
+| `dsgjit.graph.nodes_bucket` | `0`, `1-9`, `10-99`, `100-999`, `1k-9k`, `10k-99k`, `100k-999k`, `1M+` |
+| `dsgjit.graph.edges_bucket` | (same buckets) |
+| `dsgjit.iterations_bucket` | (same buckets) |
+| `dsgjit.window.size_bucket` | (same buckets) |
 
 ---
 

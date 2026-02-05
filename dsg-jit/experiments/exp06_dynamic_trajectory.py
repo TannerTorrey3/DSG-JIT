@@ -2,8 +2,10 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.telemetry import telemetry_span
 
 
+@telemetry_span(component="experiment", op="exp06_dynamic_trajectory")
 def run_experiment():
     sg = SceneGraphWorld()
     sg.noise.odom_se3_sigma = 0.05    # strong odom

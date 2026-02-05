@@ -5,6 +5,7 @@ from dsg_jit.world.model import WorldModel
 
 from dsg_jit.optimization.solvers import gradient_descent, GDConfig
 from dsg_jit.slam.measurements import (
+from dsg_jit.telemetry import telemetry_span
     prior_residual,
     odom_se3_residual,                  # additive SE3 odom residual
     voxel_point_observation_residual,   # voxel_point_obs residual
@@ -188,6 +189,7 @@ def build_param_residual(wm: WorldModel):
     return residual, index, n_odom, n_obs
 
 
+@telemetry_span(component="experiment", op="exp16_hero_hybrid_dsg")
 def main():
     print("=== 4.d – HERO Hybrid SE3 + Voxel joint param learning (exp16, GD inner) ===\n")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_world() -> SceneGraphWorld:
@@ -40,6 +41,7 @@ def build_world() -> SceneGraphWorld:
     return sg
 
 
+@telemetry_span(component="experiment", op="exp05_scene_graph_objects_jit")
 def run_experiment():
     sg = build_world()
 

@@ -38,6 +38,7 @@ from dsg_jit.sensors.camera import CameraMeasurement
 from dsg_jit.sensors.lidar import LidarMeasurement
 from dsg_jit.sensors.imu import IMUMeasurement
 from dsg_jit.sensors.conversion import raw_sample_to_camera_measurement, raw_sample_to_imu_measurement, raw_sample_to_lidar_measurement
+from dsg_jit.telemetry import telemetry_span
 
 
 # ---------------------------------------------------------------------------

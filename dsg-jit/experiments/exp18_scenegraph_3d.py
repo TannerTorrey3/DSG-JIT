@@ -29,6 +29,7 @@ from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.slam.measurements import prior_residual, odom_se3_geodesic_residual
 from dsg_jit.world.visualization import (
+from dsg_jit.telemetry import telemetry_span
     VisNode,
     VisEdge,
     export_factor_graph_for_vis,
@@ -371,6 +372,7 @@ def build_semantic_scene(nodes_fg: List[VisNode]) -> Tuple[List[VisNode], List[V
 # ---------------------------------------------------------------------------
 
 
+@telemetry_span(component="experiment", op="exp18_scenegraph_3d")
 def main():
     # 1) Build and solve pose chain
     wm = build_pose_chain_factor_graph(num_poses=5)

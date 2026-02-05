@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from dsg_jit.world.model import WorldModel
 from dsg_jit.optimization.solvers import gauss_newton, GNConfig
 from dsg_jit.slam.measurements import (
+from dsg_jit.telemetry import telemetry_span
     prior_residual,
     voxel_smoothness_residual,
     voxel_point_observation_residual,
@@ -148,6 +149,7 @@ def solve_inner_voxel(wm: WorldModel, theta: jnp.ndarray) -> jnp.ndarray:
     return x_opt
 
 
+@telemetry_span(component="experiment", op="exp13_trainer_voxel_point_multi")
 def main():
     print("=== 4.c.1 – Trainer-style multi-voxel obs learning ===\n")
 

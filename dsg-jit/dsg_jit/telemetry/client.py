@@ -10,6 +10,7 @@ BatchSpanProcessor / OTLPSpanExporter defined in exporter.py.
 
 from __future__ import annotations
 
+import atexit
 from typing import Any, Dict, Optional
 
 from dsg_jit.telemetry.config import get_telemetry_config
@@ -94,3 +95,15 @@ def reset_client() -> None:
     if _client is not None:
         _client.shutdown()
     _client = None
+
+
+def _shutdown_on_exit() -> None:
+    """Flush telemetry on process exit."""
+    global _client
+    if _client is not None:
+        _client.shutdown()
+        _client = None
+
+
+# Register atexit handler to flush telemetry when the process exits
+atexit.register(_shutdown_on_exit)

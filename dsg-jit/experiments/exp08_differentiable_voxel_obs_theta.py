@@ -11,6 +11,7 @@ from dsg_jit.slam.measurements import (
 )
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_single_voxel_graph_with_param_obs():
@@ -118,6 +119,7 @@ def build_single_voxel_graph_with_param_obs():
     )
 
 
+@telemetry_span(component="experiment", op="exp08_differentiable_voxel_obs_theta")
 def main():
     (
         wm,

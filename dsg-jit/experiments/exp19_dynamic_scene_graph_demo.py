@@ -24,6 +24,7 @@ from dsg_jit.world.dynamic_scene_graph import DynamicSceneGraph
 from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.world.visualization import plot_scenegraph_3d, plot_dynamic_trajectories_3d
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_scene_graph():
@@ -111,6 +112,7 @@ def build_scene_graph():
     return sg, dsg, objects
 
 
+@telemetry_span(component="experiment", op="exp19_dynamic_scene_graph_demo")
 def main():
     sg, dsg, objects = build_scene_graph()
 

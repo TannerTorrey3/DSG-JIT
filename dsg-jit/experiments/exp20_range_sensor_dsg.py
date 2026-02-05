@@ -5,6 +5,7 @@ from dsg_jit.world.dynamic_scene_graph import DynamicSceneGraph
 from dsg_jit.world.visualization import plot_factor_graph_3d
 from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
 from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_range_dsg(num_steps: int = 5):
@@ -102,6 +103,7 @@ def optimize_world(sg: SceneGraphWorld):
     return values
 
 
+@telemetry_span(component="experiment", op="exp20_range_sensor_dsg")
 def main():
     sg, dsg, placeA = build_range_dsg(num_steps=6)
     values = optimize_world(sg)

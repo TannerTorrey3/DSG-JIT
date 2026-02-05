@@ -2,6 +2,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from dsg_jit.world.model import WorldModel
+from dsg_jit.telemetry import telemetry_span
 from dsg_jit.slam.measurements import (
     prior_residual,
     pose_place_attachment_residual,
@@ -10,6 +11,7 @@ from dsg_jit.slam.measurements import (
 from dsg_jit.optimization.solvers import GNConfig, gauss_newton
 
 
+@telemetry_span(component="experiment", op="exp02_mini_world_se3_geodesic")
 def run_experiment():
     wm = WorldModel()
 

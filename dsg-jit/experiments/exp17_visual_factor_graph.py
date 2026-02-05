@@ -5,6 +5,7 @@ from dsg_jit.optimization.solvers import gauss_newton_manifold, GNConfig
 from dsg_jit.slam.measurements import se3_chain_residual  
 from dsg_jit.world.visualization import plot_factor_graph_2d, plot_factor_graph_3d
 from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_demo_graph(num_poses: int = 5) -> WorldModel:
@@ -34,6 +35,7 @@ def build_demo_graph(num_poses: int = 5) -> WorldModel:
     return wm
 
 
+@telemetry_span(component="experiment", op="exp17_visual_factor_graph")
 def main():
     wm = build_demo_graph(num_poses=5)
 

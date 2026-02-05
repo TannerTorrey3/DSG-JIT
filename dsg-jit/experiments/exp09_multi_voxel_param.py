@@ -12,6 +12,7 @@ from dsg_jit.slam.measurements import (
 )
 from dsg_jit.slam.manifold import build_manifold_metadata
 from dsg_jit.optimization.solvers import GNConfig, gauss_newton_manifold
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_three_voxel_chain_with_param_obs():
@@ -199,6 +200,7 @@ def build_three_voxel_chain_with_param_obs():
     )
 
 
+@telemetry_span(component="experiment", op="exp09_multi_voxel_param")
 def main():
     (
         wm,

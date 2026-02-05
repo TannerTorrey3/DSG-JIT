@@ -43,6 +43,7 @@ import numpy as np
 
 from dsg_jit.world.model import ActiveWindowTemplate, WorldModel
 from dsg_jit.world.scene_graph import SceneGraphWorld
+from dsg_jit.telemetry import telemetry_span
 
 
 def _register_residuals_for_active_template(wm: WorldModel) -> None:

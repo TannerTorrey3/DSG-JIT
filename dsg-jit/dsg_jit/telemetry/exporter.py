@@ -20,7 +20,21 @@ import time
 from typing import Any, Dict, List
 
 from dsg_jit.telemetry.config import get_telemetry_config
+from dsg_jit.telemetry.identity import get_install_id, get_session_id
 from dsg_jit.telemetry.queue import BoundedSpanQueue, DEFAULT_MAX_QUEUE_SIZE
+
+
+def _get_version() -> str:
+    """Get DSG-JIT version string for headers."""
+    try:
+        from importlib.metadata import version
+        return version("dsg_jit")
+    except Exception:
+        try:
+            from dsg_jit import __version__
+            return __version__
+        except (ImportError, AttributeError):
+            return "0.0.0"
 
 # --- Export configuration constants ---
 DEFAULT_BATCH_SIZE = 128
@@ -28,6 +42,8 @@ DEFAULT_EXPORT_INTERVAL = 5.0  # seconds
 MAX_EXPORT_FAILURES = 5
 INITIAL_BACKOFF_SECS = 1.0
 MAX_BACKOFF_SECS = 30.0
+MAX_PAYLOAD_BYTES = 64 * 1024  # 64KB per spec
+MAX_SPANS_PER_REQUEST = 200  # Gateway enforcement limit per spec
 
 
 class OTLPSpanExporter:
@@ -57,11 +73,11 @@ class OTLPSpanExporter:
         if self._disabled:
             return False
 
-        # No endpoint configured — nothing to send
+        # No endpoint configured ï¿½ nothing to send
         if not self._endpoint:
             return False
 
-        # Still within backoff window — skip this attempt
+        # Still within backoff window ï¿½ skip this attempt
         if time.time() < self._next_retry_at:
             return False
 
@@ -75,14 +91,62 @@ class OTLPSpanExporter:
             import json
             import urllib.request
 
-            payload = json.dumps({"spans": spans}).encode("utf-8")
+            # Enforce max spans per request (gateway limit per spec)
+            if len(spans) > MAX_SPANS_PER_REQUEST:
+                spans = spans[:MAX_SPANS_PER_REQUEST]
+
+            # Convert to OTLP JSON format
+            otlp_spans = []
+            for span in spans:
+                attrs = span.get("attributes", {})
+                otlp_span = {
+                    "name": span.get("name", "unknown"),
+                    "startTimeUnixNano": str(int(span.get("timestamp", 0) * 1_000_000_000)),
+                    "endTimeUnixNano": str(int((span.get("timestamp", 0) + span.get("duration_ms", 0) / 1000) * 1_000_000_000)),
+                    "attributes": [
+                        {"key": k, "value": {"stringValue": str(v)}}
+                        for k, v in attrs.items()
+                    ],
+                }
+                otlp_spans.append(otlp_span)
+
+            otlp_payload = {
+                "resourceSpans": [{
+                    "resource": {
+                        "attributes": [
+                            {"key": "service.name", "value": {"stringValue": "dsg-jit"}}
+                        ]
+                    },
+                    "scopeSpans": [{
+                        "scope": {"name": "dsg_jit.telemetry"},
+                        "spans": otlp_spans
+                    }]
+                }]
+            }
+
+            payload = json.dumps(otlp_payload).encode("utf-8")
+
+            # Enforce payload size cap (64KB per spec)
+            if len(payload) > MAX_PAYLOAD_BYTES:
+                # Payload too large - drop silently per spec
+                return False
+
+            # Required headers per telemetry spec
+            headers = {
+                "Content-Type": "application/json",
+                "X-Ix-Install-Id": get_install_id(),
+                "X-Ix-Session-Id": get_session_id(),
+                "X-Ix-Pkg-Version": _get_version(),
+                "X-Ix-Telemetry-Level": config.level,
+            }
+
             req = urllib.request.Request(
                 self._endpoint,
                 data=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 method="POST",
             )
-            # 5 s timeout — telemetry must never hang the process
+            # 5 s timeout - telemetry must never hang the process
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status >= 400:
                     raise RuntimeError(f"endpoint returned {resp.status}")

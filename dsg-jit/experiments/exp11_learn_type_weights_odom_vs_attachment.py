@@ -8,6 +8,7 @@ from dsg_jit.slam.measurements import (
     pose_place_attachment_residual,
 )
 from dsg_jit.optimization.solvers import GDConfig, gradient_descent
+from dsg_jit.telemetry import telemetry_span
 
 
 def _to_slice(idx):
@@ -143,6 +144,7 @@ def build_problem():
     return wm, x_init, residual_w, (p0_slice, p1_slice, pl_slice)
 
 
+@telemetry_span(component="experiment", op="exp11_learn_type_weights_odom_vs_attachment")
 def run_experiment():
     wm, x_init, residual_w, (p0_slice, p1_slice, pl_slice) = build_problem()
 

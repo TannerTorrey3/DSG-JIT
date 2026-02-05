@@ -4,6 +4,7 @@ import jax.numpy as jnp
 
 from dsg_jit.world.model import WorldModel
 from dsg_jit.world.visualization import plot_factor_graph_3d, plot_factor_graph_2d
+from dsg_jit.telemetry import telemetry_span
 
 
 def build_scenegraph_world_model() -> WorldModel:
