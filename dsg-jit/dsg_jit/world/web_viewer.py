@@ -12,7 +12,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>DSG-JIT SceneGraph Viewer</title>
+  <title>DSG-JIT SceneGraph Viewer </title>
   <script type="importmap">
   {
     "imports": {
