@@ -1,11 +1,3 @@
-"""
-Web-based 3D viewer for DSG-JIT SceneGraph visualization.
-
-SECURITY NOTE: This web viewer is intended for local development and debugging
-only. It binds to localhost (127.0.0.1) by default and has no authentication.
-Do not expose this server to untrusted networks or the public internet.
-"""
-
 from __future__ import annotations
 
 import json

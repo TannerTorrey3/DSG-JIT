@@ -1,18 +1,6 @@
 # Copyright (c) 2025.
 # This file is part of DSG-JIT, released under the Business Source License 1.1.
-"""
-Sanitization and bucketing utilities for telemetry data.
-
-This module provides functions to safely transform raw values into
-privacy-preserving representations suitable for telemetry collection.
-
-PRIVACY RULES:
-- NEVER collect raw document text, code, prompts, embeddings, labels,
-  or node/edge attributes
-- NEVER collect file paths, repo URLs, hostnames, usernames, MAC addresses
-- NEVER collect any IDs from user domain (document IDs, object IDs, etc.)
-- All size-like values MUST be bucketed
-"""
+"""Sanitization and bucketing utilities for telemetry data."""
 
 from __future__ import annotations
 
@@ -20,7 +8,7 @@ from typing import Any, Dict, Set
 
 
 def bucket_count(n: int) -> str:
-    """Convert a count to a privacy-preserving bucket string.
+    """Convert a count to a bucket string.
 
     Buckets: 0, 1-9, 10-99, 100-999, 1k-9k, 10k-99k, 100k-999k, 1M+
 
