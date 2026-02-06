@@ -134,6 +134,7 @@ class OTLPSpanExporter:
             # Required headers per telemetry spec
             headers = {
                 "Content-Type": "application/json",
+                "User-Agent": f"dsg-jit/{_get_version()}",
                 "X-Ix-Install-Id": get_install_id(),
                 "X-Ix-Session-Id": get_session_id(),
                 "X-Ix-Pkg-Version": _get_version(),
