@@ -37,7 +37,12 @@ from dsg_jit.sensors.camera import CameraMeasurement, CameraFrame
 from dsg_jit.sensors.lidar import LidarMeasurement
 from dsg_jit.sensors.imu import IMUMeasurement
 from dsg_jit.sensors.streams import FunctionStream
-from dsg_jit.sensors.conversion import
+from dsg_jit.sensors.conversion import (
+    raw_sample_to_camera_measurement,
+    raw_sample_to_lidar_measurement,
+    raw_sample_to_imu_measurement,
+    integrate_imu_delta,
+)
 from dsg_jit.telemetry import telemetry_span
 
 # -----------------------------------------------------------------------------

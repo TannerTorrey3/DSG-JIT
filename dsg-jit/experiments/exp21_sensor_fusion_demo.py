@@ -293,6 +293,7 @@ class ToyImuIntegrator:
                 print(f"[LiDAR]  t={t_val:.2f}, (no ranges)")
 
 
+@telemetry_span(component="experiment", op="exp21_sensor_fusion_demo")
 def main() -> None:
     # 1) Build sensor streams
     #

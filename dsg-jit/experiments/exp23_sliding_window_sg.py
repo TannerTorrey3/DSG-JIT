@@ -305,6 +305,7 @@ def run_sliding_window_sg_experiment(
     sg.visualize_web(port=web_port)
 
 
+@telemetry_span(component="experiment", op="exp23_sliding_window_sg")
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Experiment 23: Sliding-window DSG with persistent SceneGraph memory."

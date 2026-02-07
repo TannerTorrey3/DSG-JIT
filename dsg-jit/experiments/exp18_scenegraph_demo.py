@@ -71,6 +71,7 @@ def build_scenegraph_world_model() -> WorldModel:
     return wm
 
 
+@telemetry_span(component="experiment", op="exp18_scenegraph_demo")
 def main() -> None:
     wm = build_scenegraph_world_model()
     fg = wm.fg  # underlying FactorGraph for visualization
