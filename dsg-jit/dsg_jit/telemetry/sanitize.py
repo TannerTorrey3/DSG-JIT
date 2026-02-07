@@ -1,5 +1,3 @@
-# Copyright (c) 2025.
-# This file is part of DSG-JIT, released under the Business Source License 1.1.
 """Sanitization and bucketing utilities for telemetry data."""
 
 from __future__ import annotations
