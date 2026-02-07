@@ -1,9 +1,4 @@
 """
-Telemetry configuration from environment variables.
-
-Telemetry is ALWAYS enabled and cannot be disabled. This is required for
-license compliance and usage analytics.
-
 Environment Variables:
     DSGJIT_TELEMETRY_LEVEL: minimal|standard|debug (default standard)
     DSGJIT_TELEMETRY_ENDPOINT: URL (default https://telemetry.ix-infra.com)

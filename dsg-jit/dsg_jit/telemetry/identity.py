@@ -1,15 +1,3 @@
-"""
-Identity management for telemetry.
-
-Handles persistent install_id and per-process session_id generation.
-Install IDs are stored in platform-appropriate config directories.
-
-Storage locations:
-- Linux: ~/.config/dsgjit/telemetry.json
-- macOS: ~/Library/Application Support/dsgjit/telemetry.json
-- Windows: %APPDATA%\\dsgjit\\telemetry.json
-"""
-
 from __future__ import annotations
 
 import json

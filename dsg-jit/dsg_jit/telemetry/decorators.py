@@ -2,7 +2,7 @@
 Telemetry decorator for instrumenting public APIs.
 
 The @telemetry_span decorator wraps functions to emit telemetry spans
-with timing, status, and optional shape/count information.
+with timing, status, and shape/count information.
 
 Usage:
     @telemetry_span(component="world", op="add_pose")
@@ -216,7 +216,7 @@ def telemetry_span(
 
 
 def reset_telemetry_state() -> None:
-    """Reset telemetry state (mainly for testing)."""
+    """Reset telemetry state (testing use)."""
     global _session_started
     from dsg_jit.telemetry.otel import reset_telemetry
     reset_telemetry()
