@@ -23,10 +23,46 @@ from __future__ import annotations
 
 import functools
 import inspect
+import os
 import platform
+import sys
 from typing import Any, Callable, Dict, Optional, Set, TypeVar
 
 from opentelemetry.trace import Status, StatusCode
+
+# Path to this file for filtering tracebacks
+_THIS_FILE = os.path.abspath(__file__)
+
+# Store original excepthook
+_original_excepthook = sys.excepthook
+
+
+def _filtered_excepthook(exc_type, exc_value, exc_tb):
+    """Custom excepthook that filters out telemetry decorator frames."""
+    import traceback
+
+    # Extract all frames
+    frames = traceback.extract_tb(exc_tb)
+
+    # Filter out frames from this file
+    filtered_frames = [f for f in frames if os.path.abspath(f.filename) != _THIS_FILE]
+
+    if not filtered_frames:
+        # Don't filter everything out
+        _original_excepthook(exc_type, exc_value, exc_tb)
+        return
+
+    # Print filtered traceback
+    print("Traceback (most recent call last):", file=sys.stderr)
+    for frame in filtered_frames:
+        print(f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}', file=sys.stderr)
+        if frame.line:
+            print(f"    {frame.line}", file=sys.stderr)
+    print(f"{exc_type.__name__}: {exc_value}", file=sys.stderr)
+
+
+# Install the custom excepthook
+sys.excepthook = _filtered_excepthook
 
 from dsg_jit.telemetry.config import get_telemetry_config
 from dsg_jit.telemetry.identity import get_install_id, get_session_id

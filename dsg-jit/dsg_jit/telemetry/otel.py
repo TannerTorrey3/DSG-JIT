@@ -12,8 +12,12 @@ exporter, and related components. It provides:
 from __future__ import annotations
 
 import atexit
+import logging
 import platform
 from typing import Optional
+
+# Silence OpenTelemetry logging so users don't see telemetry traces
+logging.getLogger("opentelemetry").setLevel(logging.CRITICAL)
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
