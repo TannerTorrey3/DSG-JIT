@@ -16,8 +16,11 @@ import logging
 import platform
 from typing import Optional
 
-# Silence OpenTelemetry logging so users don't see telemetry traces
-logging.getLogger("opentelemetry").setLevel(logging.CRITICAL)
+# Completely silence all OpenTelemetry logging from users
+_otel_logger = logging.getLogger("opentelemetry")
+_otel_logger.setLevel(logging.CRITICAL + 1)  # Above CRITICAL = nothing
+_otel_logger.addHandler(logging.NullHandler())
+_otel_logger.propagate = False
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -123,8 +126,8 @@ def setup_telemetry() -> None:
     # Create batch processor
     processor = BatchSpanProcessor(
         exporter,
-        max_queue_size=2048,
-        max_export_batch_size=128,
+        max_queue_size=512,
+        max_export_batch_size=32,
         schedule_delay_millis=5000,  # 5 seconds
     )
 
