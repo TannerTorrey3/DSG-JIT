@@ -26,12 +26,13 @@ from __future__ import annotations
 import functools
 import inspect
 import platform
-import time
-from typing import Any, Callable, Dict, Optional, Set, TypeVar, Union
+from typing import Any, Callable, Dict, Optional, Set, TypeVar
+
+from opentelemetry.trace import Status, StatusCode
 
 from dsg_jit.telemetry.config import get_telemetry_config
 from dsg_jit.telemetry.identity import get_install_id, get_session_id
-from dsg_jit.telemetry.client import _get_client, reset_client
+from dsg_jit.telemetry.otel import get_tracer
 from dsg_jit.telemetry.sanitize import (
     bucket_count,
     get_error_code,
@@ -41,45 +42,6 @@ from dsg_jit.telemetry.sanitize import (
 F = TypeVar("F", bound=Callable[..., Any])
 
 _session_started: bool = False
-
-
-def _emit_session_start(entry_component: str) -> None:
-    """Emit session.start span on first instrumented call."""
-    global _session_started
-    if _session_started:
-        return
-    _session_started = True
-
-    config = get_telemetry_config()
-
-    attrs = {
-        "ix.install_id": get_install_id(),
-        "ix.session_id": get_session_id(),
-        "dsgjit.version": _get_version(),
-        "runtime.python": platform.python_version(),
-        "runtime.os": platform.system().lower(),
-        "runtime.arch": platform.machine(),
-        "dsgjit.component": entry_component,
-        "dsgjit.op": "session.start",
-        "dsgjit.status": "ok",
-        "dsgjit.backend": _get_backend(),
-        "dsgjit.backend_available": _get_backend_available(),
-        "dsgjit.telemetry_level": config.level,
-        "dsgjit.entry_component": entry_component,
-        "dsgjit.telemetry_enabled": config.enabled,
-    }
-
-    # Add custom tag if set (e.g., "exp01", "benchmark_run_1")
-    if config.tag:
-        attrs["dsgjit.tag"] = config.tag
-
-    span = {
-        "name": "dsgjit.session.start",
-        "timestamp": time.time(),
-        "duration_ms": 0,
-        "attributes": attrs,
-    }
-    _get_client().record_span(span)
 
 
 def _get_version() -> str:
@@ -98,13 +60,12 @@ def _get_backend() -> str:
         devices = jax.devices()
         if not devices:
             return "unknown"
-        # Check the platform of the first device
-        platform = devices[0].platform.lower()
-        if "gpu" in platform or "cuda" in platform:
+        plat = devices[0].platform.lower()
+        if "gpu" in plat or "cuda" in plat:
             return "gpu"
-        elif "tpu" in platform:
+        elif "tpu" in plat:
             return "tpu"
-        elif "cpu" in platform:
+        elif "cpu" in plat:
             return "cpu"
         return "unknown"
     except Exception:
@@ -130,6 +91,35 @@ def _get_backend_available() -> str:
         return "unknown"
     except Exception:
         return "unknown"
+
+
+def _emit_session_start(entry_component: str) -> None:
+    """Emit session.start span on first instrumented call."""
+    global _session_started
+    if _session_started:
+        return
+    _session_started = True
+
+    config = get_telemetry_config()
+    tracer = get_tracer()
+    with tracer.start_as_current_span("dsgjit.session.start") as span:
+        span.set_attribute("ix.install_id", get_install_id())
+        span.set_attribute("ix.session_id", get_session_id())
+        span.set_attribute("dsgjit.version", _get_version())
+        span.set_attribute("runtime.python", platform.python_version())
+        span.set_attribute("runtime.os", platform.system().lower())
+        span.set_attribute("runtime.arch", platform.machine())
+        span.set_attribute("dsgjit.component", entry_component)
+        span.set_attribute("dsgjit.op", "session.start")
+        span.set_attribute("dsgjit.status", "ok")
+        span.set_attribute("dsgjit.backend", _get_backend())
+        span.set_attribute("dsgjit.backend_available", _get_backend_available())
+        span.set_attribute("dsgjit.telemetry_level", config.level)
+        span.set_attribute("dsgjit.entry_component", entry_component)
+        span.set_attribute("dsgjit.telemetry_enabled", config.enabled)
+
+        if config.tag:
+            span.set_attribute("dsgjit.tag", config.tag)
 
 
 ShapeFn = Callable[..., Dict[str, str]]
@@ -163,83 +153,64 @@ def telemetry_span(
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             config = get_telemetry_config()
 
-            # Fast path: if telemetry disabled, just call the function
-            if not config.enabled:
-                return func(*args, **kwargs)
-
             # Emit session.start on first call
             _emit_session_start(component)
 
-            # Build base attributes
-            attributes: Dict[str, Any] = {
-                "ix.install_id": get_install_id(),
-                "ix.session_id": get_session_id(),
-                "dsgjit.version": _get_version(),
-                "runtime.python": platform.python_version(),
-                "runtime.os": platform.system().lower(),
-                "runtime.arch": platform.machine(),
-                "dsgjit.component": component,
-                "dsgjit.op": op,
-                "dsgjit.backend": _get_backend(),
-                "dsgjit.telemetry_level": config.level,
-            }
+            tracer = get_tracer()
+            span_name = f"dsgjit.{component}.{op}"
 
-            # Add custom tag if set (e.g., "exp01", "benchmark_run_1")
-            if config.tag:
-                attributes["dsgjit.tag"] = config.tag
+            with tracer.start_as_current_span(span_name) as span:
+                # Set base attributes
+                span.set_attribute("ix.install_id", get_install_id())
+                span.set_attribute("ix.session_id", get_session_id())
+                span.set_attribute("dsgjit.version", _get_version())
+                span.set_attribute("runtime.python", platform.python_version())
+                span.set_attribute("runtime.os", platform.system().lower())
+                span.set_attribute("runtime.arch", platform.machine())
+                span.set_attribute("dsgjit.component", component)
+                span.set_attribute("dsgjit.op", op)
+                span.set_attribute("dsgjit.backend", _get_backend())
+                span.set_attribute("dsgjit.telemetry_level", config.level)
 
-            # Extract safe args if specified
-            if safe_args:
+                # Add custom tag if set
+                if config.tag:
+                    span.set_attribute("dsgjit.tag", config.tag)
+
+                # Extract safe args if specified
+                if safe_args:
+                    try:
+                        bound = sig.bind_partial(*args, **kwargs)
+                        bound.apply_defaults()
+                        safe_values = sanitize_safe_args(dict(bound.arguments), safe_args)
+                        for k, v in safe_values.items():
+                            span.set_attribute(f"dsgjit.args.{k}", str(v))
+                    except (TypeError, ValueError):
+                        pass
+
+                # Compute shape attributes if shape_fn provided
+                if shape_fn is not None:
+                    try:
+                        shape_attrs = shape_fn(*args, **kwargs)
+                        for k, v in shape_attrs.items():
+                            span.set_attribute(f"dsgjit.{k}", str(v))
+                    except Exception:
+                        pass
+
+                # Execute the function
                 try:
-                    bound = sig.bind_partial(*args, **kwargs)
-                    bound.apply_defaults()
-                    safe_values = sanitize_safe_args(dict(bound.arguments), safe_args)
-                    for k, v in safe_values.items():
-                        attributes[f"dsgjit.args.{k}"] = v
-                except (TypeError, ValueError):
-                    pass
-
-            # Compute shape attributes if shape_fn provided
-            if shape_fn is not None:
-                try:
-                    shape_attrs = shape_fn(*args, **kwargs)
-                    for k, v in shape_attrs.items():
-                        attributes[f"dsgjit.{k}"] = v
-                except Exception:
-                    # Shape computation failed - don't break user code
-                    pass
-
-            # Execute the function and time it
-            start = time.perf_counter()
-            error: Optional[BaseException] = None
-            try:
-                result = func(*args, **kwargs)
-                attributes["dsgjit.status"] = "ok"
-                return result
-            except BaseException as e:
-                error = e
-                attributes["dsgjit.status"] = "error"
-                # Record error info (class name only, never message)
-                attributes["error.type"] = type(e).__name__
-                attributes["error.code"] = get_error_code(e)
-                attributes["error.component"] = component
-                attributes["error.op"] = op
-                raise
-            finally:
-                duration_ms = (time.perf_counter() - start) * 1000
-
-                span = {
-                    "name": f"dsgjit.{component}.{op}",
-                    "timestamp": time.time(),
-                    "duration_ms": duration_ms,
-                    "attributes": attributes,
-                }
-
-                try:
-                    _get_client().record_span(span)
-                except Exception:
-                    # Telemetry errors should never propagate
-                    pass
+                    result = func(*args, **kwargs)
+                    span.set_attribute("dsgjit.status", "ok")
+                    span.set_status(Status(StatusCode.OK))
+                    return result
+                except BaseException as e:
+                    span.set_attribute("dsgjit.status", "error")
+                    span.set_attribute("error.type", type(e).__name__)
+                    span.set_attribute("error.code", get_error_code(e))
+                    span.set_attribute("error.component", component)
+                    span.set_attribute("error.op", op)
+                    span.set_status(Status(StatusCode.ERROR, type(e).__name__))
+                    span.record_exception(e)
+                    raise
 
         return wrapper  # type: ignore
 
@@ -249,5 +220,6 @@ def telemetry_span(
 def reset_telemetry_state() -> None:
     """Reset telemetry state (mainly for testing)."""
     global _session_started
-    reset_client()
+    from dsg_jit.telemetry.otel import reset_telemetry
+    reset_telemetry()
     _session_started = False

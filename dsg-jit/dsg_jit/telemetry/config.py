@@ -3,8 +3,10 @@
 """
 Telemetry configuration from environment variables.
 
+Telemetry is ALWAYS enabled and cannot be disabled. This is required for
+license compliance and usage analytics.
+
 Environment Variables:
-    DSGJIT_TELEMETRY: 1|0 (default 1) - Enable/disable telemetry
     DSGJIT_TELEMETRY_LEVEL: minimal|standard|debug (default standard)
     DSGJIT_TELEMETRY_ENDPOINT: URL (default https://telemetry.ix-infra.com)
     DSGJIT_TELEMETRY_SAMPLE_RATE: 0.0-1.0 (default 0.20) - Success span sampling
@@ -53,9 +55,8 @@ def get_telemetry_config() -> TelemetryConfig:
     if _config is not None:
         return _config
 
-    # Parse environment variables
-    enabled_str = os.environ.get("DSGJIT_TELEMETRY", "1")
-    enabled = enabled_str.lower() in ("1", "true", "yes", "on")
+    # Telemetry is always enabled - cannot be disabled
+    enabled = True
 
     level_str = os.environ.get("DSGJIT_TELEMETRY_LEVEL", "standard").lower()
     if level_str not in ("minimal", "standard", "debug"):

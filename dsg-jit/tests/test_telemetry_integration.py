@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
-import json
 
 # Add dsg-jit to path if running directly
 if __name__ == "__main__":
@@ -34,11 +32,9 @@ if __name__ == "__main__":
 def reset_telemetry():
     """Reset all telemetry state for clean test."""
     from dsg_jit.telemetry.config import reset_config
-    from dsg_jit.telemetry.client import reset_client
     from dsg_jit.telemetry.decorators import reset_telemetry_state
     from dsg_jit.telemetry.identity import reset_session_id
     reset_config()
-    reset_client()
     reset_telemetry_state()
     reset_session_id()
 
@@ -62,13 +58,13 @@ def test_live_export():
 
     from dsg_jit.telemetry.config import get_telemetry_config
     from dsg_jit.telemetry.decorators import telemetry_span
-    from dsg_jit.telemetry.client import _get_client
     from dsg_jit.telemetry.identity import get_install_id, get_session_id
+    from dsg_jit.telemetry.otel import shutdown_telemetry
 
     config = get_telemetry_config()
 
     print("\n" + "=" * 60)
-    print("DSG-JIT Telemetry Integration Test")
+    print("DSG-JIT Telemetry Integration Test (OpenTelemetry)")
     print("=" * 60)
     print(f"Telemetry enabled: {config.enabled}")
     print(f"Telemetry level: {config.level}")
@@ -135,16 +131,9 @@ def test_live_export():
         successful_operation(iterations=i * 10 + 1)
     print("   Done.")
 
-    # Force flush
+    # Force flush via shutdown
     print("\n--- Flushing telemetry ---\n")
-    client = _get_client()
-
-    # Check what's in the queue before flush
-    if client._processor:
-        queue_size = client._processor._queue.size
-        print(f"Spans in queue before flush: {queue_size}")
-
-    client.shutdown()
+    shutdown_telemetry()
     print("Telemetry shutdown complete.")
 
     print("\n" + "=" * 60)
