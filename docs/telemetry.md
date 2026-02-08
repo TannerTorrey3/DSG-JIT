@@ -237,14 +237,9 @@ All data is sanitized before leaving your machine:
 - **Errors are categorized** — Just the type, never the message
 - **No raw values** — We never transmit actual data from your computations
 
-### Storage & Use
+### Data Use
 
-Your telemetry data:
-
-- Is stored securely on our servers
-- Is used only for improving DSG-JIT
-- Is never sold or shared with third parties
-- Is analyzed in aggregate, not individually
+Telemetry data is used to improve DSG-JIT and analyzed in aggregate.
 
 ---
 
