@@ -1,22 +1,32 @@
-"""
-Telemetry decorator for instrumenting public APIs.
+"""Telemetry decorator for instrumenting DSG-JIT operations.
 
-The @telemetry_span decorator wraps functions to emit telemetry spans
-with timing, status, and shape/count information.
+This module provides the ``@telemetry_span`` decorator for adding telemetry
+instrumentation to functions. The decorator automatically records:
 
-Usage:
-    @telemetry_span(component="world", op="add_pose")
-    def add_pose(self, value, name=None):
-        ...
+- Operation timing (via OpenTelemetry spans)
+- Success/error status
+- Categorized error codes (never raw messages)
+- Bucketed argument values (from allowlist only)
 
-    @telemetry_span(
-        component="world",
-        op="optimize",
-        safe_args={"method"},
-        shape_fn=lambda self, **kw: {"iterations_bucket": bucket_count(kw.get("iters", 40))}
-    )
-    def optimize(self, method="gn", iters=40):
-        ...
+Example:
+    Basic usage::
+
+        from dsg_jit.telemetry import telemetry_span
+
+        @telemetry_span(component="world", op="add_pose")
+        def add_pose(self, value, name=None):
+            ...
+
+    With safe argument recording::
+
+        @telemetry_span(
+            component="world",
+            op="optimize",
+            safe_args={"method", "iters"},
+        )
+        def optimize(self, method="gn", iters=40):
+            # "method" recorded as-is, "iters" bucketed to "10-99"
+            ...
 """
 
 from __future__ import annotations
@@ -167,15 +177,26 @@ def telemetry_span(
 ) -> Callable[[F], F]:
     """Decorator to instrument a function with telemetry.
 
-    :param component: The component name (e.g., "world", "scene_graph").
-    :param op: The operation name (e.g., "add_pose", "optimize").
-    :param safe_args: Optional set of argument names safe to record.
-        Only scalar values (str, int, bool) from these args are recorded.
-        Integers are automatically bucketed.
-    :param shape_fn: Optional function to compute bucketed shape values.
-        Called with the same arguments as the decorated function.
-        Should return a dict of attribute_name -> bucketed_string.
-    :return: The decorated function.
+    Wraps a function to automatically emit an OpenTelemetry span with
+    timing, status, and optional argument information.
+
+    Args:
+        component: The component name (e.g., "world", "scene_graph").
+        op: The operation name (e.g., "add_pose", "optimize").
+        safe_args: Optional set of argument names safe to record.
+            Only scalar values (str, int, bool) from these args are recorded.
+            Integers are automatically bucketed (e.g., 47 -> "10-99").
+        shape_fn: Optional function to compute custom span attributes.
+            Called with the same arguments as the decorated function.
+            Should return a dict of attribute_name -> string value.
+
+    Returns:
+        The decorated function with telemetry instrumentation.
+
+    Example:
+        >>> @telemetry_span(component="world", op="optimize", safe_args={"method"})
+        ... def optimize(self, method="gn"):
+        ...     pass
     """
     if safe_args is None:
         safe_args = set()

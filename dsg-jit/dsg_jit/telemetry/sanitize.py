@@ -1,4 +1,14 @@
-"""Sanitization and bucketing utilities for telemetry data."""
+"""Sanitization and bucketing utilities for telemetry data.
+
+This module provides utilities to ensure telemetry data is privacy-safe:
+
+- **Bucketing**: Integer values are converted to ranges (e.g., 47 -> "10-99")
+- **Allowlisting**: Only explicitly safe argument names are recorded
+- **Error categorization**: Exceptions are mapped to category codes, not raw messages
+
+The goal is to collect useful aggregate statistics without capturing
+any potentially identifying or sensitive information.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +16,25 @@ from typing import Any, Dict, Set
 
 
 def bucket_count(n: int) -> str:
-    """Convert a count to a bucket string.
+    """Convert an integer count to a privacy-safe bucket string.
 
-    Buckets: 0, 1-9, 10-99, 100-999, 1k-9k, 10k-99k, 100k-999k, 1M+
+    This prevents exact values from being recorded while still providing
+    useful magnitude information for analytics.
 
-    :param n: The count to bucket.
-    :return: A string representing the bucket.
+    Args:
+        n: The count to bucket (non-negative integer).
+
+    Returns:
+        A bucket string: "0", "1-9", "10-99", "100-999",
+        "1k-9k", "10k-99k", "100k-999k", or "1M+".
+
+    Example:
+        >>> bucket_count(0)
+        '0'
+        >>> bucket_count(47)
+        '10-99'
+        >>> bucket_count(1500)
+        '1k-9k'
     """
     if n == 0:
         return "0"
@@ -30,9 +53,8 @@ def bucket_count(n: int) -> str:
     return "1M+"
 
 
-# Allowlist of safe attribute keys that can be recorded
 SAFE_SCALAR_ARGS: Set[str] = frozenset({
-    # Method selection
+    # Method selection (strings)
     "method",
     "var_type",
     "factor_type",
@@ -46,23 +68,41 @@ SAFE_SCALAR_ARGS: Set[str] = frozenset({
     "learn_voxel_points",
     "active",
 })
+"""Allowlist of argument names safe to record in telemetry.
+
+Only arguments with names in this set will be considered for recording.
+String values must also be short identifiers (<=32 chars, alphanumeric).
+Integer values are automatically bucketed.
+"""
 
 
 def is_safe_arg(arg_name: str) -> bool:
-    """Check if an argument name is safe to record.
+    """Check if an argument name is in the safe allowlist.
 
-    :param arg_name: The argument name to check.
-    :return: True if the argument is safe to record.
+    Args:
+        arg_name: The argument name to check.
+
+    Returns:
+        True if the argument is in SAFE_SCALAR_ARGS.
     """
     return arg_name in SAFE_SCALAR_ARGS
 
 
 def sanitize_safe_args(args: Dict[str, Any], safe_args: Set[str]) -> Dict[str, Any]:
-    """Extract only safe arguments from a dict, sanitizing values.
+    """Extract and sanitize only safe arguments from a dict.
 
-    :param args: The full arguments dict.
-    :param safe_args: Set of argument names that are safe to include.
-    :return: Dict containing only safe arguments with sanitized values.
+    Filters arguments by the safe_args allowlist and applies sanitization:
+    - Booleans: recorded as-is
+    - Strings: only if <=32 chars and valid identifier
+    - Integers: bucketed via bucket_count()
+    - Floats: not recorded (could be identifying)
+
+    Args:
+        args: The full arguments dict from a function call.
+        safe_args: Set of argument names that are safe to include.
+
+    Returns:
+        Dict containing only safe arguments with sanitized values.
     """
     result: Dict[str, Any] = {}
     for key in safe_args:
@@ -85,7 +125,6 @@ def sanitize_safe_args(args: Dict[str, Any], safe_args: Set[str]) -> Dict[str, A
     return result
 
 
-# Error code categories per spec
 ERROR_CODES: Dict[str, str] = {
     "ValueError": "invalid_argument",
     "TypeError": "invalid_argument",
@@ -103,13 +142,35 @@ ERROR_CODES: Dict[str, str] = {
     "OSError": "io_error",
     "FileNotFoundError": "io_error",
 }
+"""Mapping from exception type names to categorized error codes.
+
+Error codes provide useful aggregate statistics without exposing
+raw error messages which could contain sensitive information.
+
+Categories:
+    - ``invalid_argument``: Input validation errors
+    - ``shape_mismatch``: Array/tensor shape errors
+    - ``numerical_issue``: Math errors (overflow, NaN, etc.)
+    - ``backend_error``: JAX/runtime errors
+    - ``convergence_failure``: Optimization did not converge
+    - ``io_error``: File/network errors
+    - ``unknown_error``: Unmapped exception types
+"""
 
 
 def get_error_code(exception: BaseException) -> str:
-    """Map an exception to an error code category.
+    """Map an exception to a categorized error code.
 
-    :param exception: The exception instance.
-    :return: The error code category string.
+    Args:
+        exception: The exception instance.
+
+    Returns:
+        A category string like "invalid_argument" or "numerical_issue".
+        Returns "unknown_error" for unmapped exception types.
+
+    Example:
+        >>> get_error_code(ValueError("bad input"))
+        'invalid_argument'
     """
     exc_type = type(exception).__name__
     return ERROR_CODES.get(exc_type, "unknown_error")

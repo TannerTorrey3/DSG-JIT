@@ -43,6 +43,7 @@ nav:
       - Scene Graph: api/scene_graph.md
       - World Model: api/world.md
       - Datasets: api/datasets.md
+      - Telemetry: api/telemetry.md
   - Tutorials:
       - Introduction: tutorials/index.md
       - Core Concepts:

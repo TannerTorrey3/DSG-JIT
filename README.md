@@ -359,6 +359,25 @@ Phase 5 work has begun:
 
 ---
 
+## Telemetry
+
+DSG-JIT collects anonymous usage telemetry to help us improve the library. This includes:
+
+- Which features are used and how often
+- Error types (categorized, not raw messages)
+- Performance timing data
+- Runtime environment (Python version, OS, JAX backend)
+
+We **do not** collect:
+- Your source code or file paths
+- Variable values or model data
+- Personal information (name, email, IP address)
+- Error messages or stack traces
+
+For full details on what we collect and why, see the [Telemetry Documentation](https://tannertorrey3.github.io/DSG-JIT/telemetry/).
+
+---
+
 ## Benchmarks
 
 To validate performance of the JIT‑compiled nonlinear optimizer, DSG‑JIT includes three core benchmarks:

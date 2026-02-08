@@ -1,12 +1,18 @@
-"""
-OpenTelemetry SDK integration for DSG-JIT telemetry.
+"""OpenTelemetry SDK integration for DSG-JIT telemetry.
 
-This module initializes and manages the OpenTelemetry tracer provider,
-exporter, and related components. It provides:
-- `setup_telemetry()` - Initialize the OTel tracer with OTLP exporter
-- `get_tracer()` - Get the configured tracer for creating spans
-- `shutdown_telemetry()` - Graceful shutdown and flush
-- `reset_telemetry()` - Reset state (for testing)
+This module manages the OpenTelemetry tracer provider and OTLP exporter.
+Telemetry is initialized automatically on first use via get_tracer().
+
+Functions:
+    setup_telemetry: Initialize the OTel tracer with OTLP exporter.
+    get_tracer: Get the configured tracer for creating spans.
+    shutdown_telemetry: Graceful shutdown and flush pending spans.
+    reset_telemetry: Reset state (for testing).
+
+The tracer is configured with:
+    - BatchSpanProcessor (queue: 512, batch: 32, interval: 5s)
+    - OTLP HTTP exporter with 5s timeout
+    - Resource attributes for install/session identification
 """
 
 from __future__ import annotations
@@ -82,7 +88,14 @@ def setup_telemetry() -> None:
     """Initialize OpenTelemetry with OTLP exporter.
 
     This function is idempotent - calling it multiple times has no effect
-    after the first initialization.
+    after the first initialization. It is called automatically by get_tracer()
+    so you typically don't need to call this directly.
+
+    The tracer is configured with:
+        - OTLP HTTP exporter pointing to the configured endpoint
+        - BatchSpanProcessor for efficient batching
+        - Resource attributes for install/session tracking
+        - Automatic shutdown via atexit handler
     """
     global _tracer_provider, _tracer, _initialized
 
@@ -164,7 +177,12 @@ def get_tracer() -> trace.Tracer:
 
 
 def shutdown_telemetry() -> None:
-    """Shutdown the tracer provider and flush pending spans."""
+    """Shutdown the tracer provider and flush pending spans.
+
+    This is registered as an atexit handler automatically, so you typically
+    don't need to call this directly. Call it explicitly if you need to
+    ensure spans are flushed before the program ends.
+    """
     global _tracer_provider, _tracer, _initialized
 
     if _tracer_provider is not None:
@@ -185,5 +203,9 @@ def reset_telemetry() -> None:
 
 
 def is_telemetry_initialized() -> bool:
-    """Check if telemetry has been initialized."""
+    """Check if telemetry has been initialized.
+
+    Returns:
+        True if setup_telemetry() has been called successfully.
+    """
     return _initialized

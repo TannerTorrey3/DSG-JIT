@@ -1,10 +1,24 @@
-"""
+"""Telemetry configuration via environment variables.
+
+This module provides configuration for DSG-JIT telemetry. All settings
+are read from environment variables on first access and cached.
+
 Environment Variables:
-    DSGJIT_TELEMETRY_LEVEL: minimal|standard|debug (default standard)
-    DSGJIT_TELEMETRY_ENDPOINT: URL (default https://telemetry.ix-infra.com)
-    DSGJIT_TELEMETRY_SAMPLE_RATE: 0.0-1.0 (default 0.20) - Success span sampling
-    DSGJIT_TELEMETRY_DEBUG: 1|0 (default 0) - Enable debug logging
-    DSGJIT_TELEMETRY_TAG: string (default "") - Custom tag for experiment/run identification
+    DSGJIT_TELEMETRY_LEVEL: Telemetry detail level.
+        - ``minimal``: Basic operation counts only
+        - ``standard``: (default) Operation counts + timing
+        - ``debug``: Full detail including shape info
+
+    DSGJIT_TELEMETRY_SAMPLE_RATE: Success span sampling rate (0.0-1.0).
+        Default: 0.20 (20% of successful operations sampled).
+        Error spans are always recorded.
+
+    DSGJIT_TELEMETRY_DEBUG: Enable debug logging (1|0).
+        Default: 0 (disabled).
+
+    DSGJIT_TELEMETRY_TAG: Custom tag for experiment identification.
+        Example: "exp01" or "benchmark_run_1".
+        Max 64 characters, alphanumeric + underscore + hyphen.
 """
 
 from __future__ import annotations
@@ -18,17 +32,30 @@ TelemetryLevel = Literal["minimal", "standard", "debug"]
 
 @dataclass(frozen=True)
 class TelemetryConfig:
-    """Immutable telemetry configuration."""
+    """Immutable telemetry configuration.
+
+    Attributes:
+        enabled: Whether telemetry is enabled (always True).
+        level: Detail level ("minimal", "standard", or "debug").
+        endpoint: OTLP endpoint URL for span export.
+        sample_rate: Sampling rate for success spans (0.0-1.0).
+        debug: Whether debug logging is enabled.
+        tag: Custom tag for experiment/run identification.
+    """
 
     enabled: bool
     level: TelemetryLevel
     endpoint: str
     sample_rate: float
     debug: bool
-    tag: str  # Custom tag for experiment/run identification
+    tag: str
 
     def should_sample_success(self) -> bool:
-        """Check if success spans should be sampled at current rate."""
+        """Check if success spans should be sampled at current rate.
+
+        Returns:
+            True if this span should be sampled, False otherwise.
+        """
         import random
         return random.random() < self.sample_rate
 
@@ -42,7 +69,13 @@ def get_telemetry_config() -> TelemetryConfig:
     Configuration is read from environment variables on first access
     and cached for subsequent calls.
 
-    :return: The telemetry configuration.
+    Returns:
+        The telemetry configuration instance.
+
+    Example:
+        >>> config = get_telemetry_config()
+        >>> print(config.level)
+        'standard'
     """
     global _config
     if _config is not None:
