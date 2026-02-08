@@ -155,7 +155,7 @@ Additional examples are available in:
 - Voxel chain (500 voxels): **96 ms (JIT)** vs **3,044 ms (no JIT)**  
 - Hybrid SE3 + voxel (50 poses, 500 voxels): **149 ms (JIT)** vs **97,500 ms (no JIT)**  
 
-Benchmarks available at:  
+Benchmarks available at:
 ➡️ `benchmarks.md`
 
 ---
@@ -192,6 +192,7 @@ dsg-jit/
     slam/            # Residuals, manifolds, SE3 ops
     scene_graph/     # Relations, entities
     world/           # SceneGraphWorld, training, voxel grid
+    telemetry/       # Anonymous usage analytics
   tests/             # 26 test files
   experiments/       # Exp01–Exp16 (hero experiments)
   benchmarks/        # Performance comparisons
@@ -213,7 +214,7 @@ dsg-jit/
 
 ## Get Involved
 
-Contributions welcome!  
+Contributions welcome!
 Open a PR or file an issue on GitHub.
 
 ---

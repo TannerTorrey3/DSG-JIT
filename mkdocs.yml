@@ -34,6 +34,7 @@ nav:
   - Examples: examples.md
   - Roadmap: roadmap.md
   - Glossary: glossary.md
+  - Telemetry: telemetry.md
   - API:
       - Core: api/core.md
       - SLAM: api/slam.md
