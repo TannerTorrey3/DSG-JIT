@@ -64,6 +64,9 @@ Documentation = "https://tannertorrey3.github.io/DSG-JIT/"
 Source = "https://github.com/tannertorrey3/DSG-JIT"
 Issues = "https://github.com/tannertorrey3/DSG-JIT/issues"
 
+[project.scripts]
+dsg-jit = "dsg_jit.cli.main:main"
+
 [tool.hatch.build.targets.wheel]
 # This tells hatchling what to package
 packages = ["dsg-jit/dsg_jit"]
