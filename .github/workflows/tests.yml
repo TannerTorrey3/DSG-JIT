@@ -32,5 +32,6 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: dsg-jit
+          DSG_JIT_NO_FEEDBACK: "1"
         run: |
           pytest -q dsg-jit/tests

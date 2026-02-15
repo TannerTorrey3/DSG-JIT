@@ -105,3 +105,67 @@ def show_questionnaire_popup() -> bool:
     except (KeyboardInterrupt, EOFError):
         print("\nFeedback cancelled.")
         return False
+
+
+# Rate-limit: minimum days between on-import prompts
+_FEEDBACK_PROMPT_INTERVAL_DAYS = 7
+
+
+def _should_prompt_on_import() -> bool:
+    """
+    Decide whether to show the feedback questionnaire on import.
+    Returns True only when:
+      - stdout is an interactive TTY
+      - DSG_JIT_NO_FEEDBACK env var is not set
+      - Not running under pytest/CI
+      - We haven't prompted recently (or ever)
+    """
+    import os
+    import sys
+
+    if os.environ.get("DSG_JIT_NO_FEEDBACK", "").lower() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("CI") or os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    if "pytest" in sys.modules:
+        return False
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return False
+
+    feedback_dir = _get_feedback_dir()
+    last_prompt_file = feedback_dir / "last_import_prompt"
+    if last_prompt_file.exists():
+        try:
+            mtime = last_prompt_file.stat().st_mtime
+            age_days = (datetime.now().timestamp() - mtime) / 86400
+            if age_days < _FEEDBACK_PROMPT_INTERVAL_DAYS:
+                return False
+        except OSError:
+            pass
+
+    return True
+
+
+def _mark_prompt_shown() -> None:
+    """Record that we showed the prompt (for rate limiting)."""
+    feedback_dir = _get_feedback_dir()
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+    (feedback_dir / "last_import_prompt").touch()
+
+
+def maybe_prompt_feedback_on_import() -> None:
+    """
+    If conditions are met, show the feedback questionnaire on import.
+    Called automatically when ``import dsg_jit`` runs. Skips if:
+    - DSG_JIT_NO_FEEDBACK is set
+    - Not an interactive TTY (e.g. CI, pipes)
+    - Already prompted within the last N days
+    """
+    if not _should_prompt_on_import():
+        return
+    try:
+        show_questionnaire_popup()
+        _mark_prompt_shown()
+    except Exception:
+        # Never let feedback break the import
+        pass

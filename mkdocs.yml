@@ -29,6 +29,7 @@ theme:
 
 nav:
   - Home: index.md
+  - CLI & Feedback: cli_feedback.md
   - Architecture: architecture.md
   - Benchmarks: benchmarks.md
   - Examples: examples.md
