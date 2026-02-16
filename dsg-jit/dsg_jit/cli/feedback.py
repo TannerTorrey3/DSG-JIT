@@ -165,11 +165,12 @@ def save_feedback(feedback: dict[str, Any]) -> Path:
     return path
 
 
-def show_questionnaire_popup() -> bool:
+def show_questionnaire_popup(show_save_location: bool = True) -> bool:
     try:
         feedback = run_questionnaire()
         path = save_feedback(feedback)
-        print(f"Feedback saved to: {path}")
+        if show_save_location:
+            print(f"Feedback saved to: {path}")
         return True
     except (KeyboardInterrupt, EOFError):
         print("\nFeedback cancelled.")
@@ -184,7 +185,7 @@ def maybe_prompt_feedback_on_import() -> None:
     if not _should_prompt_on_import():
         return
     try:
-        show_questionnaire_popup()
+        show_questionnaire_popup(show_save_location=False)
         _mark_prompt_shown()
     except Exception:
         # Never let feedback break import
