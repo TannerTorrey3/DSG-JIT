@@ -3,100 +3,169 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
 from datetime import datetime
-from importlib.metadata import version
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
+from typing import Any
+
+# Minimum days between on-import prompts
+_FEEDBACK_PROMPT_INTERVAL_DAYS = 7
 
 
 def _get_version() -> str:
     try:
-        return version("dsg_jit")
+        return _pkg_version("dsg-jit")  # PyPI name might be dsg-jit
     except Exception:
-        return "0.7.1"
+        try:
+            return _pkg_version("dsg_jit")
+        except Exception:
+            return "unknown"
 
 
 def _get_feedback_dir() -> Path:
-    """Return the directory where feedback is stored."""
-    return Path.home() / ".dsg_jit"
+    """
+    Prefer ~/.dsg_jit; if HOME isn't writable (some sandboxes),
+    fall back to a temp directory.
+    """
+    home = Path.home()
+    p = home / ".dsg_jit"
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        test = p / ".write_test"
+        test.write_text("ok")
+        test.unlink(missing_ok=True)  # py>=3.8 ok
+        return p
+    except Exception:
+        tmp = Path(tempfile.gettempdir()) / "dsg_jit"
+        tmp.mkdir(parents=True, exist_ok=True)
+        return tmp
 
 
-def run_questionnaire() -> dict:
+def _is_notebook() -> bool:
     """
-    Run an interactive feedback questionnaire in the terminal.
-    Returns a dict with user responses.
+    Detect Jupyter/IPython notebooks.
     """
+    try:
+        from IPython import get_ipython  # type: ignore
+        ip = get_ipython()
+        if ip is None:
+            return False
+        # Kernel-based environments (Notebook/JupyterLab) usually have IPKernelApp
+        return "IPKernelApp" in getattr(ip, "config", {}) or "ipykernel" in sys.modules
+    except Exception:
+        return "ipykernel" in sys.modules
+
+
+def _is_interactive() -> bool:
+    """
+    True for:
+    - normal terminals (TTY)
+    - notebooks (Jupyter/IPython kernel)
+    """
+    if _is_notebook():
+        return True
+    # terminal-like interactive sessions
+    try:
+        return bool(hasattr(sys.stdin, "isatty") and sys.stdin.isatty())
+    except Exception:
+        return False
+
+
+def _should_prompt_on_import() -> bool:
+    """
+    Show questionnaire on import only if:
+    - interactive (terminal or notebook)
+    - not opted out (DSG_JIT_NO_FEEDBACK)
+    - not CI
+    - not pytest
+    - rate limit passed
+    """
+    if os.environ.get("DSG_JIT_NO_FEEDBACK", "").lower() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("CI") or os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    if "pytest" in sys.modules:
+        return False
+    if not _is_interactive():
+        return False
+
+    feedback_dir = _get_feedback_dir()
+    last_prompt = feedback_dir / "last_import_prompt"
+    if last_prompt.exists():
+        try:
+            age_days = (datetime.now().timestamp() - last_prompt.stat().st_mtime) / 86400
+            if age_days < _FEEDBACK_PROMPT_INTERVAL_DAYS:
+                return False
+        except Exception:
+            pass
+
+    return True
+
+
+def _mark_prompt_shown() -> None:
+    feedback_dir = _get_feedback_dir()
+    (feedback_dir / "last_import_prompt").touch()
+
+
+def run_questionnaire() -> dict[str, Any]:
     print("\n" + "=" * 60)
     print("  DSG-JIT User Feedback")
     print("  Thank you for helping us improve!")
     print("=" * 60 + "\n")
 
-    feedback: dict[str, str | int | float] = {
+    fb: dict[str, Any] = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "version": _get_version(),
     }
 
-    # Rating (1-5)
+    # rating
     while True:
         try:
-            rating = input(
-                "How would you rate your experience with DSG-JIT? (1-5, 5=excellent): "
-            ).strip()
+            rating = input("How would you rate your experience with DSG-JIT? (1-5): ").strip()
             r = int(rating)
             if 1 <= r <= 5:
-                feedback["rating"] = r
+                fb["rating"] = r
                 break
         except ValueError:
             pass
         print("  Please enter a number between 1 and 5.")
 
-    # Use case
     print("\nWhat are you using DSG-JIT for?")
     print("  1) SLAM / robotics research")
     print("  2) Scene graph / 3D reasoning")
     print("  3) Neural fields integration")
     print("  4) Learning / education")
     print("  5) Other")
-    use_case = input("Choice (1-5): ").strip() or "5"
-    feedback["use_case"] = use_case
+    fb["use_case"] = input("Choice (1-5): ").strip() or "5"
 
-    # Optional: what worked well
-    worked = input("\nWhat worked well? (optional, press Enter to skip): ").strip()
+    worked = input("\nWhat worked well? (optional, Enter to skip): ").strip()
     if worked:
-        feedback["what_worked"] = worked
+        fb["what_worked"] = worked
 
-    # Optional: what could improve
-    improve = input("What could we improve? (optional, press Enter to skip): ").strip()
+    improve = input("What could we improve? (optional, Enter to skip): ").strip()
     if improve:
-        feedback["improvements"] = improve
+        fb["improvements"] = improve
 
-    # Optional: additional comments
-    comments = input("Any other feedback? (optional, press Enter to skip): ").strip()
+    comments = input("Any other feedback? (optional, Enter to skip): ").strip()
     if comments:
-        feedback["comments"] = comments
+        fb["comments"] = comments
 
     print("\nThank you for your feedback!\n")
-    return feedback
+    return fb
 
 
-def save_feedback(feedback: dict) -> Path:
-    """Save feedback to a local JSON file. Returns the path written."""
+def save_feedback(feedback: dict[str, Any]) -> Path:
     feedback_dir = _get_feedback_dir()
-    feedback_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    path = feedback_dir / f"feedback_{timestamp}.json"
-
-    with open(path, "w") as f:
-        json.dump(feedback, f, indent=2)
-
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    path = feedback_dir / f"feedback_{ts}.json"
+    path.write_text(json.dumps(feedback, indent=2))
     return path
 
 
 def show_questionnaire_popup() -> bool:
-    """
-    Run the feedback questionnaire and save results.
-    Returns True if the user completed the questionnaire.
-    """
     try:
         feedback = run_questionnaire()
         path = save_feedback(feedback)
@@ -107,59 +176,10 @@ def show_questionnaire_popup() -> bool:
         return False
 
 
-# Rate-limit: minimum days between on-import prompts
-_FEEDBACK_PROMPT_INTERVAL_DAYS = 7
-
-
-def _should_prompt_on_import() -> bool:
-    """
-    Decide whether to show the feedback questionnaire on import.
-    Returns True only when:
-      - stdout is an interactive TTY
-      - DSG_JIT_NO_FEEDBACK env var is not set
-      - Not running under pytest/CI
-      - We haven't prompted recently (or ever)
-    """
-    import os
-    import sys
-
-    if os.environ.get("DSG_JIT_NO_FEEDBACK", "").lower() in ("1", "true", "yes"):
-        return False
-    if os.environ.get("CI") or os.environ.get("PYTEST_CURRENT_TEST"):
-        return False
-    if "pytest" in sys.modules:
-        return False
-    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
-        return False
-
-    feedback_dir = _get_feedback_dir()
-    last_prompt_file = feedback_dir / "last_import_prompt"
-    if last_prompt_file.exists():
-        try:
-            mtime = last_prompt_file.stat().st_mtime
-            age_days = (datetime.now().timestamp() - mtime) / 86400
-            if age_days < _FEEDBACK_PROMPT_INTERVAL_DAYS:
-                return False
-        except OSError:
-            pass
-
-    return True
-
-
-def _mark_prompt_shown() -> None:
-    """Record that we showed the prompt (for rate limiting)."""
-    feedback_dir = _get_feedback_dir()
-    feedback_dir.mkdir(parents=True, exist_ok=True)
-    (feedback_dir / "last_import_prompt").touch()
-
-
 def maybe_prompt_feedback_on_import() -> None:
     """
-    If conditions are met, show the feedback questionnaire on import.
-    Called automatically when ``import dsg_jit`` runs. Skips if:
-    - DSG_JIT_NO_FEEDBACK is set
-    - Not an interactive TTY (e.g. CI, pipes)
-    - Already prompted within the last N days
+    Called automatically by dsg_jit/__init__.py.
+    Never breaks import.
     """
     if not _should_prompt_on_import():
         return
@@ -167,5 +187,5 @@ def maybe_prompt_feedback_on_import() -> None:
         show_questionnaire_popup()
         _mark_prompt_shown()
     except Exception:
-        # Never let feedback break the import
+        # Never let feedback break import
         pass
