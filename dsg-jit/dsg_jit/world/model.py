@@ -84,6 +84,7 @@ from dsg_jit.optimization.solvers import (
     gauss_newton_manifold,
 )
 from dsg_jit.slam.manifold import build_manifold_metadata
+from dsg_jit.telemetry import telemetry_span
 
 from dsg_jit.optimization.jit_wrappers import JittedGN
 
@@ -185,6 +186,7 @@ class WorldModel:
         self._factor_slots: Dict[Tuple[str, int], FactorSlot] = {}
         self._active_factor_mask: Dict[FactorId, bool] = {}
     # --- Active template / slot-based API ---
+    @telemetry_span(component="world", op="init_active_template")
     def init_active_template(self, template: ActiveWindowTemplate) -> None:
         """Initialize a fixed-capacity active factor graph template for JIT-stable operation.
         All variables and factors are preallocated; structure is fixed.
@@ -250,6 +252,7 @@ class WorldModel:
             self._factor_slots[slot_key] = FactorSlot(factor_type, slot_idx, factor_id, var_slot_keys)
             self._active_factor_mask[factor_id] = False
 
+    @telemetry_span(component="world", op="set_variable_slot", safe_args={"var_type"})
     def set_variable_slot(self, var_type: str, slot_idx: int, value: jnp.ndarray) -> NodeId:
         """Set the value of a variable slot in the active template."""
         slot_key = (var_type, slot_idx)
@@ -261,6 +264,7 @@ class WorldModel:
         self.fg.variables[slot.node_id].value = value
         return slot.node_id
 
+    @telemetry_span(component="world", op="configure_factor_slot", safe_args={"factor_type", "active"})
     def configure_factor_slot(
         self,
         factor_type: str,
@@ -291,6 +295,7 @@ class WorldModel:
         f.params = new_params
         self._active_factor_mask[fid] = active
 
+    @telemetry_span(component="world", op="add_variable", safe_args={"var_type"})
     def add_variable(self, var_type: str, value: jnp.ndarray) -> NodeId:
         """Add a new variable to the underlying factor graph.
 
@@ -321,6 +326,7 @@ class WorldModel:
         # and residuals so they can be rebuilt on demand.
         return nid
 
+    @telemetry_span(component="world", op="add_pose")
     def add_pose(self, value: jnp.ndarray, name: Optional[str] = None) -> NodeId:
         """Add an SE(3) pose variable.
 
@@ -338,6 +344,7 @@ class WorldModel:
             self.pose_ids[name] = nid
         return nid
 
+    @telemetry_span(component="world", op="add_room")
     def add_room(self, center: jnp.ndarray, name: Optional[str] = None) -> NodeId:
         """Add a room center variable (3D point).
 
@@ -350,6 +357,7 @@ class WorldModel:
             self.room_ids[name] = nid
         return nid
 
+    @telemetry_span(component="world", op="add_place")
     def add_place(self, center: jnp.ndarray, name: Optional[str] = None) -> NodeId:
         """Add a place / waypoint variable (3D point).
 
@@ -362,6 +370,7 @@ class WorldModel:
             self.place_ids[name] = nid
         return nid
 
+    @telemetry_span(component="world", op="add_object")
     def add_object(self, center: jnp.ndarray, name: Optional[str] = None) -> NodeId:
         """Add an object centroid variable (3D point).
 
@@ -374,6 +383,7 @@ class WorldModel:
             self.object_ids[name] = nid
         return nid
 
+    @telemetry_span(component="world", op="add_agent_pose", safe_args={"var_type"})
     def add_agent_pose(
         self,
         agent_id: str,
@@ -401,6 +411,7 @@ class WorldModel:
         self.agent_pose_ids[agent_id][t] = nid
         return nid
 
+    @telemetry_span(component="world", op="add_factor", safe_args={"f_type"})
     def add_factor(self, f_type: str, var_ids, params: Dict) -> FactorId:
         """Add a new factor to the underlying factor graph.
 
@@ -441,6 +452,7 @@ class WorldModel:
         # compiled solvers / residuals so they can be rebuilt consistently.
         return fid
 
+    @telemetry_span(component="world", op="add_camera_bearings", safe_args={"factor_type"})
     def add_camera_bearings(
         self,
         pose_id: NodeId,
@@ -493,6 +505,7 @@ class WorldModel:
         return last_fid
 
 
+    @telemetry_span(component="world", op="add_lidar_ranges", safe_args={"factor_type"})
     def add_lidar_ranges(
         self,
         pose_id: NodeId,
@@ -550,6 +563,7 @@ class WorldModel:
         return last_fid
 
 
+    @telemetry_span(component="world", op="add_imu_preintegration_factor", safe_args={"factor_type"})
     def add_imu_preintegration_factor(
         self,
         pose_i: NodeId,
@@ -585,6 +599,7 @@ class WorldModel:
             params["weight"] = float(weight)
         return self.add_factor(factor_type, [pose_i, pose_j], params)
 
+    @telemetry_span(component="world", op="optimize", safe_args={"method", "iters"})
     def optimize(
         self,
         lr: float = 0.1,
@@ -660,6 +675,7 @@ class WorldModel:
         for nid, val in values.items():
             self.fg.variables[nid].value = val
 
+    @telemetry_span(component="world", op="get_variable_value")
     def get_variable_value(self, nid: NodeId) -> jnp.ndarray:
         """Return the current value of a variable.
 
@@ -672,6 +688,7 @@ class WorldModel:
         """
         return self.fg.variables[nid].value
 
+    @telemetry_span(component="world", op="snapshot_state")
     def snapshot_state(self) -> Dict[int, jnp.ndarray]:
         """Capture a shallow snapshot of the current world state.
 
@@ -685,6 +702,7 @@ class WorldModel:
         return {int(nid): jnp.array(var.value) for nid, var in self.fg.variables.items()}
     
     # --- Residuals ---
+    @telemetry_span(component="world", op="register_residual", safe_args={"factor_type"})
     def register_residual(self, factor_type: str, fn: Callable[..., Any]) -> None:
         """Register a residual function for a given factor type.
 
@@ -709,6 +727,7 @@ class WorldModel:
         """
         self._residual_registry[factor_type] = fn
 
+    @telemetry_span(component="world", op="get_residual", safe_args={"factor_type"})
     def get_residual(self, factor_type: str) -> Optional[Callable[..., Any]]:
         """Return the residual function registered for a given factor type.
 
@@ -726,6 +745,7 @@ class WorldModel:
         """
         return self._residual_registry.get(factor_type)
     
+    @telemetry_span(component="world", op="get_residuals")
     def get_residuals(self) -> Dict[str, ResidualFn]:
         """Returns the residual registry, all currently registered residuals.
         
@@ -733,6 +753,7 @@ class WorldModel:
         """
         return self._residual_registry
 
+    @telemetry_span(component="world", op="list_residual_types")
     def list_residual_types(self) -> List[str]:
         """List all factor types with registered residual functions.
 
@@ -748,6 +769,7 @@ class WorldModel:
         """
         return sorted(self._residual_registry.keys())
     
+    @telemetry_span(component="world", op="build_residual", safe_args={"use_type_weights", "learn_odom", "learn_voxel_points"})
     def build_residual(
         self,
         *,
@@ -889,6 +911,7 @@ class WorldModel:
     
     # Marginalization and fixed-lag smoothing are now handled via bounded active templates.
     # The following methods are disabled in slot-based mode.
+    @telemetry_span(component="world", op="marginalize_variables")
     def marginalize_variables(
         self,
         marginalized_ids: List[NodeId],
@@ -906,6 +929,7 @@ class WorldModel:
         # (Legacy code for dynamic mode could be restored here if needed.)
         pass
     
+    @telemetry_span(component="world", op="fixed_lag_marginalize")
     def fixed_lag_marginalize(
         self,
         keep_ids: List[NodeId],
@@ -925,6 +949,7 @@ class WorldModel:
     # ------------------------------------------------------------------
     # Hyper-parameterized residual builders
     # ------------------------------------------------------------------
+    @telemetry_span(component="world", op="build_residual_function_with_type_weights")
     def build_residual_function_with_type_weights(
         self, factor_type_order: List[str]
     ):
@@ -1038,6 +1063,7 @@ class WorldModel:
 
         return residual, index
 
+    @telemetry_span(component="world", op="build_residual_function_voxel_point_param")
     def build_residual_function_voxel_point_param(self):
         """Build a residual function with a shared voxel observation point.
 
@@ -1097,6 +1123,7 @@ class WorldModel:
 
         return residual, index
 
+    @telemetry_span(component="world", op="build_residual_function_voxel_point_param_multi")
     def build_residual_function_voxel_point_param_multi(self):
         """Build a residual function with per-factor voxel observation points.
 
@@ -1157,6 +1184,7 @@ class WorldModel:
 
         return residual, index
 
+    @telemetry_span(component="world", op="build_objective")
     def build_objective(self):
         """Construct a scalar objective ``f(x) = ||r(x)||^2``.
 
@@ -1194,6 +1222,7 @@ class WorldModel:
             offset += dim
         return index
 
+    @telemetry_span(component="world", op="pack_state")
     def pack_state(self) -> jnp.ndarray:
         """Pack all variable values into a single flat JAX array.
 
@@ -1212,6 +1241,7 @@ class WorldModel:
             chunks.append(jnp.asarray(var.value))
         return jnp.concatenate(chunks), index
 
+    @telemetry_span(component="world", op="unpack_state")
     def unpack_state(self, x: jnp.ndarray, index: Dict[NodeId, Tuple[int, int]]) -> Dict[NodeId, jnp.ndarray]:
         """Unpack a flat state vector back into per-variable arrays.
 
@@ -1229,6 +1259,7 @@ class WorldModel:
             result[node_id] = x[start:start+dim]
         return result
     
+    @telemetry_span(component="world", op="unpack_state_inplace")
     def unpack_state_inplace(self, x_opt: jnp.ndarray) -> None:
         """
         Write the optimized state vector back into the FactorGraph variable table.

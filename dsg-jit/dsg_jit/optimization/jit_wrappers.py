@@ -89,6 +89,7 @@ import jax
 import jax.numpy as jnp
 
 from dsg_jit.optimization.solvers import gauss_newton, gauss_newton_manifold, GNConfig
+from dsg_jit.telemetry import telemetry_span
 
 if TYPE_CHECKING:
     # Imported only for static type checking to avoid circular import
@@ -120,6 +121,7 @@ class JittedGN:
     fn: Callable[[jnp.ndarray], jnp.ndarray]
     cfg: GNConfig
 
+    @telemetry_span(component="optimization", op="jitted_gn_solve")
     def __call__(self, x0: jnp.ndarray) -> jnp.ndarray:
         """Run the jitted Gauss–Newton solve on an initial state.
 
@@ -128,6 +130,7 @@ class JittedGN:
         """
         return self.fn(x0)
 
+    @telemetry_span(component="optimization", op="jitted_gn_from_residual")
     @staticmethod
     def from_residual(
         residual_fn: Callable[[jnp.ndarray], jnp.ndarray],
@@ -152,6 +155,7 @@ class JittedGN:
         jitted = jax.jit(solve)
         return JittedGN(fn=jitted, cfg=cfg)
 
+    @telemetry_span(component="optimization", op="jitted_gn_from_world_model")
     @staticmethod
     def from_world_model(
         wm: "WorldModel",
@@ -212,10 +216,12 @@ class JittedGNManifold:
     fn: Callable[[jnp.ndarray], jnp.ndarray]
     cfg: GNConfig
 
+    @telemetry_span(component="optimization", op="jitted_gn_manifold_solve")
     def __call__(self, x0: jnp.ndarray) -> jnp.ndarray:
         """Run the jitted manifold Gauss–Newton solve."""
         return self.fn(x0)
 
+    @telemetry_span(component="optimization", op="jitted_gn_manifold_from_residual")
     @staticmethod
     def from_residual(
         residual_fn: Callable[[jnp.ndarray], jnp.ndarray],
@@ -245,6 +251,7 @@ class JittedGNManifold:
         jitted = jax.jit(solve)
         return JittedGNManifold(fn=jitted, cfg=cfg)
 
+    @telemetry_span(component="optimization", op="jitted_gn_manifold_from_world_model")
     @staticmethod
     def from_world_model(
         wm: "WorldModel",

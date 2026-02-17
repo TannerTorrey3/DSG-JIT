@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from dsg_jit.core.types import GNConfig
 from dsg_jit.core.factor_graph import FactorGraph
 from dsg_jit.optimization.solvers import gauss_newton_manifold
+from dsg_jit.telemetry import telemetry_span
 from dsg_jit.world.model import WorldModel
 from dsg_jit.world.visualization import plot_factor_graph_3d
 from dsg_jit.slam.manifold import build_manifold_metadata
@@ -48,6 +49,7 @@ class PoseGraphResult:
     landmark_ids: List[int] | None = None
 
 
+@telemetry_span(component="slam", op="run_pose_graph_slam")
 def run_pose_graph_slam(
     wm: WorldModel,
     cfg: GNConfig | None = None,
@@ -120,6 +122,7 @@ def run_pose_graph_slam(
     )
 
 
+@telemetry_span(component="slam", op="update_worldmodel_from_solution")
 def update_worldmodel_from_solution(wm: WorldModel, result: PoseGraphResult) -> None:
     """
     Write optimized variables from a :class:`PoseGraphResult` back into ``wm``.
@@ -172,6 +175,7 @@ def pose_vectors_from_result(
     return out
 
 
+@telemetry_span(component="slam", op="visualize_pose_graph_3d")
 def visualize_pose_graph_3d(
     wm: WorldModel,
     title: str | None = None,

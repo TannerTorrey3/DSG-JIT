@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from dsg_jit.telemetry import telemetry_span
+
 
 @dataclass
 class KittiOdomFrame:
@@ -106,6 +108,7 @@ def _load_kitti_poses(poses_path: Path) -> List[Tuple[float, ...]]:
     return poses
 
 
+@telemetry_span(component="datasets", op="load_kitti_odometry_sequence")
 def load_kitti_odometry_sequence(
     root: str | os.PathLike,
     seq: str,

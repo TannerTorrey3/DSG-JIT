@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from dsg_jit.telemetry import telemetry_span
+
 
 @dataclass
 class TumRgbdFrame:
@@ -164,6 +166,7 @@ def _associate_by_timestamp(
     return assoc
 
 
+@telemetry_span(component="datasets", op="load_tum_rgbd_sequence")
 def load_tum_rgbd_sequence(
     root: str | os.PathLike,
     use_depth: bool = True,

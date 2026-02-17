@@ -83,6 +83,7 @@ import jax
 import jax.numpy as jnp
 
 from dsg_jit.core.math3d import se3_retract_left
+from dsg_jit.telemetry import telemetry_span
 
 ObjectiveFn = Callable[[jnp.ndarray], jnp.ndarray]
 
@@ -93,6 +94,7 @@ class GDConfig:
     max_iters: int = 200
 
 
+@telemetry_span(component="optimization", op="gradient_descent")
 def gradient_descent(objective: ObjectiveFn, x0: jnp.ndarray, cfg: GDConfig) -> jnp.ndarray:
     """Simple gradient descent optimizer.
 
@@ -126,6 +128,7 @@ class NewtonConfig:
     damping: float = 1e-3  # LM-style diagonal damping
 
 
+@telemetry_span(component="optimization", op="damped_newton")
 def damped_newton(objective: ObjectiveFn, x0: jnp.ndarray, cfg: NewtonConfig) -> jnp.ndarray:
     """Damped Newton optimizer for small problems.
 
@@ -170,6 +173,7 @@ class GNConfig:
     max_step_norm: float = 1.0  # clamp step size for stability
 
 
+@telemetry_span(component="optimization", op="gauss_newton")
 def gauss_newton(residual_fn: ObjectiveFn, x0: jnp.ndarray, cfg: GNConfig) -> jnp.ndarray:
     """Gauss–Newton on a residual function ``r(x): R^n -> R^m``.
 
@@ -214,6 +218,7 @@ def gauss_newton(residual_fn: ObjectiveFn, x0: jnp.ndarray, cfg: GNConfig) -> jn
         x = step(x)
     return x
 
+@telemetry_span(component="optimization", op="gauss_newton_manifold")
 def gauss_newton_manifold(
     residual_fn: ObjectiveFn,
     x0: jnp.ndarray,

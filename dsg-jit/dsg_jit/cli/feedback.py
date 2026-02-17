@@ -11,6 +11,8 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
+from dsg_jit.telemetry import telemetry_span
+
 # Minimum days between on-import prompts
 _FEEDBACK_PROMPT_INTERVAL_DAYS = 7
 
@@ -110,6 +112,7 @@ def _mark_prompt_shown() -> None:
     (feedback_dir / "last_import_prompt").touch()
 
 
+@telemetry_span(component="cli", op="run_questionnaire")
 def run_questionnaire() -> dict[str, Any]:
     print("\n" + "=" * 60)
     print("  DSG-JIT User Feedback")
@@ -178,6 +181,7 @@ def save_feedback(feedback: dict[str, Any]) -> Path:
     return path
 
 
+@telemetry_span(component="cli", op="show_questionnaire_popup", safe_args={"show_save_location"})
 def show_questionnaire_popup(show_save_location: bool = True) -> bool:
     try:
         feedback = run_questionnaire()
