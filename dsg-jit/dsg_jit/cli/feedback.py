@@ -13,8 +13,11 @@ from typing import Any
 
 from dsg_jit.telemetry import telemetry_span
 
-# Minimum days between on-import prompts
+# Minimum days between questionnaire prompts
 _FEEDBACK_PROMPT_INTERVAL_DAYS = 7
+
+# Number of imports before first questionnaire prompt
+_FEEDBACK_PROMPT_MIN_RUNS = 3
 
 
 def _get_version() -> str:
@@ -76,40 +79,81 @@ def _is_interactive() -> bool:
         return False
 
 
-def _should_prompt_on_import() -> bool:
-    """
-    Show questionnaire on import only if:
-    - interactive (terminal or notebook)
-    - not opted out (DSG_JIT_NO_FEEDBACK)
-    - not CI
-    - not pytest
-    - rate limit passed
-    """
-    if os.environ.get("DSG_JIT_NO_FEEDBACK", "").lower() in ("1", "true", "yes"):
-        return False
-    if os.environ.get("CI") or os.environ.get("PYTEST_CURRENT_TEST"):
-        return False
-    if "pytest" in sys.modules:
-        return False
-    if not _is_interactive():
-        return False
-
-    feedback_dir = _get_feedback_dir()
-    last_prompt = feedback_dir / "last_import_prompt"
-    if last_prompt.exists():
+def _load_state() -> dict:
+    """Load persistent feedback state from disk."""
+    state_file = _get_feedback_dir() / "feedback_state.json"
+    if state_file.exists():
         try:
-            age_days = (datetime.now().timestamp() - last_prompt.stat().st_mtime) / 86400
-            if age_days < _FEEDBACK_PROMPT_INTERVAL_DAYS:
-                return False
-        except Exception:
+            with open(state_file, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
             pass
+    return {"run_count": 0, "feedback_given": False, "last_prompt_timestamp": None}
 
-    return True
+
+def _save_state(state: dict) -> None:
+    """Persist feedback state to disk."""
+    state_file = _get_feedback_dir() / "feedback_state.json"
+    try:
+        with open(state_file, "w") as f:
+            json.dump(state, f, indent=2)
+    except (IOError, OSError):
+        pass
 
 
-def _mark_prompt_shown() -> None:
-    feedback_dir = _get_feedback_dir()
-    (feedback_dir / "last_import_prompt").touch()
+def _is_prompt_suppressed() -> bool:
+    """Check if prompting is suppressed by env vars or non-interactive context."""
+    if os.environ.get("DSG_JIT_NO_FEEDBACK", "").lower() in ("1", "true", "yes"):
+        return True
+    if os.environ.get("CI") or os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if "pytest" in sys.modules:
+        return True
+    if not _is_interactive():
+        return True
+    return False
+
+
+def _should_prompt_questionnaire(state: dict) -> bool:
+    """
+    Decide whether to show the full questionnaire.
+
+    - Never prompt if feedback has already been given
+    - First prompt on the 3rd run (user has some experience)
+    - After that, prompt every 7 days
+    """
+    if state.get("feedback_given", False):
+        return False
+
+    run_count = state.get("run_count", 0)
+    if run_count < _FEEDBACK_PROMPT_MIN_RUNS:
+        return False
+
+    # First time hitting the threshold — prompt
+    last_prompt = state.get("last_prompt_timestamp")
+    if last_prompt is None:
+        return True
+
+    # After first prompt, respect the 7-day interval
+    try:
+        last_dt = datetime.fromisoformat(last_prompt)
+        age_days = (datetime.now() - last_dt).total_seconds() / 86400
+        return age_days >= _FEEDBACK_PROMPT_INTERVAL_DAYS
+    except (ValueError, TypeError):
+        return True
+
+
+def _mark_prompt_shown(state: dict) -> None:
+    """Record that the questionnaire was shown."""
+    state["last_prompt_timestamp"] = datetime.now().isoformat()
+    _save_state(state)
+
+
+def _mark_feedback_given(state: dict) -> None:
+    """Record that the user completed the questionnaire."""
+    state["feedback_given"] = True
+    state["last_prompt_timestamp"] = datetime.now().isoformat()
+    _save_state(state)
 
 
 @telemetry_span(component="cli", op="run_questionnaire")
@@ -182,28 +226,55 @@ def save_feedback(feedback: dict[str, Any]) -> Path:
 
 
 @telemetry_span(component="cli", op="show_questionnaire_popup", safe_args={"show_save_location"})
-def show_questionnaire_popup(show_save_location: bool = True) -> bool:
+def show_questionnaire_popup(show_save_location: bool = True, _state: dict | None = None) -> bool:
     try:
         feedback = run_questionnaire()
         path = save_feedback(feedback)
         if show_save_location:
             print(f"Feedback saved to: {path}")
+        if _state is not None:
+            _mark_feedback_given(_state)
         return True
     except (KeyboardInterrupt, EOFError):
         print("\nFeedback cancelled.")
         return False
 
 
-def maybe_prompt_feedback_on_import() -> None:
+def _print_banner() -> None:
+    """Print a short, non-blocking info line on import."""
+    version = _get_version()
+    telemetry_enabled = os.environ.get("DSGJIT_TELEMETRY", "1").lower() not in ("0", "false", "no", "off")
+    telemetry_status = "on" if telemetry_enabled else "off"
+    parts = [f"[DSG-JIT v{version}] Telemetry: {telemetry_status}"]
+    parts.append("Feedback: dsg-jit feedback")
+    if telemetry_enabled:
+        parts.append("Disable telemetry: DSGJIT_TELEMETRY=0")
+    print(" | ".join(parts), file=sys.stderr)
+
+
+def prompt_feedback_on_import() -> None:
     """
     Called automatically by dsg_jit/__init__.py.
-    Never breaks import.
+    Shows a one-liner banner on every interactive run, and prompts
+    the full questionnaire when conditions are met. Never breaks import.
     """
-    if not _should_prompt_on_import():
+    if _is_prompt_suppressed():
         return
+
+    # Always show the banner so users know feedback/telemetry exist
     try:
-        show_questionnaire_popup(show_save_location=False)
-        _mark_prompt_shown()
+        _print_banner()
+    except Exception:
+        pass
+
+    try:
+        state = _load_state()
+        state["run_count"] = state.get("run_count", 0) + 1
+        _save_state(state)
+
+        if _should_prompt_questionnaire(state):
+            _mark_prompt_shown(state)
+            show_questionnaire_popup(show_save_location=False, _state=state)
     except Exception:
         # Never let feedback break import
         pass

@@ -23,7 +23,7 @@ DSG-JIT includes a CLI entry point and an optional feedback questionnaire to col
      (interactive)                     (CLI command)
               │                               │
               ▼                               ▼
-     maybe_prompt_feedback_on_import   show_questionnaire_popup
+     prompt_feedback_on_import         show_questionnaire_popup
               │                               │
               ▼                               ▼
      ┌─────────────────────────────────────────────┐
@@ -42,13 +42,23 @@ DSG-JIT includes a CLI entry point and an optional feedback questionnaire to col
 
 ---
 
+## What Happens on Import
+
+Every interactive import prints a short info banner:
+
+```
+[DSG-JIT v0.7.1] Telemetry: on | Feedback: dsg-jit feedback | Disable telemetry: DSGJIT_TELEMETRY=0
+```
+
 ## When the Questionnaire Appears (On Import)
 
 The questionnaire **will** appear when:
 
 - You run `import dsg_jit` in an **interactive terminal** (TTY)
 - The `DSG_JIT_NO_FEEDBACK` environment variable is **not** set
-- It has been at least 7 days since the last prompt (or never prompted before)
+- You have used DSG-JIT at least 3 times (so you have some experience)
+- It has been at least 7 days since the last prompt (or first time reaching 3 runs)
+- You haven't already completed the questionnaire
 
 The questionnaire **will not** appear when:
 
@@ -57,6 +67,7 @@ The questionnaire **will not** appear when:
 - `DSG_JIT_NO_FEEDBACK=1` is set
 - Output is **piped** or **non-interactive** (e.g. `python script.py | less`)
 - You were prompted within the last 7 days
+- You already completed the questionnaire (run `dsg-jit feedback` to give feedback again)
 
 ---
 
@@ -93,7 +104,7 @@ import dsg_jit  # No questionnaire
 
 - Feedback is stored in `~/.dsg_jit/`
 - Each response is saved as `feedback_YYYYMMDD_HHMMSS.json`
-- Rate-limiting uses `last_import_prompt` in the same directory
+- State tracking (run count, prompt history) is in `feedback_state.json`
 
 ---
 
