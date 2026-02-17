@@ -141,6 +141,19 @@ def run_questionnaire() -> dict[str, Any]:
     print("  5) Other")
     fb["use_case"] = input("Choice (1-5): ").strip() or "5"
 
+    print("\nHow did you discover DSG-JIT?")
+    print("  1) Paper / publication")
+    print("  2) GitHub / search")
+    print("  3) Colleague / recommendation")
+    print("  4) Conference / workshop")
+    print("  5) Blog / social media")
+    print("  6) Other")
+    fb["discovery"] = input("Choice (1-6): ").strip() or "6"
+
+    email = input("\nEmail (optional, for follow-up; Enter to skip): ").strip()
+    if email:
+        fb["email"] = email
+
     worked = input("\nWhat worked well? (optional, Enter to skip): ").strip()
     if worked:
         fb["what_worked"] = worked
