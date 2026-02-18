@@ -47,7 +47,7 @@ DSG-JIT includes a CLI entry point and an optional feedback questionnaire to col
 Every interactive import prints a short info banner:
 
 ```
-[DSG-JIT v0.7.1] Telemetry: on | Feedback: dsg-jit feedback | Disable telemetry: DSGJIT_TELEMETRY=0
+[DSG-JIT v0.7.1] Feedback: dsg-jit feedback
 ```
 
 ## When the Questionnaire Appears (On Import)

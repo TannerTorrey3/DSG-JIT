@@ -243,13 +243,7 @@ def show_questionnaire_popup(show_save_location: bool = True, _state: dict | Non
 def _print_banner() -> None:
     """Print a short, non-blocking info line on import."""
     version = _get_version()
-    telemetry_enabled = os.environ.get("DSGJIT_TELEMETRY", "1").lower() not in ("0", "false", "no", "off")
-    telemetry_status = "on" if telemetry_enabled else "off"
-    parts = [f"[DSG-JIT v{version}] Telemetry: {telemetry_status}"]
-    parts.append("Feedback: dsg-jit feedback")
-    if telemetry_enabled:
-        parts.append("Disable telemetry: DSGJIT_TELEMETRY=0")
-    print(" | ".join(parts), file=sys.stderr)
+    print(f"[DSG-JIT v{version}] Feedback: dsg-jit feedback", file=sys.stderr)
 
 
 def prompt_feedback_on_import() -> None:
