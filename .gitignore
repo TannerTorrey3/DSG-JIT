@@ -38,3 +38,8 @@ dist/
 site/
 dist/
 notes/
+
+# xAPI/DATASIM experiments - generated outputs (large files)
+xapi-experiments/outputs/
+# DATASIM repo (external dependency, clone separately)
+datasim/

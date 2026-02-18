@@ -1,0 +1,2148 @@
+{
+  "profiles": [
+    {
+      "versions": [
+        {
+          "id": "https://w3id.org/xapi/cmi5/v1.0",
+          "generatedAtTime": "2017-03-27T12:30:00-07:00",
+          "wasRevisionOf": [
+            "https://w3id.org/xapi/cmi5/context/categories/cmi5"
+          ]
+        }
+      ],
+      "@context": "https://w3id.org/xapi/profiles/context",
+      "author": {
+        "type": "Organization",
+        "name": "cmi5 Working Group"
+      },
+      "concepts": [
+        {
+          "id": "https://w3id.org/xapi/adl/verbs/abandoned",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "Verb",
+          "definition": {
+            "en": "Indicates that the AU session was abnormally terminated by a learner's action (or due to a system failure)."
+          },
+          "prefLabel": {
+            "en": "abandoned"
+          }
+        },
+        {
+          "id": "https://w3id.org/xapi/adl/verbs/satisfied",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "Verb",
+          "definition": {
+            "en": "Indicates that the authority or activity provider determined the actor has fulfilled the criteria of the object or activity."
+          },
+          "prefLabel": {
+            "en": "satisfied"
+          }
+        },
+        {
+          "id": "https://w3id.org/xapi/adl/verbs/waived",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "Verb",
+          "definition": {
+            "en": "Indicates that the learning activity requirements were met by means other than completing the activity. A waived statement is used to indicate that the activity may be skipped by the actor."
+          },
+          "prefLabel": {
+            "en": "waived"
+          }
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/activities/block",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ActivityType",
+          "definition": {
+            "en": "A block represents a number of Assignable Units of which progress (completion/success) is rolled up to.  In cmi5 it is every level above the AU and below the Course."
+          },
+          "prefLabel": {
+            "en": "block"
+          }
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/activities/course",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ActivityType",
+          "exactMatch": [
+            "http://adlnet.gov/expapi/activities/course"
+          ],
+          "definition": {
+            "en": "A course represents an amount of content that is published and registered for with the purpose of gaining completion.  It is represented with a Course Structure Format in cmi5 as the highest level of content (above Block and AU)."
+          },
+          "prefLabel": {
+            "en": "course"
+          }
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/result/extensions/progress",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ResultExtension",
+          "prefLabel": {
+            "en": "progress"
+          },
+          "definition": {
+            "en": "An integer value between 0 and 100 (inclusive) indicating the completion of the AU as a percentage.\n\nThe AU may set this value in statements to indicate level of completion. The AU SHOULD NOT set a progress value in a Completed statement or if it has previously issued a Completed statement for the AU in the current registration."
+          },
+          "inlineSchema": "{ \"type\": \"number\", \"maximum\": 100, \"minimum\": 0, \"multipleOf\": 1.0 }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/result/extensions/reason",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ResultExtension",
+          "prefLabel": {
+            "en": "reason"
+          },
+          "definition": {
+            "en": "Indicates the reason why an AU was 'waived' (marked complete by an alternative means)"
+          },
+          "inlineSchema": "{ \"type\": \"string\" }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/context/extensions/sessionid",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ContextExtension",
+          "exactMatch": [
+            "id",
+            "https://w3id.org/xapi/video/extensions/session-id"
+          ],
+          "prefLabel": {
+            "en": "session ID"
+          },
+          "definition": {
+            "en": "A unique identifier for a single AU launch session based on actor and course registration."
+          },
+          "inlineSchema": "{ \"type\": \"string\" }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/context/extensions/masteryscore",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ContextExtension",
+          "prefLabel": {
+            "en": "mastery score"
+          },
+          "definition": {
+            "en": "'masteryScore' as provided in the LMS Launch Data for the AU plus registration used to determine the pass/fail result based on score"
+          },
+          "inlineSchema": "{ \"type\": \"number\",  \"maximum\": 1, \"minimum\": 0 }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/context/extensions/launchmode",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ContextExtension",
+          "prefLabel": {
+            "en": "launch mode"
+          },
+          "definition": {
+            "en": "Indicates what launch mode an AU was launched with by the LMS"
+          },
+          "inlineSchema": "{ \"enum\": [\"Normal\", \"Browse\", \"Review\"] }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/context/extensions/launchurl",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ContextExtension",
+          "prefLabel": {
+            "en": "launch URL"
+          },
+          "definition": {
+            "en": "The URL used by the LMS to launch the AU"
+          },
+          "inlineSchema": "{ \"type\": \"string\", \"format\": \"uri\" }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/context/extensions/launchparameters",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ContextExtension",
+          "prefLabel": {
+            "en": "launch parameters"
+          },
+          "definition": {
+            "en": "'launchParameters' as provided in the LMS Launch Data for the AU plus registration"
+          },
+          "inlineSchema": "{ \"type\": \"string\" }"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5/context/extensions/moveon",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "type": "ContextExtension",
+          "prefLabel": {
+            "en": "move on"
+          },
+          "definition": {
+            "en": "'moveOn' as provided in the LMS Launch Data for the AU plus registration"
+          },
+          "inlineSchema": "{ \"enum\": [\"Passed\", \"Completed\", \"CompletedAndPassed\", \"CompletedOrPassed\", \"NotApplicable\"] }"
+        }
+      ],
+      "id": "https://w3id.org/xapi/cmi5",
+      "definition": {
+        "en": "This specification describes interoperable runtime communication between Learning Management Systems (LMS) and Assignable Units (AU).\n\nThe runtime communication and behavior of all parts of the system are carefully described in the full specification, which can be found at https://github.com/AICC/CMI-5_Spec_Current/blob/quartz/cmi5_spec.md . This is a structured representation of cmi5 concepts, statement structure, and statement communications patterns that the additional rules in the full specification build upon and provide the definitive interpretation of."
+      },
+      "templates": [
+        {
+          "id": "https://w3id.org/xapi/cmi5#generalrestrictions",
+          "type": "StatementTemplate",
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "prefLabel": {
+            "en": "General Restrictions"
+          },
+          "definition": {
+            "en": "Restrictions for all cmi5-defined Statements"
+          },
+          "rules": [
+            {
+              "location": "$.id",
+              "presence": "included"
+            },
+            {
+              "location": "$.timestamp",
+              "presence": "included"
+            },
+            {
+              "location": "$.context.contextActivities.grouping[*]",
+              "presence": "included",
+              "scopeNote": {
+                "en": "An Activity object with an 'id' property whose value is the unaltered value of the AU's id attribute from the course structure (See Section 13.1.4 AU Metadata \u2013 id) MUST be included in the 'grouping' context activities."
+              }
+            },
+            {
+              "location": "$.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/sessionid']",
+              "presence": "included"
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#launched",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Launched"
+          },
+          "definition": {
+            "en": "Launched some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/launched",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "none": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            },
+            {
+              "location": "$.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/launchmode']",
+              "presence": "included",
+              "all": [
+                "Normal",
+                "Browse",
+                "Review"
+              ]
+            },
+            {
+              "location": "$.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/launchurl']",
+              "presence": "included",
+              "scopeNote": {
+                "en": "The LMS MUST put a fully qualified URL equivalent to the one that the LMS used to launch the AU without the name/value pairs included as defined in section 8.1 in the context extensions of the 'Launched' statement."
+              }
+            },
+            {
+              "location": "$.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/moveon']",
+              "presence": "included",
+              "all": [
+                "Passed",
+                "Completed",
+                "CompletedAndPassed",
+                "CompletedOrPassed",
+                "NotApplicable"
+              ]
+            },
+            {
+              "location": "$.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/launchparameters']",
+              "presence": "included"
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#initialized",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Initialized"
+          },
+          "definition": {
+            "en": "Initialized some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/initialized",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "none": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completed",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Completed"
+          },
+          "definition": {
+            "en": "Completed some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/completed",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "included",
+              "all": [
+                true
+              ]
+            },
+            {
+              "location": "$.result.duration",
+              "presence": "included",
+              "scopeNote": {
+                "en": "The AU SHOULD calculate duration as the time spent by the learner to achieve completion status."
+              }
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "presence": "included",
+              "any": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#passed",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Passed"
+          },
+          "definition": {
+            "en": "Passed some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/passed",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "recommended"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "included",
+              "all": [
+                true
+              ]
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.duration",
+              "presence": "included",
+              "scopeNote": {
+                "en": "The AU SHOULD calculate duration as the time spent by the learner to attempt and succeed in a judged activity of the AU."
+              }
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "presence": "included",
+              "any": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#failed",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Failed"
+          },
+          "definition": {
+            "en": "Failed some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/failed",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "recommended"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "included",
+              "all": [
+                false
+              ]
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.duration",
+              "presence": "included",
+              "scopeNote": {
+                "en": "The AU SHOULD calculate duration as the time spent by the learner to attempt and fail in a judged activity of the AU."
+              }
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "presence": "included",
+              "any": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#abandoned",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Abandoned"
+          },
+          "definition": {
+            "en": "Abandoned some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "https://w3id.org/xapi/adl/verbs/abandoned",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.duration",
+              "presence": "included",
+              "scopeNote": {
+                "en": "The duration property MUST, at a minimum, be set as the total session time, calculated as the time between the 'Launched' statement and the last statement (of any kind) issued by the AU. The LMS SHOULD also use other (LMS specific) methods (if available) to determine if the total session time was longer."
+              }
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "none": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#waived",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Waived"
+          },
+          "definition": {
+            "en": "Waived some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/waived",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "included",
+              "all": [
+                true
+              ]
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "included",
+              "all": [
+                true
+              ]
+            },
+            {
+              "location": "$.result.extensions['https://w3id.org/xapi/cmi5/result/extensions/reason']",
+              "presence": "included"
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "presence": "included",
+              "any": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#terminated",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Terminated"
+          },
+          "definition": {
+            "en": "Terminated some event"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/terminated",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.duration",
+              "presence": "included",
+              "scopeNote": {
+                "en": "The AU SHOULD calculate duration for Terminated statements as the time difference between the 'Initialized' statement and the 'Terminated' statement. The AU may use other methods to calculate the duration based on criteria determined by the AU."
+              }
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "none": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#satisfied",
+          "type": "StatementTemplate",
+          "prefLabel": {
+            "en": "Satisfied"
+          },
+          "definition": {
+            "en": "Satisfied some requirement"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "verb": "http://adlnet.gov/expapi/verbs/satisfied",
+          "rules": [
+            {
+              "location": "$.result.score",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.success",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.result.completion",
+              "presence": "excluded"
+            },
+            {
+              "location": "$.context.contextActivities.category[*].id",
+              "none": [
+                "https://w3id.org/xapi/cmi5/context/categories/moveon"
+              ]
+            },
+            {
+              "location": "$.object.definition.type",
+              "presence": "included",
+              "any": [
+                "https://w3id.org/xapi/cmi5/activitytype/block",
+                "https://w3id.org/xapi/cmi5/activitytype/course"
+              ]
+            }
+          ]
+        }
+      ],
+      "type": "Profile",
+      "seeAlso": "https://github.com/AICC/CMI-5_Spec_Current/blob/quartz/cmi5_spec.md",
+      "patterns": [
+        {
+          "id": "https://w3id.org/xapi/cmi5#satisfieds",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Satisfieds"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "zeroOrMore": "https://w3id.org/xapi/cmi5#satisfied"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#waivedsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Waived Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#waived",
+            "https://w3id.org/xapi/cmi5#satisfieds"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#noresultsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "No Result Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#launched",
+            "https://w3id.org/xapi/cmi5#initialized",
+            "https://w3id.org/xapi/cmi5#terminatedorabandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completionnosuccesssession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completion No Success Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#launched",
+            "https://w3id.org/xapi/cmi5#initialized",
+            "https://w3id.org/xapi/cmi5#completed",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#terminatedorabandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#passedsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completed And Maybe Failed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#launched",
+            "https://w3id.org/xapi/cmi5#initialized",
+            "https://w3id.org/xapi/cmi5#passed",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#terminatedorabandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completionpassedsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completed And Passed Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#launched",
+            "https://w3id.org/xapi/cmi5#initialized",
+            "https://w3id.org/xapi/cmi5#completedandpassed",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#terminatedorabandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#failedsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Failed Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#launched",
+            "https://w3id.org/xapi/cmi5#initialized",
+            "https://w3id.org/xapi/cmi5#failed",
+            "https://w3id.org/xapi/cmi5#terminatedorabandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completionmaybefailedsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completion Maybe Failed Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#launched",
+            "https://w3id.org/xapi/cmi5#initialized",
+            "https://w3id.org/xapi/cmi5#completedandmaybefailed",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#terminatedorabandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#terminatedorabandoned",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Terminated Or Abandoned"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "alternates": [
+            "https://w3id.org/xapi/cmi5#terminated",
+            "https://w3id.org/xapi/cmi5#abandoned"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completedandpassed",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completed And Passed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "alternates": [
+            "https://w3id.org/xapi/cmi5#completedthenpassed",
+            "https://w3id.org/xapi/cmi5#passedthencompleted"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completedthenpassed",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completed Then Passed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#completed",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#passed"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#passedthencompleted",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Passed Then Completed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#passed",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#completed"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#completedandmaybefailed",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Completed And Maybe Failed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "alternates": [
+            "https://w3id.org/xapi/cmi5#maybecompletedthenfailed",
+            "https://w3id.org/xapi/cmi5#failedthenmaybecompleted"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#maybecompletedthenfailed",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Maybe Completed Then Failed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#maybecompleted",
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#failed"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#failedthenmaybecompleted",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Failed Then Maybe Completed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#failed",
+            "https://w3id.org/xapi/cmi5#maybecompleted"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#maybecompleted",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Maybe Completed"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "optional": "https://w3id.org/xapi/cmi5#completed"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#typicalsession",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Typical Session"
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "alternates": [
+            "https://w3id.org/xapi/cmi5#completionmaybefailedsession",
+            "https://w3id.org/xapi/cmi5#completionpassedsession",
+            "https://w3id.org/xapi/cmi5#failedsession",
+            "https://w3id.org/xapi/cmi5#noresultsession",
+            "https://w3id.org/xapi/cmi5#passedsession",
+            "https://w3id.org/xapi/cmi5#completionnosuccesssession",
+            "https://w3id.org/xapi/cmi5#waivedsession"
+          ]
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#typicalsessions",
+          "type": "Pattern",
+          "prefLabel": {
+            "en": "Typical Sessions"
+          },
+          "definition": {
+            "en": "This pattern provides an option to use zero or more of the alernates for the Typical Session pattern."
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "oneOrMore": "https://w3id.org/xapi/cmi5#typicalsession"
+        },
+        {
+          "id": "https://w3id.org/xapi/cmi5#toplevel",
+          "type": "Pattern",
+          "primary": true,
+          "prefLabel": {
+            "en": "General Pattern"
+          },
+          "definition": {
+            "en": "This pattern describes the sequence of statements sent over the an entire course registration."
+          },
+          "inScheme": "https://w3id.org/xapi/cmi5/v1.0",
+          "sequence": [
+            "https://w3id.org/xapi/cmi5#satisfieds",
+            "https://w3id.org/xapi/cmi5#typicalsessions"
+          ]
+        }
+      ],
+      "conformsTo": "https://w3id.org/xapi/profiles#1.0",
+      "prefLabel": {
+        "en": "cmi5 Profile"
+      }
+    }
+  ],
+  "personae-array": [
+    {
+      "objectType": "Group",
+      "name": "trainees",
+      "member": [
+        {
+          "name": "Sim Actor 0",
+          "mbox": "mailto:sim-actor-0@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 1",
+          "mbox": "mailto:sim-actor-1@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 2",
+          "mbox": "mailto:sim-actor-2@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 3",
+          "mbox": "mailto:sim-actor-3@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 4",
+          "mbox": "mailto:sim-actor-4@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 5",
+          "mbox": "mailto:sim-actor-5@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 6",
+          "mbox": "mailto:sim-actor-6@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 7",
+          "mbox": "mailto:sim-actor-7@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 8",
+          "mbox": "mailto:sim-actor-8@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 9",
+          "mbox": "mailto:sim-actor-9@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 10",
+          "mbox": "mailto:sim-actor-10@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 11",
+          "mbox": "mailto:sim-actor-11@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 12",
+          "mbox": "mailto:sim-actor-12@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 13",
+          "mbox": "mailto:sim-actor-13@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 14",
+          "mbox": "mailto:sim-actor-14@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 15",
+          "mbox": "mailto:sim-actor-15@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 16",
+          "mbox": "mailto:sim-actor-16@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 17",
+          "mbox": "mailto:sim-actor-17@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 18",
+          "mbox": "mailto:sim-actor-18@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 19",
+          "mbox": "mailto:sim-actor-19@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 20",
+          "mbox": "mailto:sim-actor-20@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 21",
+          "mbox": "mailto:sim-actor-21@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 22",
+          "mbox": "mailto:sim-actor-22@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 23",
+          "mbox": "mailto:sim-actor-23@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 24",
+          "mbox": "mailto:sim-actor-24@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 25",
+          "mbox": "mailto:sim-actor-25@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 26",
+          "mbox": "mailto:sim-actor-26@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 27",
+          "mbox": "mailto:sim-actor-27@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 28",
+          "mbox": "mailto:sim-actor-28@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 29",
+          "mbox": "mailto:sim-actor-29@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 30",
+          "mbox": "mailto:sim-actor-30@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 31",
+          "mbox": "mailto:sim-actor-31@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 32",
+          "mbox": "mailto:sim-actor-32@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 33",
+          "mbox": "mailto:sim-actor-33@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 34",
+          "mbox": "mailto:sim-actor-34@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 35",
+          "mbox": "mailto:sim-actor-35@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 36",
+          "mbox": "mailto:sim-actor-36@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 37",
+          "mbox": "mailto:sim-actor-37@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 38",
+          "mbox": "mailto:sim-actor-38@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 39",
+          "mbox": "mailto:sim-actor-39@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 40",
+          "mbox": "mailto:sim-actor-40@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 41",
+          "mbox": "mailto:sim-actor-41@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 42",
+          "mbox": "mailto:sim-actor-42@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 43",
+          "mbox": "mailto:sim-actor-43@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 44",
+          "mbox": "mailto:sim-actor-44@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 45",
+          "mbox": "mailto:sim-actor-45@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 46",
+          "mbox": "mailto:sim-actor-46@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 47",
+          "mbox": "mailto:sim-actor-47@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 48",
+          "mbox": "mailto:sim-actor-48@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 49",
+          "mbox": "mailto:sim-actor-49@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 50",
+          "mbox": "mailto:sim-actor-50@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 51",
+          "mbox": "mailto:sim-actor-51@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 52",
+          "mbox": "mailto:sim-actor-52@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 53",
+          "mbox": "mailto:sim-actor-53@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 54",
+          "mbox": "mailto:sim-actor-54@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 55",
+          "mbox": "mailto:sim-actor-55@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 56",
+          "mbox": "mailto:sim-actor-56@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 57",
+          "mbox": "mailto:sim-actor-57@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 58",
+          "mbox": "mailto:sim-actor-58@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 59",
+          "mbox": "mailto:sim-actor-59@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 60",
+          "mbox": "mailto:sim-actor-60@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 61",
+          "mbox": "mailto:sim-actor-61@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 62",
+          "mbox": "mailto:sim-actor-62@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 63",
+          "mbox": "mailto:sim-actor-63@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 64",
+          "mbox": "mailto:sim-actor-64@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 65",
+          "mbox": "mailto:sim-actor-65@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 66",
+          "mbox": "mailto:sim-actor-66@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 67",
+          "mbox": "mailto:sim-actor-67@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 68",
+          "mbox": "mailto:sim-actor-68@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 69",
+          "mbox": "mailto:sim-actor-69@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 70",
+          "mbox": "mailto:sim-actor-70@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 71",
+          "mbox": "mailto:sim-actor-71@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 72",
+          "mbox": "mailto:sim-actor-72@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 73",
+          "mbox": "mailto:sim-actor-73@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 74",
+          "mbox": "mailto:sim-actor-74@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 75",
+          "mbox": "mailto:sim-actor-75@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 76",
+          "mbox": "mailto:sim-actor-76@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 77",
+          "mbox": "mailto:sim-actor-77@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 78",
+          "mbox": "mailto:sim-actor-78@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 79",
+          "mbox": "mailto:sim-actor-79@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 80",
+          "mbox": "mailto:sim-actor-80@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 81",
+          "mbox": "mailto:sim-actor-81@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 82",
+          "mbox": "mailto:sim-actor-82@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 83",
+          "mbox": "mailto:sim-actor-83@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 84",
+          "mbox": "mailto:sim-actor-84@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 85",
+          "mbox": "mailto:sim-actor-85@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 86",
+          "mbox": "mailto:sim-actor-86@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 87",
+          "mbox": "mailto:sim-actor-87@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 88",
+          "mbox": "mailto:sim-actor-88@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 89",
+          "mbox": "mailto:sim-actor-89@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 90",
+          "mbox": "mailto:sim-actor-90@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 91",
+          "mbox": "mailto:sim-actor-91@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 92",
+          "mbox": "mailto:sim-actor-92@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 93",
+          "mbox": "mailto:sim-actor-93@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 94",
+          "mbox": "mailto:sim-actor-94@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 95",
+          "mbox": "mailto:sim-actor-95@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 96",
+          "mbox": "mailto:sim-actor-96@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 97",
+          "mbox": "mailto:sim-actor-97@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 98",
+          "mbox": "mailto:sim-actor-98@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 99",
+          "mbox": "mailto:sim-actor-99@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 100",
+          "mbox": "mailto:sim-actor-100@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 101",
+          "mbox": "mailto:sim-actor-101@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 102",
+          "mbox": "mailto:sim-actor-102@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 103",
+          "mbox": "mailto:sim-actor-103@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 104",
+          "mbox": "mailto:sim-actor-104@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 105",
+          "mbox": "mailto:sim-actor-105@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 106",
+          "mbox": "mailto:sim-actor-106@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 107",
+          "mbox": "mailto:sim-actor-107@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 108",
+          "mbox": "mailto:sim-actor-108@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 109",
+          "mbox": "mailto:sim-actor-109@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 110",
+          "mbox": "mailto:sim-actor-110@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 111",
+          "mbox": "mailto:sim-actor-111@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 112",
+          "mbox": "mailto:sim-actor-112@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 113",
+          "mbox": "mailto:sim-actor-113@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 114",
+          "mbox": "mailto:sim-actor-114@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 115",
+          "mbox": "mailto:sim-actor-115@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 116",
+          "mbox": "mailto:sim-actor-116@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 117",
+          "mbox": "mailto:sim-actor-117@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 118",
+          "mbox": "mailto:sim-actor-118@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 119",
+          "mbox": "mailto:sim-actor-119@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 120",
+          "mbox": "mailto:sim-actor-120@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 121",
+          "mbox": "mailto:sim-actor-121@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 122",
+          "mbox": "mailto:sim-actor-122@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 123",
+          "mbox": "mailto:sim-actor-123@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 124",
+          "mbox": "mailto:sim-actor-124@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 125",
+          "mbox": "mailto:sim-actor-125@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 126",
+          "mbox": "mailto:sim-actor-126@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 127",
+          "mbox": "mailto:sim-actor-127@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 128",
+          "mbox": "mailto:sim-actor-128@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 129",
+          "mbox": "mailto:sim-actor-129@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 130",
+          "mbox": "mailto:sim-actor-130@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 131",
+          "mbox": "mailto:sim-actor-131@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 132",
+          "mbox": "mailto:sim-actor-132@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 133",
+          "mbox": "mailto:sim-actor-133@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 134",
+          "mbox": "mailto:sim-actor-134@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 135",
+          "mbox": "mailto:sim-actor-135@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 136",
+          "mbox": "mailto:sim-actor-136@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 137",
+          "mbox": "mailto:sim-actor-137@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 138",
+          "mbox": "mailto:sim-actor-138@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 139",
+          "mbox": "mailto:sim-actor-139@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 140",
+          "mbox": "mailto:sim-actor-140@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 141",
+          "mbox": "mailto:sim-actor-141@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 142",
+          "mbox": "mailto:sim-actor-142@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 143",
+          "mbox": "mailto:sim-actor-143@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 144",
+          "mbox": "mailto:sim-actor-144@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 145",
+          "mbox": "mailto:sim-actor-145@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 146",
+          "mbox": "mailto:sim-actor-146@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 147",
+          "mbox": "mailto:sim-actor-147@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 148",
+          "mbox": "mailto:sim-actor-148@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 149",
+          "mbox": "mailto:sim-actor-149@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 150",
+          "mbox": "mailto:sim-actor-150@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 151",
+          "mbox": "mailto:sim-actor-151@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 152",
+          "mbox": "mailto:sim-actor-152@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 153",
+          "mbox": "mailto:sim-actor-153@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 154",
+          "mbox": "mailto:sim-actor-154@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 155",
+          "mbox": "mailto:sim-actor-155@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 156",
+          "mbox": "mailto:sim-actor-156@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 157",
+          "mbox": "mailto:sim-actor-157@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 158",
+          "mbox": "mailto:sim-actor-158@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 159",
+          "mbox": "mailto:sim-actor-159@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 160",
+          "mbox": "mailto:sim-actor-160@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 161",
+          "mbox": "mailto:sim-actor-161@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 162",
+          "mbox": "mailto:sim-actor-162@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 163",
+          "mbox": "mailto:sim-actor-163@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 164",
+          "mbox": "mailto:sim-actor-164@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 165",
+          "mbox": "mailto:sim-actor-165@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 166",
+          "mbox": "mailto:sim-actor-166@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 167",
+          "mbox": "mailto:sim-actor-167@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 168",
+          "mbox": "mailto:sim-actor-168@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 169",
+          "mbox": "mailto:sim-actor-169@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 170",
+          "mbox": "mailto:sim-actor-170@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 171",
+          "mbox": "mailto:sim-actor-171@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 172",
+          "mbox": "mailto:sim-actor-172@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 173",
+          "mbox": "mailto:sim-actor-173@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 174",
+          "mbox": "mailto:sim-actor-174@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 175",
+          "mbox": "mailto:sim-actor-175@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 176",
+          "mbox": "mailto:sim-actor-176@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 177",
+          "mbox": "mailto:sim-actor-177@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 178",
+          "mbox": "mailto:sim-actor-178@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 179",
+          "mbox": "mailto:sim-actor-179@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 180",
+          "mbox": "mailto:sim-actor-180@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 181",
+          "mbox": "mailto:sim-actor-181@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 182",
+          "mbox": "mailto:sim-actor-182@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 183",
+          "mbox": "mailto:sim-actor-183@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 184",
+          "mbox": "mailto:sim-actor-184@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 185",
+          "mbox": "mailto:sim-actor-185@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 186",
+          "mbox": "mailto:sim-actor-186@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 187",
+          "mbox": "mailto:sim-actor-187@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 188",
+          "mbox": "mailto:sim-actor-188@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 189",
+          "mbox": "mailto:sim-actor-189@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 190",
+          "mbox": "mailto:sim-actor-190@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 191",
+          "mbox": "mailto:sim-actor-191@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 192",
+          "mbox": "mailto:sim-actor-192@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 193",
+          "mbox": "mailto:sim-actor-193@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 194",
+          "mbox": "mailto:sim-actor-194@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 195",
+          "mbox": "mailto:sim-actor-195@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 196",
+          "mbox": "mailto:sim-actor-196@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 197",
+          "mbox": "mailto:sim-actor-197@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 198",
+          "mbox": "mailto:sim-actor-198@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 199",
+          "mbox": "mailto:sim-actor-199@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 200",
+          "mbox": "mailto:sim-actor-200@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 201",
+          "mbox": "mailto:sim-actor-201@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 202",
+          "mbox": "mailto:sim-actor-202@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 203",
+          "mbox": "mailto:sim-actor-203@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 204",
+          "mbox": "mailto:sim-actor-204@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 205",
+          "mbox": "mailto:sim-actor-205@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 206",
+          "mbox": "mailto:sim-actor-206@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 207",
+          "mbox": "mailto:sim-actor-207@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 208",
+          "mbox": "mailto:sim-actor-208@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 209",
+          "mbox": "mailto:sim-actor-209@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 210",
+          "mbox": "mailto:sim-actor-210@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 211",
+          "mbox": "mailto:sim-actor-211@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 212",
+          "mbox": "mailto:sim-actor-212@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 213",
+          "mbox": "mailto:sim-actor-213@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 214",
+          "mbox": "mailto:sim-actor-214@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 215",
+          "mbox": "mailto:sim-actor-215@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 216",
+          "mbox": "mailto:sim-actor-216@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 217",
+          "mbox": "mailto:sim-actor-217@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 218",
+          "mbox": "mailto:sim-actor-218@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 219",
+          "mbox": "mailto:sim-actor-219@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 220",
+          "mbox": "mailto:sim-actor-220@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 221",
+          "mbox": "mailto:sim-actor-221@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 222",
+          "mbox": "mailto:sim-actor-222@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 223",
+          "mbox": "mailto:sim-actor-223@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 224",
+          "mbox": "mailto:sim-actor-224@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 225",
+          "mbox": "mailto:sim-actor-225@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 226",
+          "mbox": "mailto:sim-actor-226@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 227",
+          "mbox": "mailto:sim-actor-227@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 228",
+          "mbox": "mailto:sim-actor-228@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 229",
+          "mbox": "mailto:sim-actor-229@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 230",
+          "mbox": "mailto:sim-actor-230@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 231",
+          "mbox": "mailto:sim-actor-231@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 232",
+          "mbox": "mailto:sim-actor-232@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 233",
+          "mbox": "mailto:sim-actor-233@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 234",
+          "mbox": "mailto:sim-actor-234@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 235",
+          "mbox": "mailto:sim-actor-235@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 236",
+          "mbox": "mailto:sim-actor-236@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 237",
+          "mbox": "mailto:sim-actor-237@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 238",
+          "mbox": "mailto:sim-actor-238@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 239",
+          "mbox": "mailto:sim-actor-239@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 240",
+          "mbox": "mailto:sim-actor-240@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 241",
+          "mbox": "mailto:sim-actor-241@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 242",
+          "mbox": "mailto:sim-actor-242@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 243",
+          "mbox": "mailto:sim-actor-243@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 244",
+          "mbox": "mailto:sim-actor-244@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 245",
+          "mbox": "mailto:sim-actor-245@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 246",
+          "mbox": "mailto:sim-actor-246@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 247",
+          "mbox": "mailto:sim-actor-247@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 248",
+          "mbox": "mailto:sim-actor-248@example.org",
+          "role": "Trainee"
+        },
+        {
+          "name": "Sim Actor 249",
+          "mbox": "mailto:sim-actor-249@example.org",
+          "role": "Trainee"
+        }
+      ]
+    }
+  ],
+  "models": [
+    {
+      "personae": [
+        {
+          "id": "mbox::mailto:bobfake@example.org",
+          "type": "Agent"
+        }
+      ],
+      "activities": [
+        {
+          "id": "https://example.org/activity/a",
+          "weight": 0.5
+        },
+        {
+          "id": "https://example.org/activity/c",
+          "weight": 0.2
+        }
+      ]
+    }
+  ],
+  "parameters": {
+    "start": "2019-11-18T00:00:00.000000Z",
+    "end": "2019-11-22T00:00:00.000000Z",
+    "from": "2019-11-18T00:00:00.000000Z",
+    "timezone": "America/New_York",
+    "seed": 42,
+    "max": 100000,
+    "maxRestarts": 10
+  }
+}
