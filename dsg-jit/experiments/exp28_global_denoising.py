@@ -229,6 +229,9 @@ def build_global_denoiser(
 
     _retract_batch = jax.vmap(se3_retract_left)
 
+    # Per-pose step clamp: limit each pose's update independently.
+    max_step_per_pose = 0.5
+
     def gn_step(x, theta, anchor_targets):
         def r_fn(x_):
             return residual_fn(x_, theta, anchor_targets)
@@ -239,14 +242,14 @@ def build_global_denoiser(
         H = J.T @ J + gn_damping * jnp.eye(n)
         delta = jnp.linalg.solve(H, J.T @ r)
 
-        # Step clamp.
-        step_norm = jnp.linalg.norm(delta)
-        scale = jnp.minimum(1.0, 1.0 / (step_norm + 1e-9))
-        delta = scale * delta
-
-        # Vectorised manifold retraction.
+        # Per-pose step clamp (not global — avoids choking large systems).
         poses = x.reshape(n_poses, 6)
         deltas = delta.reshape(n_poses, 6)
+        norms = jnp.linalg.norm(deltas, axis=1, keepdims=True)
+        scales = jnp.minimum(1.0, max_step_per_pose / (norms + 1e-9))
+        deltas = deltas * scales
+
+        # Vectorised manifold retraction.
         new_poses = _retract_batch(poses, -deltas)
         return new_poses.ravel()
 
@@ -305,11 +308,13 @@ def build_pgo_solver(n_poses, anchor_indices, sigma, gn_iters=20, damping=1e-3):
         n = x.shape[0]
         H = J.T @ J + damping * jnp.eye(n)
         delta = jnp.linalg.solve(H, J.T @ r)
-        step_norm = jnp.linalg.norm(delta)
-        scale = jnp.minimum(1.0, 1.0 / (step_norm + 1e-9))
-        delta = scale * delta
+        # Per-pose step clamp.
         poses = x.reshape(n_poses, 6)
-        return _retract_batch(poses, -delta.reshape(n_poses, 6)).ravel()
+        deltas = delta.reshape(n_poses, 6)
+        norms = jnp.linalg.norm(deltas, axis=1, keepdims=True)
+        scales = jnp.minimum(1.0, 0.5 / (norms + 1e-9))
+        deltas = deltas * scales
+        return _retract_batch(poses, -deltas).ravel()
 
     @jax.jit
     def solve(measurements, x_init, anchor_targets):
@@ -340,8 +345,8 @@ def main():
                         help="Adam learning rate (default: 1e-3)")
     parser.add_argument("--n-outer-iters", type=int, default=100,
                         help="Outer Adam iterations per window (default: 100)")
-    parser.add_argument("--gn-iters", type=int, default=3,
-                        help="Inner GN iterations (default: 3, keep low for memory)")
+    parser.add_argument("--gn-iters", type=int, default=5,
+                        help="Inner GN iterations (default: 5, keep low for memory)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=str, default="exp28_results.json")
     args = parser.parse_args()
