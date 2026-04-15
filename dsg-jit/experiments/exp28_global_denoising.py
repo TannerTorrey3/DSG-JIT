@@ -273,9 +273,9 @@ def build_global_denoiser(
         dev = theta - noisy_meas
         r_loss = jnp.sum(odom_w * dev ** 2)
 
-        # Temporal smoothness on theta (information-weighted).
+        # Temporal smoothness on theta (unweighted — all components equal).
         s_diffs = theta[1:] - theta[:-1]
-        s_loss = jnp.sum(odom_w * s_diffs ** 2)
+        s_loss = jnp.sum(s_diffs ** 2)
 
         return anchor_weight * a_loss + reg_weight * r_loss + smooth_weight * s_loss
 
@@ -352,6 +352,12 @@ def main():
                         help="Outer Adam iterations per window (default: 100)")
     parser.add_argument("--gn-iters", type=int, default=5,
                         help="Inner GN iterations (default: 5, keep low for memory)")
+    parser.add_argument("--aw", type=float, default=5.0,
+                        help="Anchor weight (default: 5.0)")
+    parser.add_argument("--rw", type=float, default=1.0,
+                        help="Regularisation weight (default: 1.0)")
+    parser.add_argument("--sw", type=float, default=2.0,
+                        help="Smoothness weight (default: 2.0)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=str, default="exp28_results.json")
     args = parser.parse_args()
@@ -428,6 +434,7 @@ def main():
     print(f"  Windows:        {len(windows)}")
     print(f"  Anchors/window: {len(anchor_pos_in_window)} (every {args.anchor_spacing})")
     print(f"  PGO anchors:    {len(pgo_anchor_indices)} (global)")
+    print(f"  Weights:        aw={args.aw}, rw={args.rw}, sw={args.sw}")
     print(f"  Inner GN iters: {args.gn_iters}")
     print(f"  Outer iters:    {args.n_outer_iters} (Adam, lr={args.lr})")
     print()
@@ -448,7 +455,8 @@ def main():
 
     grad_fn, loss_fn = build_global_denoiser(
         actual_window, anchor_pos_in_window, sigma,
-        gn_iters=args.gn_iters, gn_damping=5e-3)
+        gn_iters=args.gn_iters, gn_damping=5e-3,
+        anchor_weight=args.aw, reg_weight=args.rw, smooth_weight=args.sw)
 
     # Warm-up with dummy data.
     n_meas_window = actual_window - 1
