@@ -64,6 +64,20 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+_NORM_EPS = 1e-10
+
+def _safe_norm(v: jnp.ndarray) -> jnp.ndarray:
+    """L2 norm with a small epsilon for clean reverse-mode AD at zero.
+
+    ``jnp.linalg.norm`` has gradient ``v / ||v||`` which is NaN at the
+    origin.  Adding a tiny epsilon inside the square root produces
+    ``v / sqrt(v·v + eps)`` which is exactly zero at the origin while
+    introducing negligible bias (< 1e-7 relative) for any vector with
+    norm above ~1e-3.
+    """
+    return jnp.sqrt(jnp.dot(v, v) + _NORM_EPS)
+
+
 def pose_vec_to_rt(v: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Split a 6D pose vector into translation and rotation components.
@@ -102,25 +116,32 @@ def so3_exp(w: jnp.ndarray) -> jnp.ndarray:
     """
     Exponential map from so(3) to SO(3).
 
+    Uses ``jnp.where`` instead of ``lax.cond`` so that reverse-mode AD
+    produces well-defined gradients at all rotation magnitudes, including
+    exactly zero.
+
     :param w: Rotation vector in axis‑angle form ``(3,)``.
     :type w: jnp.ndarray
     :return: Rotation matrix in SO(3) with shape ``(3, 3)``.
     :rtype: jnp.ndarray
     """
     w = jnp.asarray(w)
-    theta = jnp.linalg.norm(w)
+    theta = _safe_norm(w)
     I = jnp.eye(3)
 
-    def small_angle() -> jnp.ndarray:
-        # First-order approximation for small angles
-        return I + hat(w)
+    # Safe denominator: avoid division by zero in the general branch
+    # while both branches are always evaluated for AD.
+    theta_safe = jnp.where(theta < 1e-5, 1.0, theta)
 
-    def normal_angle() -> jnp.ndarray:
-        k = w / theta
-        K = hat(k)
-        return I + jnp.sin(theta) * K + (1.0 - jnp.cos(theta)) * (K @ K)
+    # Small-angle: R ≈ I + hat(w)
+    R_small = I + hat(w)
 
-    return jax.lax.cond(theta < 1e-5, small_angle, normal_angle)
+    # General: Rodrigues formula with safe division
+    k = w / theta_safe
+    K = hat(k)
+    R_general = I + jnp.sin(theta) * K + (1.0 - jnp.cos(theta)) * (K @ K)
+
+    return jnp.where(theta < 1e-5, R_small, R_general)
 
 def se3_exp(xi: jnp.ndarray) -> jnp.ndarray:
     """
@@ -140,20 +161,20 @@ def se3_exp(xi: jnp.ndarray) -> jnp.ndarray:
     # Rotation
     R = so3_exp(w)
 
-    # Small-angle approximations for Jacobian
-    def small_angle():
-        # For tiny rotation, J ≈ I + 0.5 * W
-        W = hat(w)
-        return I + 0.5 * W
+    # Left Jacobian of SE(3) — uses jnp.where for clean AD gradients.
+    theta_safe = jnp.where(theta < 1e-5, 1.0, theta)
+    W = hat(w)
+    W2 = W @ W
 
-    def normal_angle():
-        W = hat(w)
-        W2 = W @ W
-        A = jnp.sin(theta) / theta
-        B = (1 - jnp.cos(theta)) / (theta * theta)
-        return I + A * W + B * W2
+    # Small-angle: J ≈ I + 0.5 * W
+    J_small = I + 0.5 * W
 
-    J = jax.lax.cond(theta < 1e-5, small_angle, normal_angle)
+    # General: J = I + A*W + B*W^2 with safe division
+    A = jnp.sin(theta) / theta_safe
+    B = (1 - jnp.cos(theta)) / (theta_safe * theta_safe)
+    J_general = I + A * W + B * W2
+
+    J = jnp.where(theta < 1e-5, J_small, J_general)
 
     t = J @ v
 
@@ -184,48 +205,41 @@ def so3_log(R: jnp.ndarray) -> jnp.ndarray:
     """
     Logarithm map from SO(3) to so(3).
 
+    Uses ``jnp.where`` instead of ``lax.cond`` and a safe ``arccos`` so
+    that reverse-mode AD produces well-defined gradients at all rotation
+    magnitudes, including exactly zero (identity rotation).
+
     :param R: Rotation matrix in SO(3) with shape ``(3, 3)``.
     :type R: jnp.ndarray
     :return: Rotation vector ``(3,)`` in axis‑angle form.
     :rtype: jnp.ndarray
     """
     R = jnp.asarray(R)
-    # Compute cos(theta) with clamping
     trace = jnp.trace(R)
     cos_theta = (trace - 1.0) / 2.0
 
-    # Clamp to valid domain for arccos
-    cos_theta = jnp.clip(cos_theta, -1.0, 1.0)
+    # Clamp strictly inside (-1, 1) so that arccos and its gradient are
+    # always finite.  The gradient of arccos(x) is -1/sqrt(1-x^2) which
+    # diverges at x = ±1.  Clamping to ±(1-1e-7) keeps the gradient
+    # bounded at ~-707 while introducing < 5e-4 rad forward bias at
+    # identity, well within the small-angle threshold below.
+    cos_theta = jnp.clip(cos_theta, -1.0 + 1e-7, 1.0 - 1e-7)
     theta = jnp.arccos(cos_theta)
 
-    # Small-angle threshold
-    eps = 1e-5
+    # Threshold raised to 1e-3 to safely capture the clipped-identity
+    # case (theta ≈ 4.5e-4 when cos_theta is clamped from 1.0).
+    eps = 1e-3
 
-    def small_angle_case(_) -> jnp.ndarray:
-        # For very small angles, R ~ I + hat(w), so:
-        # hat(w) ~ R - I  => w ~ vee(R - I)
-        w_skew = R - jnp.eye(3, dtype=R.dtype)
-        return vee(w_skew)
+    # Small-angle: R ≈ I + hat(w) => w ≈ vee(R - I)
+    w_small = vee(R - jnp.eye(3, dtype=R.dtype))
 
-    def general_case(_) -> jnp.ndarray:
-        # Standard formula:
-        #   w^ = (theta / (2 sin(theta))) * (R - R^T)
-        #   w  = vee(w^)
-        w_skew = R - R.T
-        # Safe denominator
-        denom = 2.0 * jnp.sin(theta)
-        factor = theta / (denom + 1e-12)
-        w = factor * vee(w_skew)
-        return w
+    # General: w = (theta / (2 sin(theta))) * vee(R - R^T)
+    sin_theta_safe = jnp.where(theta < eps, 1.0, jnp.sin(theta))
+    theta_safe = jnp.where(theta < eps, 1.0, theta)
+    factor = theta_safe / (2.0 * sin_theta_safe)
+    w_general = factor * vee(R - R.T)
 
-    w = jax.lax.cond(
-        theta < eps,
-        small_angle_case,
-        general_case,
-        operand=None,
-    )
-
-    return w
+    return jnp.where(theta < eps, w_small, w_general)
 
 
 def compose_pose_se3(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
