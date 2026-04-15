@@ -253,6 +253,10 @@ def build_global_denoiser(
         new_poses = _retract_batch(poses, -deltas)
         return new_poses.ravel()
 
+    # Information-weighted anchor loss: scale by 1/sigma so translation
+    # and rotation contribute proportionally to their noise levels.
+    anchor_info_w = sigma_to_weight(sigma)  # [1/σ²] per component
+
     def outer_loss(theta, x_init, anchor_targets, noisy_meas):
         # Inner solve: unrolled GN.
         x = x_init
@@ -261,16 +265,17 @@ def build_global_denoiser(
 
         poses_opt = x.reshape(n_poses, 6)
 
-        # Anchor loss.
-        diffs = poses_opt[anchor_idx] - anchor_targets
-        a_loss = jnp.sum(diffs ** 2)
+        # Anchor loss (information-weighted: balances translation/rotation).
+        diffs = poses_opt[anchor_idx] - anchor_targets  # (n_anchors, 6)
+        a_loss = jnp.sum(anchor_info_w * diffs ** 2)
 
         # Regularisation: keep theta near original noisy measurements.
         dev = theta - noisy_meas
         r_loss = jnp.sum(odom_w * dev ** 2)
 
-        # Temporal smoothness on theta.
-        s_loss = jnp.sum((theta[1:] - theta[:-1]) ** 2)
+        # Temporal smoothness on theta (information-weighted).
+        s_diffs = theta[1:] - theta[:-1]
+        s_loss = jnp.sum(odom_w * s_diffs ** 2)
 
         return anchor_weight * a_loss + reg_weight * r_loss + smooth_weight * s_loss
 
