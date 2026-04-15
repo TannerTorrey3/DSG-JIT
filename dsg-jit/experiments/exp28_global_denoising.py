@@ -340,22 +340,22 @@ def main():
     parser.add_argument("--kitti-root", type=str, default=None)
     parser.add_argument("--seq", type=str, default="07")
     parser.add_argument("--max-frames", type=int, default=None)
-    parser.add_argument("--window-size", type=int, default=500,
-                        help="Max poses per global solve window (default: 500)")
-    parser.add_argument("--anchor-spacing", type=int, default=50,
-                        help="GT anchor every N poses within each window")
+    parser.add_argument("--window-size", type=int, default=50,
+                        help="Poses per solve window (default: 50)")
+    parser.add_argument("--anchor-spacing", type=int, default=10,
+                        help="GT anchor every N poses within each window (default: 10)")
     parser.add_argument("--sigma-trans", type=float, default=0.10)
     parser.add_argument("--sigma-rot", type=float, default=0.05)
     parser.add_argument("--lr", type=float, default=1e-3,
                         help="Adam learning rate (default: 1e-3)")
     parser.add_argument("--n-outer-iters", type=int, default=100,
                         help="Outer Adam iterations per window (default: 100)")
-    parser.add_argument("--gn-iters", type=int, default=5,
-                        help="Inner GN iterations (default: 5, keep low for memory)")
+    parser.add_argument("--gn-iters", type=int, default=10,
+                        help="Inner GN iterations (default: 10)")
     parser.add_argument("--aw", type=float, default=5.0,
                         help="Anchor weight (default: 5.0)")
-    parser.add_argument("--rw", type=float, default=1.0,
-                        help="Regularisation weight (default: 1.0)")
+    parser.add_argument("--rw", type=float, default=0.1,
+                        help="Regularisation weight (default: 0.1)")
     parser.add_argument("--sw", type=float, default=2.0,
                         help="Smoothness weight (default: 2.0)")
     parser.add_argument("--seed", type=int, default=42)
