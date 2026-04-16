@@ -193,7 +193,8 @@ def adam_step(grad, state, lr=1e-3, b1=0.9, b2=0.999, eps=1e-8):
 
 def build_weight_learner(
     n_poses: int,
-    anchor_positions: list[int],
+    inner_anchor_positions: list[int],
+    outer_anchor_positions: list[int],
     sigma: jnp.ndarray,
     *,
     gn_iters: int = 10,
@@ -201,14 +202,21 @@ def build_weight_learner(
     anchor_weight: float = 10.0,
     weight_reg: float = 0.01,
 ):
-    """Build a JIT-compiled bilevel weight learner.
+    """Build a JIT-compiled bilevel weight learner with split anchors.
+
+    The key insight: inner GN solver uses one set of anchors, outer loss
+    evaluates at a DIFFERENT set (held out from the solver).  This forces
+    the learned weights to help the solver generalise to unseen positions,
+    providing actual gradient signal.
 
     Parameters
     ----------
     n_poses : int
         Number of poses in the window.
-    anchor_positions : list[int]
-        Indices of GT-anchored poses within the window.
+    inner_anchor_positions : list[int]
+        Anchor indices used by the inner GN solver.
+    outer_anchor_positions : list[int]
+        Anchor indices used ONLY in the outer loss (held out from solver).
     sigma : jnp.ndarray
         Noise standard deviations (6,).
     gn_iters : int
@@ -221,18 +229,19 @@ def build_weight_learner(
     Returns
     -------
     grad_fn, loss_fn : callables
-        grad_fn(log_weights, measurements, x_init, anchor_targets) -> grad
-        loss_fn(log_weights, measurements, x_init, anchor_targets) -> scalar
+        grad_fn(log_weights, measurements, x_init,
+                inner_anchor_targets, outer_anchor_targets) -> grad
+        loss_fn(...) -> scalar
     """
     n_meas = n_poses - 1
     base_odom_w = sigma_to_weight(sigma)      # (6,) baseline information
     anchor_w = sigma_to_weight(jnp.full(6, 0.01))
     sqrt_anchor_w = jnp.sqrt(anchor_w)
-    anchor_idx = jnp.array(anchor_positions, dtype=jnp.int32)
+    inner_idx = jnp.array(inner_anchor_positions, dtype=jnp.int32)
+    outer_idx = jnp.array(outer_anchor_positions, dtype=jnp.int32)
     anchor_info_w = sigma_to_weight(sigma)
 
     # Vectorised residual with per-edge learned weights.
-    # log_weights: (n_meas, 6) — we exponentiate for positivity.
     def _odom_res_single(pose_a, pose_b, meas, log_w):
         w = jnp.exp(log_w)  # per-component weight multiplier
         sqrt_info = jnp.sqrt(base_odom_w * w)
@@ -240,22 +249,19 @@ def build_weight_learner(
 
     _odom_res_batch = jax.vmap(_odom_res_single)
 
-    def _anchor_res(poses, targets):
-        return (poses[anchor_idx] - targets) * sqrt_anchor_w
-
-    def residual_fn(x, measurements, log_weights, anchor_targets):
+    def residual_fn(x, measurements, log_weights, inner_targets):
         poses = x.reshape(n_poses, 6)
         r_odom = _odom_res_batch(
-            poses[:-1], poses[1:], measurements, log_weights)  # (n_meas, 6)
-        r_anch = _anchor_res(poses, anchor_targets)             # (n_anchors, 6)
+            poses[:-1], poses[1:], measurements, log_weights)
+        r_anch = (poses[inner_idx] - inner_targets) * sqrt_anchor_w
         return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
 
     _retract_batch = jax.vmap(se3_retract_left)
     max_step_per_pose = 0.5
 
-    def gn_step(x, measurements, log_weights, anchor_targets):
+    def gn_step(x, measurements, log_weights, inner_targets):
         def r_fn(x_):
-            return residual_fn(x_, measurements, log_weights, anchor_targets)
+            return residual_fn(x_, measurements, log_weights, inner_targets)
         r = r_fn(x)
         J = jax.jacobian(r_fn)(x)
         n = x.shape[0]
@@ -270,20 +276,21 @@ def build_weight_learner(
         new_poses = _retract_batch(poses, -deltas)
         return new_poses.ravel()
 
-    def outer_loss(log_weights, measurements, x_init, anchor_targets):
-        # Inner solve: unrolled GN with learned weights.
+    def outer_loss(log_weights, measurements, x_init,
+                   inner_targets, outer_targets):
+        # Inner solve: GN with learned weights + inner anchors only.
         x = x_init
         for _ in range(gn_iters):
-            x = gn_step(x, measurements, log_weights, anchor_targets)
+            x = gn_step(x, measurements, log_weights, inner_targets)
 
         poses_opt = x.reshape(n_poses, 6)
 
-        # Anchor loss: how well do solved poses match GT at anchor locations?
-        diffs = poses_opt[anchor_idx] - anchor_targets
+        # Outer loss: evaluate at HELD-OUT anchor positions.
+        # The solver never saw these — weights must help generalisation.
+        diffs = poses_opt[outer_idx] - outer_targets
         a_loss = jnp.sum(anchor_info_w * diffs ** 2)
 
-        # Weight regularisation: pull log-weights toward 0 (uniform weighting).
-        # Prevents degenerate solutions (all weights -> 0 or infinity).
+        # Weight regularisation: pull log-weights toward 0 (uniform).
         w_reg = jnp.sum(log_weights ** 2)
 
         return anchor_weight * a_loss + weight_reg * w_reg
@@ -407,8 +414,8 @@ def main():
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--window-size", type=int, default=50,
                         help="Poses per solve window (default: 50)")
-    parser.add_argument("--anchor-spacing", type=int, default=50,
-                        help="GT anchor every N poses — 50 ≈ 2%% density (default: 50)")
+    parser.add_argument("--anchor-spacing", type=int, default=5,
+                        help="GT anchor every N poses for learning (default: 5 = 20%%)")
     parser.add_argument("--sigma-trans", type=float, default=0.10)
     parser.add_argument("--sigma-rot", type=float, default=0.05)
     parser.add_argument("--lr", type=float, default=1e-3,
@@ -475,17 +482,39 @@ def main():
         if windows[-1][1] < n_poses_total:
             windows.append((n_poses_total - actual_window, n_poses_total))
 
-    # Anchor positions within each window.
-    anchor_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
-    if anchor_pos_in_window[-1] != actual_window - 1:
-        anchor_pos_in_window.append(actual_window - 1)
+    # All anchor positions within each window (at anchor_spacing).
+    all_anchors_in_window = list(range(0, actual_window, args.anchor_spacing))
+    if all_anchors_in_window[-1] != actual_window - 1:
+        all_anchors_in_window.append(actual_window - 1)
 
-    # PGO anchor positions (global, for downstream eval).
-    pgo_anchor_indices = list(range(0, n_poses_total, args.anchor_spacing))
+    # Split into inner (solver) and outer (validation) anchors.
+    # Even-indexed anchors go to inner solver, odd-indexed to outer loss.
+    # First and last always go to inner (boundary constraints).
+    inner_anchors = []
+    outer_anchors = []
+    for i, a in enumerate(all_anchors_in_window):
+        if a == 0 or a == actual_window - 1:
+            inner_anchors.append(a)
+        elif i % 2 == 0:
+            inner_anchors.append(a)
+        else:
+            outer_anchors.append(a)
+
+    # Ensure we have at least 1 outer anchor.
+    if len(outer_anchors) == 0 and len(inner_anchors) > 2:
+        # Move middle inner anchor to outer.
+        mid = len(inner_anchors) // 2
+        outer_anchors.append(inner_anchors.pop(mid))
+        outer_anchors.sort()
+
+    # PGO anchor positions (global, sparse — for downstream eval).
+    # Use sparser anchors for PGO to test generalisation.
+    pgo_spacing = max(args.anchor_spacing, 10)  # at least as sparse as learning
+    pgo_anchor_indices = list(range(0, n_poses_total, pgo_spacing))
     if pgo_anchor_indices[-1] != n_poses_total - 1:
         pgo_anchor_indices.append(n_poses_total - 1)
 
-    anchor_density = len(pgo_anchor_indices) / n_poses_total * 100
+    anchor_density = len(all_anchors_in_window) / actual_window * 100
 
     traj_len = float(np.sum(np.linalg.norm(
         np.diff(gt_np[:, :3], axis=0), axis=1)))
@@ -496,9 +525,10 @@ def main():
     print(f"  Noise:          sigma_t={args.sigma_trans}m, sigma_r={args.sigma_rot}rad")
     print(f"  Window size:    {actual_window} poses, stride={stride}, overlap={overlap}")
     print(f"  Windows:        {len(windows)}")
-    print(f"  Anchors/window: {len(anchor_pos_in_window)} (every {args.anchor_spacing})")
-    print(f"  Anchor density: {anchor_density:.1f}%")
-    print(f"  PGO anchors:    {len(pgo_anchor_indices)} (global)")
+    print(f"  Anchors/window: {len(all_anchors_in_window)} total "
+          f"({len(inner_anchors)} inner + {len(outer_anchors)} outer)")
+    print(f"  Anchor density: {anchor_density:.1f}% (learning)")
+    print(f"  PGO anchors:    {len(pgo_anchor_indices)} (global, spacing={pgo_spacing})")
     print(f"  Weights:        aw={args.aw}, wreg={args.wreg}")
     print(f"  Inner GN iters: {args.gn_iters}")
     print(f"  Outer iters:    {args.n_outer_iters} (Adam, lr={args.lr})")
@@ -519,7 +549,7 @@ def main():
     t_jit_start = time.perf_counter()
 
     grad_fn, loss_fn = build_weight_learner(
-        actual_window, anchor_pos_in_window, sigma,
+        actual_window, inner_anchors, outer_anchors, sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
         anchor_weight=args.aw, weight_reg=args.wreg)
 
@@ -528,8 +558,10 @@ def main():
     dummy_meas = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_log_w = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
-    dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6), dtype=jnp.float32)
-    _ = grad_fn(dummy_log_w, dummy_meas, dummy_x, dummy_anchors).block_until_ready()
+    dummy_inner = jnp.zeros((len(inner_anchors), 6), dtype=jnp.float32)
+    dummy_outer = jnp.zeros((len(outer_anchors), 6), dtype=jnp.float32)
+    _ = grad_fn(dummy_log_w, dummy_meas, dummy_x,
+                dummy_inner, dummy_outer).block_until_ready()
 
     t_jit = time.perf_counter() - t_jit_start
     print(f"JIT compilation: {t_jit:.1f}s")
@@ -551,11 +583,15 @@ def main():
         # Extract window measurements (FIXED — never modified).
         w_meas = jnp.array(noisy_measurements[w_start:w_start + w_n_meas])
 
-        # Anchor targets in LOCAL coordinates.
+        # Anchor targets in LOCAL coordinates (split inner/outer).
         gt_first = gt_poses[w_start]
-        w_anchor_targets = jnp.stack([
+        w_inner_targets = jnp.stack([
             relative_pose_se3(gt_first, gt_poses[w_start + p])
-            for p in anchor_pos_in_window
+            for p in inner_anchors
+        ])
+        w_outer_targets = jnp.stack([
+            relative_pose_se3(gt_first, gt_poses[w_start + p])
+            for p in outer_anchors
         ])
 
         # x_init: forward-compose from origin.
@@ -570,7 +606,8 @@ def main():
         adam_state = adam_init(log_w)
 
         for it in range(args.n_outer_iters):
-            g = grad_fn(log_w, w_meas, x_init, w_anchor_targets)
+            g = grad_fn(log_w, w_meas, x_init,
+                        w_inner_targets, w_outer_targets)
             g.block_until_ready()
 
             if jnp.any(jnp.isnan(g)):
@@ -589,7 +626,8 @@ def main():
                 weight_counts[gi] += 1
 
         elapsed = time.perf_counter() - t_learn_start
-        final_loss = float(loss_fn(log_w, w_meas, x_init, w_anchor_targets))
+        final_loss = float(loss_fn(log_w, w_meas, x_init,
+                                    w_inner_targets, w_outer_targets))
         w_mean = float(jnp.mean(jnp.exp(log_w)))
         w_std = float(jnp.std(jnp.exp(log_w)))
         w_min = float(jnp.min(jnp.exp(log_w)))
@@ -752,7 +790,8 @@ def main():
             "n_windows": len(windows),
             "anchor_spacing": args.anchor_spacing,
             "anchor_density_pct": round(anchor_density, 1),
-            "anchors_per_window": len(anchor_pos_in_window),
+            "inner_anchors_per_window": len(inner_anchors),
+            "outer_anchors_per_window": len(outer_anchors),
             "n_pgo_anchors": len(pgo_anchor_indices),
             "sigma_trans": args.sigma_trans,
             "sigma_rot": args.sigma_rot,
