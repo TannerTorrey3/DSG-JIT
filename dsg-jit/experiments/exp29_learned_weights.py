@@ -484,30 +484,18 @@ def main():
         if windows[-1][1] < n_poses_total:
             windows.append((n_poses_total - actual_window, n_poses_total))
 
-    # All anchor positions within each window (at anchor_spacing).
+    # Split anchors: inner solver gets MINIMAL anchors (endpoints only),
+    # outer loss gets DENSE validation points.  This maximises the influence
+    # of learned weights — the inner solver has long unanchored chains where
+    # measurement weights significantly affect the trajectory.
+    inner_anchors = [0, actual_window - 1]  # just first + last
+
+    # Outer (validation): dense, every anchor_spacing poses, excluding endpoints.
     all_anchors_in_window = list(range(0, actual_window, args.anchor_spacing))
     if all_anchors_in_window[-1] != actual_window - 1:
         all_anchors_in_window.append(actual_window - 1)
-
-    # Split into inner (solver) and outer (validation) anchors.
-    # Even-indexed anchors go to inner solver, odd-indexed to outer loss.
-    # First and last always go to inner (boundary constraints).
-    inner_anchors = []
-    outer_anchors = []
-    for i, a in enumerate(all_anchors_in_window):
-        if a == 0 or a == actual_window - 1:
-            inner_anchors.append(a)
-        elif i % 2 == 0:
-            inner_anchors.append(a)
-        else:
-            outer_anchors.append(a)
-
-    # Ensure we have at least 1 outer anchor.
-    if len(outer_anchors) == 0 and len(inner_anchors) > 2:
-        # Move middle inner anchor to outer.
-        mid = len(inner_anchors) // 2
-        outer_anchors.append(inner_anchors.pop(mid))
-        outer_anchors.sort()
+    outer_anchors = [a for a in all_anchors_in_window
+                     if a not in inner_anchors]
 
     # PGO anchor positions (global, sparse — for downstream eval).
     pgo_spacing = args.pgo_spacing
