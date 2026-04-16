@@ -420,14 +420,16 @@ def main():
     parser.add_argument("--sigma-rot", type=float, default=0.05)
     parser.add_argument("--lr", type=float, default=1e-3,
                         help="Adam learning rate (default: 1e-3)")
-    parser.add_argument("--n-outer-iters", type=int, default=150,
-                        help="Outer Adam iterations per window (default: 150)")
+    parser.add_argument("--pgo-spacing", type=int, default=50,
+                        help="PGO eval anchor spacing — sparser than learning (default: 50)")
+    parser.add_argument("--n-outer-iters", type=int, default=200,
+                        help="Outer Adam iterations per window (default: 200)")
     parser.add_argument("--gn-iters", type=int, default=10,
                         help="Inner GN iterations (default: 10)")
-    parser.add_argument("--aw", type=float, default=10.0,
-                        help="Anchor weight (default: 10.0)")
-    parser.add_argument("--wreg", type=float, default=0.01,
-                        help="Weight regularisation (default: 0.01)")
+    parser.add_argument("--aw", type=float, default=50.0,
+                        help="Anchor weight (default: 50.0)")
+    parser.add_argument("--wreg", type=float, default=0.001,
+                        help="Weight regularisation (default: 0.001)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=str, default="exp29_results.json")
     args = parser.parse_args()
@@ -508,8 +510,7 @@ def main():
         outer_anchors.sort()
 
     # PGO anchor positions (global, sparse — for downstream eval).
-    # Use sparser anchors for PGO to test generalisation.
-    pgo_spacing = max(args.anchor_spacing, 10)  # at least as sparse as learning
+    pgo_spacing = args.pgo_spacing
     pgo_anchor_indices = list(range(0, n_poses_total, pgo_spacing))
     if pgo_anchor_indices[-1] != n_poses_total - 1:
         pgo_anchor_indices.append(n_poses_total - 1)
