@@ -261,13 +261,19 @@ def build_joint_denoiser(
     inner_idx = jnp.array(inner_anchor_positions, dtype=jnp.int32)
     outer_idx = jnp.array(outer_anchor_positions, dtype=jnp.int32)
 
-    # Per-component outer loss weights: [aw_trans]*3 + [aw_rot]*3
-    anchor_w_vec = jnp.array(
+    # Per-component outer loss weights: user multiplier * information weight.
+    # base_odom_w = 1/sigma^2 provides the natural scale; user weights are
+    # dimensionless multipliers on top of that (so aw_trans=10 means "10x
+    # the information-weighted baseline").
+    user_aw = jnp.array(
         [aw_trans] * 3 + [aw_rot] * 3, dtype=jnp.float32)
-    reg_w_vec = jnp.array(
+    user_rw = jnp.array(
         [rw_trans] * 3 + [rw_rot] * 3, dtype=jnp.float32)
-    smooth_w_vec = jnp.array(
+    user_sw = jnp.array(
         [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
+    anchor_w_vec = user_aw * base_odom_w
+    reg_w_vec = user_rw * base_odom_w
+    smooth_w_vec = user_sw * base_odom_w
 
     # Vectorised residual with per-edge learned weights.
     def _odom_res_single(pose_a, pose_b, meas, log_w):
