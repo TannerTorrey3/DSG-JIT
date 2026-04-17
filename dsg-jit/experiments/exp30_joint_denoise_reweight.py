@@ -207,16 +207,22 @@ def build_joint_denoiser(
     *,
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
-    anchor_weight: float = 20.0,
-    reg_weight: float = 0.5,
-    smooth_weight: float = 1.0,
-    weight_reg: float = 0.01,
+    aw_trans: float = 10.0,
+    aw_rot: float = 10.0,
+    rw_trans: float = 0.1,
+    rw_rot: float = 0.1,
+    sw_trans: float = 0.0,
+    sw_rot: float = 0.0,
+    weight_reg: float = 0.001,
 ):
     """Build a JIT-compiled joint denoiser and weight learner.
 
     The inner GN solver uses sparse anchors and per-edge learned weights.
     The outer loss evaluates at held-out dense anchors, forcing the learned
     corrections and weights to generalise.
+
+    Translation and rotation components have **independent** loss weights
+    so each can be tuned without interfering with the other.
 
     Parameters
     ----------
@@ -230,12 +236,14 @@ def build_joint_denoiser(
         Noise standard deviations (6,).
     gn_iters : int
         Inner Gauss-Newton iterations.
-    anchor_weight : float
-        Weight on held-out anchor loss.
-    reg_weight : float
-        Weight on measurement correction regularisation.
-    smooth_weight : float
-        Weight on information-weighted temporal smoothness.
+    aw_trans, aw_rot : float
+        Anchor loss weight for translation / rotation components.
+    rw_trans, rw_rot : float
+        Measurement correction regularisation for translation / rotation.
+    sw_trans, sw_rot : float
+        Temporal smoothness weight for translation / rotation.
+        Default 0 — the inner GN already smooths implicitly; explicit
+        smoothness on measurements destroys RPE.
     weight_reg : float
         Regularisation pulling log-weights toward zero (uniform).
 
@@ -252,7 +260,14 @@ def build_joint_denoiser(
     sqrt_anchor_w = jnp.sqrt(anchor_w)
     inner_idx = jnp.array(inner_anchor_positions, dtype=jnp.int32)
     outer_idx = jnp.array(outer_anchor_positions, dtype=jnp.int32)
-    anchor_info_w = sigma_to_weight(sigma)          # for outer loss weighting
+
+    # Per-component outer loss weights: [aw_trans]*3 + [aw_rot]*3
+    anchor_w_vec = jnp.array(
+        [aw_trans] * 3 + [aw_rot] * 3, dtype=jnp.float32)
+    reg_w_vec = jnp.array(
+        [rw_trans] * 3 + [rw_rot] * 3, dtype=jnp.float32)
+    smooth_w_vec = jnp.array(
+        [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
 
     # Vectorised residual with per-edge learned weights.
     def _odom_res_single(pose_a, pose_b, meas, log_w):
@@ -301,21 +316,25 @@ def build_joint_denoiser(
         poses_opt = x.reshape(n_poses, 6)
 
         # 1. Validation anchor loss at HELD-OUT positions.
-        diffs = poses_opt[outer_idx] - outer_targets
-        a_loss = jnp.sum(anchor_info_w * diffs ** 2)
+        #    Translation and rotation weighted independently.
+        diffs = poses_opt[outer_idx] - outer_targets      # (n_outer, 6)
+        a_loss = jnp.sum(anchor_w_vec * diffs ** 2)
 
-        # 2. Measurement correction regularisation (keep corrections small).
-        r_loss = jnp.sum(base_odom_w * delta_theta ** 2)
+        # 2. Measurement correction regularisation.
+        #    Penalise large corrections; trans/rot independent.
+        r_loss = jnp.sum(reg_w_vec * delta_theta ** 2)
 
-        # 3. Information-weighted temporal smoothness on corrected measurements.
+        # 3. Temporal smoothness (default OFF — inner GN smooths implicitly).
+        #    When enabled, penalises large changes between consecutive corrected
+        #    measurements.  Only useful if measurements have structured noise
+        #    (e.g., periodic bias).
         s_diffs = theta[1:] - theta[:-1]
-        s_loss = jnp.sum(base_odom_w * s_diffs ** 2)
+        s_loss = jnp.sum(smooth_w_vec * s_diffs ** 2)
 
         # 4. Weight regularisation (toward uniform, exp(0) = 1).
         w_loss = jnp.sum(log_weights ** 2)
 
-        return (anchor_weight * a_loss + reg_weight * r_loss
-                + smooth_weight * s_loss + weight_reg * w_loss)
+        return a_loss + r_loss + s_loss + weight_reg * w_loss
 
     grad_fn = jax.jit(jax.grad(outer_loss, argnums=(0, 1)))
     loss_fn = jax.jit(outer_loss)
@@ -434,18 +453,26 @@ def main():
                         help="Outer (validation) anchor spacing (default: 5)")
     parser.add_argument("--sigma-trans", type=float, default=0.10)
     parser.add_argument("--sigma-rot", type=float, default=0.05)
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="Adam learning rate (default: 1e-3)")
+    parser.add_argument("--lr-meas", type=float, default=1e-3,
+                        help="Adam LR for measurement corrections (default: 1e-3)")
+    parser.add_argument("--lr-weight", type=float, default=5e-3,
+                        help="Adam LR for log-weights (default: 5e-3)")
     parser.add_argument("--n-outer-iters", type=int, default=200,
                         help="Outer Adam iterations per window (default: 200)")
     parser.add_argument("--gn-iters", type=int, default=10,
                         help="Inner GN iterations (default: 10)")
-    parser.add_argument("--aw", type=float, default=10.0,
-                        help="Anchor weight (default: 10.0)")
-    parser.add_argument("--rw", type=float, default=0.1,
-                        help="Measurement regularisation weight (default: 0.1)")
-    parser.add_argument("--sw", type=float, default=0.5,
-                        help="Smoothness weight (default: 0.5)")
+    parser.add_argument("--aw-trans", type=float, default=10.0,
+                        help="Anchor weight, translation (default: 10.0)")
+    parser.add_argument("--aw-rot", type=float, default=10.0,
+                        help="Anchor weight, rotation (default: 10.0)")
+    parser.add_argument("--rw-trans", type=float, default=0.1,
+                        help="Measurement reg weight, translation (default: 0.1)")
+    parser.add_argument("--rw-rot", type=float, default=0.1,
+                        help="Measurement reg weight, rotation (default: 0.1)")
+    parser.add_argument("--sw-trans", type=float, default=0.0,
+                        help="Smoothness weight, translation (default: 0.0)")
+    parser.add_argument("--sw-rot", type=float, default=0.0,
+                        help="Smoothness weight, rotation (default: 0.0)")
     parser.add_argument("--wreg", type=float, default=0.001,
                         help="Weight regularisation (default: 0.001)")
     parser.add_argument("--pgo-spacing", type=int, default=50,
@@ -535,9 +562,12 @@ def main():
           f"({len(inner_anchors)} inner + {len(outer_anchors)} outer)")
     print(f"  Anchor density: {anchor_density:.1f}% (learning)")
     print(f"  PGO anchors:    {len(pgo_anchor_indices)} (global, spacing={args.pgo_spacing})")
-    print(f"  Weights:        aw={args.aw}, rw={args.rw}, sw={args.sw}, wreg={args.wreg}")
+    print(f"  Weights:        aw_t={args.aw_trans}, aw_r={args.aw_rot}, "
+          f"rw_t={args.rw_trans}, rw_r={args.rw_rot}, "
+          f"sw_t={args.sw_trans}, sw_r={args.sw_rot}, wreg={args.wreg}")
     print(f"  Inner GN iters: {args.gn_iters}")
-    print(f"  Outer iters:    {args.n_outer_iters} (Adam, lr={args.lr})")
+    print(f"  Outer iters:    {args.n_outer_iters} "
+          f"(Adam, lr_meas={args.lr_meas}, lr_weight={args.lr_weight})")
     print()
 
     # ---- Baseline ----
@@ -559,8 +589,10 @@ def main():
     grad_fn, loss_fn = build_joint_denoiser(
         actual_window, inner_anchors, outer_anchors, sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
-        anchor_weight=args.aw, reg_weight=args.rw,
-        smooth_weight=args.sw, weight_reg=args.wreg)
+        aw_trans=args.aw_trans, aw_rot=args.aw_rot,
+        rw_trans=args.rw_trans, rw_rot=args.rw_rot,
+        sw_trans=args.sw_trans, sw_rot=args.sw_rot,
+        weight_reg=args.wreg)
 
     # Warm-up with dummy data.
     n_meas_window = actual_window - 1
@@ -631,8 +663,8 @@ def main():
                 print(f"  Window {wi}: NaN gradient at iter {it}, stopping early")
                 break
 
-            update_dt, adam_state_dt = adam_step(g_dt, adam_state_dt, lr=args.lr)
-            update_lw, adam_state_lw = adam_step(g_lw, adam_state_lw, lr=args.lr)
+            update_dt, adam_state_dt = adam_step(g_dt, adam_state_dt, lr=args.lr_meas)
+            update_lw, adam_state_lw = adam_step(g_lw, adam_state_lw, lr=args.lr_weight)
             delta_theta = delta_theta - update_dt
             log_w = log_w - update_lw
 
@@ -874,10 +906,14 @@ def main():
             "sigma_rot": args.sigma_rot,
             "gn_iters": args.gn_iters,
             "outer_iters": args.n_outer_iters,
-            "outer_lr": args.lr,
-            "anchor_weight": args.aw,
-            "reg_weight": args.rw,
-            "smooth_weight": args.sw,
+            "lr_meas": args.lr_meas,
+            "lr_weight": args.lr_weight,
+            "aw_trans": args.aw_trans,
+            "aw_rot": args.aw_rot,
+            "rw_trans": args.rw_trans,
+            "rw_rot": args.rw_rot,
+            "sw_trans": args.sw_trans,
+            "sw_rot": args.sw_rot,
             "weight_reg": args.wreg,
             "optimizer": "adam",
             "overlap_blending": "hann_taper",
