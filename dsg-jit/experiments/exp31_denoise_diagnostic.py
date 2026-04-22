@@ -353,14 +353,38 @@ def main():
     print(f"JIT compilation: {t_jit:.1f}s")
     print()
 
+    # ---- Precompute commit ranges (midpoint-of-overlap) ----
+    # Each window solves the full window for context but only commits
+    # corrections from its assigned region.  Overlap regions are split at
+    # their midpoint so every edge is covered exactly once and each edge
+    # comes from the window whose centre is closest (best solve quality).
+    commit_ranges = []
+    for wi in range(len(windows)):
+        w_start, w_end = windows[wi]
+        w_first_edge = w_start
+        w_last_edge = w_end - 2  # last edge index this window covers
+
+        if wi == 0:
+            commit_start = w_first_edge
+        else:
+            prev_last_edge = windows[wi - 1][1] - 2
+            commit_start = (w_first_edge + prev_last_edge) // 2 + 1
+
+        if wi == len(windows) - 1:
+            commit_end = w_last_edge
+        else:
+            next_first_edge = windows[wi + 1][0]
+            commit_end = (next_first_edge + w_last_edge) // 2
+
+        commit_ranges.append((commit_start, commit_end))
+
+    print(f"  Commit ranges:  {['%d-%d' % (s, e) for s, e in commit_ranges]}")
+    print()
+
     # ---- Denoise window by window ----
     print("Denoising measurements...", flush=True)
     t_denoise_start = time.perf_counter()
 
-    # Stride-commit: each window solves the full window for context but
-    # only commits corrections from its non-overlapping stride region.
-    # The overlap exists purely for solver context — no blending needed.
-    # This avoids conflicting anchor corrections in overlap zones.
     denoised_measurements = np.array(noisy_measurements).copy()
 
     for wi, (w_start, w_end) in enumerate(windows):
@@ -400,25 +424,13 @@ def main():
             update, adam_state = adam_step(g, adam_state, lr=args.lr)
             theta = theta - update
 
-        # Stride-commit: only write the non-overlapping portion.
-        # First window: commit edges [0, stride).
-        # Middle windows: commit edges [overlap, overlap+stride) in local coords.
-        # Last window: commit everything from the commit start to the end.
+        # Commit only this window's assigned edges.
         theta_np = np.array(theta)
-        if wi == 0:
-            commit_local_start = 0
-        else:
-            commit_local_start = overlap
-        if wi == len(windows) - 1:
-            commit_local_end = w_n_meas
-        else:
-            commit_local_end = commit_local_start + stride
-
-        commit_local_end = min(commit_local_end, w_n_meas)
-        for i in range(commit_local_start, commit_local_end):
-            gi = w_start + i
-            if gi < n_meas_total:
-                denoised_measurements[gi] = theta_np[i]
+        commit_start, commit_end = commit_ranges[wi]
+        for gi in range(commit_start, commit_end + 1):
+            local_i = gi - w_start
+            if 0 <= local_i < w_n_meas and gi < n_meas_total:
+                denoised_measurements[gi] = theta_np[local_i]
 
         # Per-window diagnostics.
         final_loss = float(loss_fn(theta, x_init, w_anchor_targets, w_noisy))
