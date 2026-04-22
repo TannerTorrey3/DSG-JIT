@@ -145,20 +145,24 @@ def build_denoiser(
     rw_trans: float = 1.0,
     rw_rot: float = 0.1,
     smooth_weight: float = 2.0,
+    inner_anchor_sigma: float = 0.01,
 ):
     """Build a JIT-compiled bilevel denoiser.
 
-    Loss design follows exp24 (proven on small scale):
-      - Anchor loss: separate trans/rot weights so rotation anchor pull
-        can be weakened independently.
+    Loss design:
+      - Anchor loss: separate trans/rot weights.
       - Regularisation: info-weighted (1/sigma^2) with separate trans/rot
         multipliers so rotation corrections are not over-constrained.
       - Smoothness: UNWEIGHTED temporal diff.
+      - Inner anchor stiffness controlled by inner_anchor_sigma.
+        Lower = stiffer (poses pinned harder at anchors).
+        Higher = softer (inner solver can distribute error more smoothly
+        near anchors, reducing rotation distortion).
     """
     n_meas = n_poses - 1
     odom_w = sigma_to_weight(sigma)
     sqrt_odom_w = jnp.sqrt(odom_w)
-    anchor_w = sigma_to_weight(jnp.full(6, 0.01))
+    anchor_w = sigma_to_weight(jnp.full(6, inner_anchor_sigma))
     sqrt_anchor_w = jnp.sqrt(anchor_w)
     anchor_idx = jnp.array(anchor_positions, dtype=jnp.int32)
 
@@ -258,6 +262,9 @@ def main():
                         help="Reg weight, rotation (default: 0.1)")
     parser.add_argument("--sw", type=float, default=2.0,
                         help="Smoothness weight (default: 2.0)")
+    parser.add_argument("--inner-anchor-sigma", type=float, default=0.01,
+                        help="Inner solver anchor stiffness sigma (default: 0.01, "
+                        "higher = softer anchors)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=str, default="exp31_results.json")
     args = parser.parse_args()
@@ -324,6 +331,7 @@ def main():
           f"(every {args.anchor_spacing}, {anchor_density:.0f}% density)")
     print(f"  Weights:        aw_t={args.aw_trans}, aw_r={args.aw_rot}, "
           f"rw_t={args.rw_trans}, rw_r={args.rw_rot}, sw={args.sw}")
+    print(f"  Inner anchor:   sigma={args.inner_anchor_sigma}")
     print(f"  Loss design:    anchor=separate trans/rot, "
           f"reg=info-weighted (separate trans/rot), smooth=UNWEIGHTED")
     print(f"  Inner GN iters: {args.gn_iters}")
@@ -349,7 +357,8 @@ def main():
         gn_iters=args.gn_iters, gn_damping=5e-3,
         aw_trans=args.aw_trans, aw_rot=args.aw_rot,
         rw_trans=args.rw_trans, rw_rot=args.rw_rot,
-        smooth_weight=args.sw)
+        smooth_weight=args.sw,
+        inner_anchor_sigma=args.inner_anchor_sigma)
 
     # Warm-up.
     n_meas_window = actual_window - 1
@@ -594,8 +603,7 @@ def main():
             "rw_trans": args.rw_trans,
             "rw_rot": args.rw_rot,
             "smooth_weight": args.sw,
-            "loss_design": "exp24 (unweighted anchor, info-weighted reg, "
-                           "unweighted smooth)",
+            "inner_anchor_sigma": args.inner_anchor_sigma,
         },
         "measurement_error": {
             "trans_before": round(baseline['mean_trans'], 6),
