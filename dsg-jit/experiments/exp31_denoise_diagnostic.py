@@ -22,6 +22,7 @@ unweighted anchor loss at scale.
 
 Usage:
     python -m experiments.exp31_denoise_diagnostic
+    python -m experiments.exp31_denoise_diagnostic --rw-trans 0.5 --rw-rot 0.05
     python -m experiments.exp31_denoise_diagnostic --n-poses 200 --anchor-spacing 50
     JAX_PLATFORM_NAME=cpu python -m experiments.exp31_denoise_diagnostic --n-poses 21
 """
@@ -141,14 +142,16 @@ def build_denoiser(
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
     anchor_weight: float = 5.0,
-    reg_weight: float = 1.0,
+    rw_trans: float = 1.0,
+    rw_rot: float = 0.1,
     smooth_weight: float = 2.0,
 ):
     """Build a JIT-compiled bilevel denoiser.
 
     Loss design follows exp24 (proven on small scale):
       - Anchor loss: UNWEIGHTED geometric diff (no info scaling).
-      - Regularisation: info-weighted (1/sigma^2) — statistical prior.
+      - Regularisation: info-weighted (1/sigma^2) with separate trans/rot
+        multipliers so rotation corrections are not over-constrained.
       - Smoothness: UNWEIGHTED temporal diff.
     """
     n_meas = n_poses - 1
@@ -157,6 +160,10 @@ def build_denoiser(
     anchor_w = sigma_to_weight(jnp.full(6, 0.01))
     sqrt_anchor_w = jnp.sqrt(anchor_w)
     anchor_idx = jnp.array(anchor_positions, dtype=jnp.int32)
+
+    # Per-component reg weight: info-weighted base * separate trans/rot scale.
+    reg_w_vec = odom_w * jnp.array(
+        [rw_trans] * 3 + [rw_rot] * 3, dtype=jnp.float32)
 
     _odom_res_batch = jax.vmap(
         lambda a, b, m: (relative_pose_se3(a, b) - m) * sqrt_odom_w)
@@ -196,16 +203,17 @@ def build_denoiser(
         diffs = poses_opt[anchor_idx] - anchor_targets
         a_loss = jnp.sum(diffs ** 2)
 
-        # 2. Regularisation — info-weighted (keeps theta near noisy obs,
-        #    penalised proportionally to noise level).
+        # 2. Regularisation — info-weighted with separate trans/rot scaling.
+        #    Rotation gets a lower multiplier so the optimiser has freedom
+        #    to correct rotation noise without being pulled back.
         dev = theta - noisy_meas
-        r_loss = jnp.sum(odom_w * dev ** 2)
+        r_loss = jnp.sum(reg_w_vec * dev ** 2)
 
         # 3. Temporal smoothness — UNWEIGHTED (exp24 design).
         s_diffs = theta[1:] - theta[:-1]
         s_loss = jnp.sum(s_diffs ** 2)
 
-        return anchor_weight * a_loss + reg_weight * r_loss + smooth_weight * s_loss
+        return anchor_weight * a_loss + r_loss + smooth_weight * s_loss
 
     grad_fn = jax.jit(jax.grad(outer_loss))
     loss_fn = jax.jit(outer_loss)
@@ -235,8 +243,10 @@ def main():
                         help="Inner GN iterations (default: 10)")
     parser.add_argument("--aw", type=float, default=5.0,
                         help="Anchor weight (default: 5.0)")
-    parser.add_argument("--rw", type=float, default=1.0,
-                        help="Regularisation weight (default: 1.0)")
+    parser.add_argument("--rw-trans", type=float, default=1.0,
+                        help="Reg weight, translation (default: 1.0)")
+    parser.add_argument("--rw-rot", type=float, default=0.1,
+                        help="Reg weight, rotation (default: 0.1)")
     parser.add_argument("--sw", type=float, default=2.0,
                         help="Smoothness weight (default: 2.0)")
     parser.add_argument("--seed", type=int, default=42)
@@ -303,9 +313,10 @@ def main():
     print(f"  Windows:        {len(windows)}")
     print(f"  Anchors/window: {len(anchor_pos_in_window)} "
           f"(every {args.anchor_spacing}, {anchor_density:.0f}% density)")
-    print(f"  Weights:        aw={args.aw}, rw={args.rw}, sw={args.sw}")
-    print(f"  Loss design:    anchor=UNWEIGHTED (exp24), "
-          f"reg=info-weighted, smooth=UNWEIGHTED")
+    print(f"  Weights:        aw={args.aw}, rw_t={args.rw_trans}, "
+          f"rw_r={args.rw_rot}, sw={args.sw}")
+    print(f"  Loss design:    anchor=UNWEIGHTED, "
+          f"reg=info-weighted (separate trans/rot), smooth=UNWEIGHTED")
     print(f"  Inner GN iters: {args.gn_iters}")
     print(f"  Outer iters:    {args.n_outer_iters} (Adam, lr={args.lr})")
     print()
@@ -327,8 +338,8 @@ def main():
     grad_fn, loss_fn = build_denoiser(
         actual_window, anchor_pos_in_window, sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
-        anchor_weight=args.aw, reg_weight=args.rw,
-        smooth_weight=args.sw)
+        anchor_weight=args.aw, rw_trans=args.rw_trans,
+        rw_rot=args.rw_rot, smooth_weight=args.sw)
 
     # Warm-up.
     n_meas_window = actual_window - 1
@@ -553,7 +564,8 @@ def main():
             "outer_iters": args.n_outer_iters,
             "outer_lr": args.lr,
             "anchor_weight": args.aw,
-            "reg_weight": args.rw,
+            "rw_trans": args.rw_trans,
+            "rw_rot": args.rw_rot,
             "smooth_weight": args.sw,
             "loss_design": "exp24 (unweighted anchor, info-weighted reg, "
                            "unweighted smooth)",
