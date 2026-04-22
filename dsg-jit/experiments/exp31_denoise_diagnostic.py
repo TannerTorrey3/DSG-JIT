@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import time
 
 import jax
@@ -358,9 +357,11 @@ def main():
     print("Denoising measurements...", flush=True)
     t_denoise_start = time.perf_counter()
 
-    # Taper-weighted accumulators (Hann window blending).
-    meas_accum = np.zeros((n_meas_total, 6), dtype=np.float64)
-    taper_accum = np.zeros(n_meas_total, dtype=np.float64)
+    # Stride-commit: each window solves the full window for context but
+    # only commits corrections from its non-overlapping stride region.
+    # The overlap exists purely for solver context — no blending needed.
+    # This avoids conflicting anchor corrections in overlap zones.
+    denoised_measurements = np.array(noisy_measurements).copy()
 
     for wi, (w_start, w_end) in enumerate(windows):
         w_n_poses = w_end - w_start
@@ -399,17 +400,25 @@ def main():
             update, adam_state = adam_step(g, adam_state, lr=args.lr)
             theta = theta - update
 
-        # Hann taper for overlap blending.
-        taper = np.array(
-            0.5 * (1.0 - jnp.cos(2.0 * math.pi * jnp.arange(w_n_meas)
-                                   / max(w_n_meas, 1))))
+        # Stride-commit: only write the non-overlapping portion.
+        # First window: commit edges [0, stride).
+        # Middle windows: commit edges [overlap, overlap+stride) in local coords.
+        # Last window: commit everything from the commit start to the end.
         theta_np = np.array(theta)
-        for i in range(w_n_meas):
+        if wi == 0:
+            commit_local_start = 0
+        else:
+            commit_local_start = overlap
+        if wi == len(windows) - 1:
+            commit_local_end = w_n_meas
+        else:
+            commit_local_end = commit_local_start + stride
+
+        commit_local_end = min(commit_local_end, w_n_meas)
+        for i in range(commit_local_start, commit_local_end):
             gi = w_start + i
             if gi < n_meas_total:
-                tw = taper[i]
-                meas_accum[gi] += tw * theta_np[i]
-                taper_accum[gi] += tw
+                denoised_measurements[gi] = theta_np[i]
 
         # Per-window diagnostics.
         final_loss = float(loss_fn(theta, x_init, w_anchor_targets, w_noisy))
@@ -433,12 +442,6 @@ def main():
               f"rot {w_err_before['mean_rot']:.4f}"
               f"->{w_err_after['mean_rot']:.4f} ({r_imp:+.1f}%), "
               f"elapsed={elapsed:.1f}s", flush=True)
-
-    # ---- Normalise taper-weighted accumulators ----
-    denoised_measurements = np.array(noisy_measurements).copy()
-    for i in range(n_meas_total):
-        if taper_accum[i] > 0:
-            denoised_measurements[i] = meas_accum[i] / taper_accum[i]
 
     t_denoise = time.perf_counter() - t_denoise_start
     denoised_meas_jnp = jnp.array(denoised_measurements)
