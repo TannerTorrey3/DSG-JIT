@@ -242,8 +242,8 @@ def main():
                         help="Total poses in trajectory (default: 100)")
     parser.add_argument("--window-size", type=int, default=50,
                         help="Poses per solve window (default: 50)")
-    parser.add_argument("--anchor-spacing", type=int, default=25,
-                        help="GT anchor every N poses within each window (default: 25)")
+    parser.add_argument("--anchor-spacing", type=int, default=50,
+                        help="GT anchor every N poses within each window (default: 50)")
     parser.add_argument("--sigma-trans", type=float, default=0.10)
     parser.add_argument("--sigma-rot", type=float, default=0.05)
     parser.add_argument("--lr", type=float, default=1e-3,
