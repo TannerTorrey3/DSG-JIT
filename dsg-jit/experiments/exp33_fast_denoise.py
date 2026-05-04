@@ -26,8 +26,6 @@ import argparse
 import json
 import os
 import time
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -223,7 +221,6 @@ def build_fast_denoiser(
         # D[i] += Jb[i-1]^T Jb[i-1]  (from edge i-1, where pose i is "b")
         # Off-diag[i] = Ja[i]^T Jb[i]  (coupling pose i to pose i+1)
 
-        JaTJa = jnp.einsum('eij,eik->eik', Ja, Ja)  # wrong, need transpose
         JaTJa = jnp.einsum('eji,ejk->eik', Ja, Ja)  # (n_meas, 6, 6)
         JbTJb = jnp.einsum('eji,ejk->eik', Jb, Jb)  # (n_meas, 6, 6)
         JaTJb = jnp.einsum('eji,ejk->eik', Ja, Jb)  # (n_meas, 6, 6) off-diagonal
@@ -262,53 +259,58 @@ def build_fast_denoiser(
         # Off-diagonal blocks (only from odometry).
         L = JaTJb  # (n_meas, 6, 6) — L[i] couples pose i to pose i+1
 
-        # Block Thomas algorithm (forward elimination + back substitution).
-        # Forward: D'[0] = D[0], for i=1..n-1: D'[i] = D[i] - L[i-1]^T D'[i-1]^{-1} L[i-1]
-        #          g'[0] = g[0], for i=1..n-1: g'[i] = g[i] - L[i-1]^T D'[i-1]^{-1} g'[i-1]
+        # Block Thomas algorithm using jax.lax.scan (no Python loop unrolling).
+        # Forward elimination: compute modified D and g.
+        # carry = (D_inv_prev, g_mod_prev)
+        # inputs = (D[1:], L[0:], g[1:])
+
+        D0_inv = jnp.linalg.inv(D[0])
 
         def forward_step(carry, inp):
-            D_prev_inv = carry  # (6, 6)
-            D_i, L_prev, g_i, g_prev = inp
-            # L_prev couples pose i-1 to pose i: L_prev = Ja[i-1]^T Jb[i-1]
-            # The sub-diagonal block is L_prev^T
+            D_inv_prev, g_prev = carry
+            D_i, L_prev, g_i = inp
             LT = L_prev.T
-            LT_Dinv = LT @ D_prev_inv
+            LT_Dinv = LT @ D_inv_prev
             D_new = D_i - LT_Dinv @ L_prev
             g_new = g_i - LT_Dinv @ g_prev
             D_new_inv = jnp.linalg.inv(D_new)
-            return D_new_inv, (D_new, g_new)
+            return (D_new_inv, g_new), (D_new_inv, g_new)
 
-        D0_inv = jnp.linalg.inv(D[0])
-        # Pack inputs for scan: for i=1..n-1
-        scan_D = D[1:]          # (n-1, 6, 6)
-        scan_L = L              # (n-1, 6, 6) — L[i] couples i to i+1, L[0] couples 0 to 1
-        scan_g = g[1:]          # (n-1, 6)
-        scan_g_prev = g[:-1]    # (n-1, 6) — but need modified g, not original
+        init_carry = (D0_inv, g[0])
+        scan_inputs = (D[1:], L, g[1:])  # L has n_meas = n_poses-1 entries
 
-        # Can't easily use scan because g' depends on previous g'.
-        # Use a Python loop (small n_poses, typically 65).
-        D_mod = [D[0]]
-        g_mod = [g[0]]
-        D_inv = [D0_inv]
+        _, (D_inv_all, g_mod_all) = jax.lax.scan(
+            forward_step, init_carry, scan_inputs)
 
-        for i in range(1, n_poses):
-            LT = L[i-1].T  # sub-diagonal block
-            LT_Dinv = LT @ D_inv[i-1]
-            D_new = D[i] - LT_Dinv @ L[i-1]
-            g_new = g[i] - LT_Dinv @ g_mod[i-1]
-            D_mod.append(D_new)
-            g_mod.append(g_new)
-            D_inv.append(jnp.linalg.inv(D_new))
+        # Prepend the first element.
+        D_inv_full = jnp.concatenate([D0_inv[None], D_inv_all], axis=0)
+        g_mod_full = jnp.concatenate([g[0][None], g_mod_all], axis=0)
 
-        # Back substitution: delta[n-1] = D'[n-1]^{-1} g'[n-1]
-        # for i=n-2..0: delta[i] = D'[i]^{-1} (g'[i] - L[i] delta[i+1])
-        deltas = [None] * n_poses
-        deltas[n_poses - 1] = D_inv[n_poses - 1] @ g_mod[n_poses - 1]
+        # Back substitution using reverse scan.
+        # delta[n-1] = D_inv[n-1] @ g_mod[n-1]
+        # delta[i] = D_inv[i] @ (g_mod[i] - L[i] @ delta[i+1])
+        last_delta = D_inv_full[-1] @ g_mod_full[-1]
 
-        for i in range(n_poses - 2, -1, -1):
-            deltas[i] = D_inv[i] @ (g_mod[i] - L[i] @ deltas[i + 1])
+        def back_step(carry, inp):
+            delta_next = carry
+            D_inv_i, g_mod_i, L_i = inp
+            delta_i = D_inv_i @ (g_mod_i - L_i @ delta_next)
+            return delta_i, delta_i
 
-        delta = jnp.stack(deltas)  # (n_poses, 6)
+        # Reverse scan over indices 0..n-2 (feed them reversed).
+        back_inputs = (
+            D_inv_full[:-1][::-1],   # D_inv[n-2], ..., D_inv[0]
+            g_mod_full[:-1][::-1],   # g_mod[n-2], ..., g_mod[0]
+            L[::-1],                 # L[n-2], ..., L[0]
+        )
+
+        _, deltas_reversed = jax.lax.scan(
+            back_step, last_delta, back_inputs)
+
+        # deltas_reversed is [delta[n-2], delta[n-3], ..., delta[0]]
+        # Flip and append last_delta.
+        delta = jnp.concatenate([deltas_reversed[::-1], last_delta[None]],
+                                axis=0)  # (n_poses, 6)
 
         # Clip step size.
         norms = jnp.linalg.norm(delta, axis=1, keepdims=True)
