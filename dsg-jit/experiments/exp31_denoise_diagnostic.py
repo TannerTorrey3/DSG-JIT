@@ -24,6 +24,7 @@ Usage:
     python -m experiments.exp31_denoise_diagnostic
     python -m experiments.exp31_denoise_diagnostic --rw-trans 0.5 --rw-rot 0.05
     python -m experiments.exp31_denoise_diagnostic --n-poses 200 --anchor-spacing 50
+    python -m experiments.exp31_denoise_diagnostic --kitti-poses /path/to/poses.txt --n-poses 500
     JAX_PLATFORM_NAME=cpu python -m experiments.exp31_denoise_diagnostic --n-poses 21
 """
 
@@ -76,6 +77,31 @@ def generate_kitti_like_trajectory(n_poses: int) -> tuple[jnp.ndarray, dict]:
         y += float(jnp.sin(heading))
         heading += curvature[i]
     return jnp.stack(poses), {"source": "synthetic", "n_frames": n_poses}
+
+
+def load_kitti_poses(path: str, n_poses: int | None = None) -> tuple[jnp.ndarray, dict]:
+    """Load KITTI-format poses.txt and convert to 6D [tx,ty,tz,wx,wy,wz] vectors.
+
+    Each line is a flattened 3x4 [R|t] matrix (12 floats, row-major).
+    """
+    from dsg_jit.core.math3d import so3_log
+
+    raw = np.loadtxt(path).reshape(-1, 3, 4)
+    if n_poses is not None:
+        raw = raw[:n_poses]
+
+    poses = []
+    for i in range(len(raw)):
+        R = raw[i, :3, :3]
+        t = raw[i, :3, 3]
+        w = np.array(so3_log(jnp.array(R, dtype=jnp.float32)))
+        pose_vec = jnp.array(
+            [t[0], t[1], t[2], w[0], w[1], w[2]], dtype=jnp.float32
+        )
+        poses.append(pose_vec)
+
+    n = len(poses)
+    return jnp.stack(poses), {"source": f"kitti:{path}", "n_frames": n}
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +264,8 @@ def build_denoiser(
 def main():
     parser = argparse.ArgumentParser(
         description="exp31: Per-pose denoising diagnostic")
+    parser.add_argument("--kitti-poses", type=str, default=None,
+                        help="Path to KITTI-format poses.txt (overrides synthetic)")
     parser.add_argument("--n-poses", type=int, default=100,
                         help="Total poses in trajectory (default: 100)")
     parser.add_argument("--window-size", type=int, default=50,
@@ -282,10 +310,17 @@ def main():
     print()
 
     # ---- Generate trajectory ----
-    n_poses_total = args.n_poses
-    print(f"Generating synthetic trajectory ({n_poses_total} poses)...",
-          flush=True)
-    gt_poses, data_info = generate_kitti_like_trajectory(n_poses_total)
+    if args.kitti_poses is not None:
+        n_limit = args.n_poses if args.n_poses != 100 else None
+        gt_poses, data_info = load_kitti_poses(args.kitti_poses, n_limit)
+        n_poses_total = gt_poses.shape[0]
+        print(f"Loaded KITTI trajectory ({n_poses_total} poses) from "
+              f"{args.kitti_poses}", flush=True)
+    else:
+        n_poses_total = args.n_poses
+        print(f"Generating synthetic trajectory ({n_poses_total} poses)...",
+              flush=True)
+        gt_poses, data_info = generate_kitti_like_trajectory(n_poses_total)
     gt_np = np.array(gt_poses)
     n_meas_total = n_poses_total - 1
 
