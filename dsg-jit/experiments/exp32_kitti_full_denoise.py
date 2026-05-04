@@ -455,8 +455,8 @@ def main():
                         help="Limit poses per sequence (default: use all)")
     parser.add_argument("--window-size", type=int, default=65,
                         help="Poses per solve window (default: 65)")
-    parser.add_argument("--anchor-spacing", type=int, default=65,
-                        help="GT anchor every N poses (default: 65, ~2%% density)")
+    parser.add_argument("--anchor-spacing", type=int, default=50,
+                        help="GT anchor every N poses (default: 50, ~3 per window)")
     parser.add_argument("--sigma-trans", type=float, default=0.10)
     parser.add_argument("--sigma-rot", type=float, default=0.05)
     parser.add_argument("--lr", type=float, default=1e-3)
