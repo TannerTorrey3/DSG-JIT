@@ -115,8 +115,11 @@ def main():
             plot_sequence(ax, seq, f"Seq {seq['sequence']} ({seq['n_poses']} poses)")
 
     config = data.get("config", {})
+    sw_str = (f"sw_t={config['sw_trans']}, sw_r={config['sw_rot']}"
+              if "sw_trans" in config
+              else f"sw={config.get('sw')}")
     fig.suptitle(
-        f"exp34 Denoising — sw={config.get('sw')}, lr={config.get('lr')}, "
+        f"exp34 Denoising — {sw_str}, lr={config.get('lr')}, "
         f"window={config.get('window_size')}",
         fontsize=13, y=0.98)
     plt.tight_layout()

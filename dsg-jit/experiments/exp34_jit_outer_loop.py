@@ -138,7 +138,8 @@ def build_denoiser(
     aw_rot: float = 5.0,
     rw_trans: float = 0.25,
     rw_rot: float = 0.1,
-    smooth_weight: float = 25.0,
+    sw_trans: float = 25.0,
+    sw_rot: float = 25.0,
     inner_anchor_sigma: float = 0.01,
     n_outer_iters: int = 100,
     lr: float = 1e-3,
@@ -202,9 +203,11 @@ def build_denoiser(
         r_loss = jnp.sum(reg_w_vec * dev ** 2)
 
         s_diffs = theta[1:] - theta[:-1]
-        s_loss = jnp.sum(s_diffs ** 2)
+        sw_vec = jnp.array(
+            [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
+        s_loss = jnp.sum(sw_vec * s_diffs ** 2)
 
-        return a_loss + r_loss + smooth_weight * s_loss
+        return a_loss + r_loss + s_loss
 
     grad_fn = jax.grad(outer_loss)
 
@@ -313,7 +316,7 @@ def denoise_sequence(
         gn_iters=args.gn_iters, gn_damping=5e-3,
         aw_trans=args.aw_trans, aw_rot=args.aw_rot,
         rw_trans=args.rw_trans, rw_rot=args.rw_rot,
-        smooth_weight=args.sw,
+        sw_trans=args.sw_trans, sw_rot=args.sw_rot,
         inner_anchor_sigma=args.inner_anchor_sigma,
         n_outer_iters=args.n_outer_iters,
         lr=args.lr)
@@ -503,13 +506,20 @@ def main():
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--rw-trans", type=float, default=0.25)
     parser.add_argument("--rw-rot", type=float, default=0.1)
-    parser.add_argument("--sw", type=float, default=35.0,
-                        help="Smoothness weight (default: 35.0)")
+    parser.add_argument("--sw", type=float, default=None,
+                        help="Smoothness weight for both trans and rot")
+    parser.add_argument("--sw-trans", type=float, default=35.0)
+    parser.add_argument("--sw-rot", type=float, default=35.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str,
                         default="/data/tkocher/exp_res")
     args = parser.parse_args()
+
+    # --sw overrides both --sw-trans and --sw-rot
+    if args.sw is not None:
+        args.sw_trans = args.sw
+        args.sw_rot = args.sw
 
     sigma = jnp.array([args.sigma_trans] * 3 + [args.sigma_rot] * 3,
                        dtype=jnp.float32)
@@ -522,7 +532,7 @@ def main():
     print(f"  Config: window={args.window_size}, "
           f"anchor_spacing={args.anchor_spacing}")
     print(f"  Weights: rw_t={args.rw_trans}, rw_r={args.rw_rot}, "
-          f"sw={args.sw}")
+          f"sw_t={args.sw_trans}, sw_r={args.sw_rot}")
     print(f"  Outer loop: lax.fori_loop, {args.n_outer_iters} iters, "
           f"lr={args.lr}")
     print(f"  Inner GN: {args.gn_iters} iters")
@@ -591,7 +601,8 @@ def main():
             "lr": args.lr,
             "rw_trans": args.rw_trans,
             "rw_rot": args.rw_rot,
-            "sw": args.sw,
+            "sw_trans": args.sw_trans,
+            "sw_rot": args.sw_rot,
             "aw_trans": args.aw_trans,
             "aw_rot": args.aw_rot,
             "inner_anchor_sigma": args.inner_anchor_sigma,
