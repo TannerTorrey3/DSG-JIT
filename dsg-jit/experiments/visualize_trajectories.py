@@ -69,10 +69,11 @@ def main():
     if args.json_file:
         json_path = args.json_file
     elif args.latest:
-        pattern = os.path.join(args.results_dir, "exp34_*.json")
-        files = sorted(glob.glob(pattern))
+        pattern34 = glob.glob(os.path.join(args.results_dir, "exp34_*.json"))
+        pattern35 = glob.glob(os.path.join(args.results_dir, "exp35_*.json"))
+        files = sorted(pattern34 + pattern35)
         if not files:
-            print(f"No exp34 results found in {args.results_dir}")
+            print(f"No exp34/exp35 results found in {args.results_dir}")
             sys.exit(1)
         json_path = files[-1]
         print(f"Using: {json_path}")
