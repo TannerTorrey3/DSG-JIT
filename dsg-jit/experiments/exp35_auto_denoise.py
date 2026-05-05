@@ -102,17 +102,20 @@ def estimate_noise_model(measurements: np.ndarray) -> dict:
 
 
 def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
-                         base_rw: float = 1.0) -> dict:
-    """Derive sw and rw from the estimated noise model.
+                         base_rw: float = 1.0,
+                         snr_threshold: float = 2.0) -> dict:
+    """Derive sw, rw, and gradient mask from the estimated noise model.
 
     In the MAP framework:
         sw  =  base_sw / σ²_process   (penalise deviations from smoothness)
         rw  =  base_rw / σ²_noise     (penalise deviations from observations)
 
-    base_sw and base_rw are overall scaling factors that control the
-    absolute strength of the loss terms.  Their ratio is fixed by the
-    noise model; only the overall scale needs tuning (and base_sw=1,
-    base_rw=1 is a reasonable default).
+    SNR-based gradient masking:
+        SNR = σ_process / σ_noise
+        When SNR > threshold, the signal varies much more than the noise,
+        meaning measurements are already clean.  Corrections would
+        introduce more error than they remove, so we mask out those
+        gradient components entirely.
     """
     sn_t = noise_model["sigma_noise_trans"]
     sn_r = noise_model["sigma_noise_rot"]
@@ -124,11 +127,22 @@ def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
     rw_trans = base_rw / max(sn_t ** 2, 1e-12)
     rw_rot = base_rw / max(sn_r ** 2, 1e-12)
 
+    snr_trans = sp_t / max(sn_t, 1e-12)
+    snr_rot = sp_r / max(sn_r, 1e-12)
+
+    # Mask: 1.0 = correct this component, 0.0 = leave it untouched
+    mask_trans = 1.0 if snr_trans <= snr_threshold else 0.0
+    mask_rot = 1.0 if snr_rot <= snr_threshold else 0.0
+
     return {
         "sw_trans": sw_trans,
         "sw_rot": sw_rot,
         "rw_trans": rw_trans,
         "rw_rot": rw_rot,
+        "snr_trans": snr_trans,
+        "snr_rot": snr_rot,
+        "mask_trans": mask_trans,
+        "mask_rot": mask_rot,
     }
 
 
@@ -225,6 +239,8 @@ def build_denoiser(
     inner_anchor_sigma: float = 0.01,
     n_outer_iters: int = 100,
     lr: float = 1e-3,
+    mask_trans: float = 1.0,
+    mask_rot: float = 1.0,
 ):
     """Build a fully JIT-compiled denoiser with fused outer loop."""
     n_meas = n_poses - 1
@@ -291,6 +307,11 @@ def build_denoiser(
 
     grad_fn = jax.grad(outer_loss)
 
+    # SNR-based gradient mask: zero out components where noise is too
+    # small relative to signal variation (denoising would hurt).
+    grad_mask = jnp.array(
+        [mask_trans] * 3 + [mask_rot] * 3, dtype=jnp.float32)
+
     def fused_optimize(theta_init, x_init, anchor_targets, noisy_meas):
         """Run the full outer optimization as a single compiled kernel."""
         m0 = jnp.zeros_like(theta_init)
@@ -299,6 +320,7 @@ def build_denoiser(
         def adam_body(i, state):
             theta, m, v = state
             g = grad_fn(theta, x_init, anchor_targets, noisy_meas)
+            g = g * grad_mask  # mask out high-SNR components
 
             t = (i + 1).astype(jnp.float32)
             m_new = 0.9 * m + 0.1 * g
@@ -366,18 +388,31 @@ def denoise_sequence(
             noise_model,
             base_sw=args.base_sw,
             base_rw=args.base_rw,
+            snr_threshold=args.snr_threshold,
         )
         sw_trans = auto_w["sw_trans"]
         sw_rot = auto_w["sw_rot"]
         rw_trans = auto_w["rw_trans"]
         rw_rot = auto_w["rw_rot"]
+        mask_trans = auto_w["mask_trans"]
+        mask_rot = auto_w["mask_rot"]
+        snr_trans = auto_w["snr_trans"]
+        snr_rot = auto_w["snr_rot"]
         print(f"  --- Auto weights (base_sw={args.base_sw}, "
               f"base_rw={args.base_rw}) ---")
+        print(f"  SNR: trans={snr_trans:.2f}, rot={snr_rot:.2f} "
+              f"(threshold={args.snr_threshold})")
+        print(f"  Gradient mask: trans={'ON' if mask_trans else 'OFF'}, "
+              f"rot={'ON' if mask_rot else 'OFF'}")
     else:
         sw_trans = args.sw_trans
         sw_rot = args.sw_rot
         rw_trans = args.rw_trans
         rw_rot = args.rw_rot
+        mask_trans = 1.0
+        mask_rot = 1.0
+        snr_trans = None
+        snr_rot = None
         print(f"  --- Manual weights ---")
 
     print(f"  sw_trans={sw_trans:.2f}, sw_rot={sw_rot:.2f}")
@@ -430,7 +465,8 @@ def denoise_sequence(
         sw_trans=sw_trans, sw_rot=sw_rot,
         inner_anchor_sigma=args.inner_anchor_sigma,
         n_outer_iters=args.n_outer_iters,
-        lr=args.lr)
+        lr=args.lr,
+        mask_trans=mask_trans, mask_rot=mask_rot)
 
     # Warm-up the fused optimizer.
     n_meas_window = actual_window - 1
@@ -565,6 +601,10 @@ def denoise_sequence(
             "rw_trans": round(rw_trans, 4),
             "rw_rot": round(rw_rot, 4),
             "auto": args.auto_weights,
+            "snr_trans": round(snr_trans, 4) if snr_trans is not None else None,
+            "snr_rot": round(snr_rot, 4) if snr_rot is not None else None,
+            "mask_trans": mask_trans,
+            "mask_rot": mask_rot,
         },
         "baseline": {
             "trans_rmse": round(baseline['rmse_trans'], 6),
@@ -638,6 +678,8 @@ def main():
                         help="Base smoothness scale for auto weights")
     parser.add_argument("--base-rw", type=float, default=1.0,
                         help="Base regularization scale for auto weights")
+    parser.add_argument("--snr-threshold", type=float, default=2.0,
+                        help="SNR above which gradient is masked (no correction)")
 
     # Manual weight overrides (used when --no-auto-weights)
     parser.add_argument("--sw-trans", type=float, default=35.0)
