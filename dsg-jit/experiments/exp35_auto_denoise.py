@@ -237,7 +237,10 @@ def build_denoiser(
     anchor_w_vec = jnp.array(
         [aw_trans] * 3 + [aw_rot] * 3, dtype=jnp.float32)
 
-    reg_w_vec = odom_w * jnp.array(
+    # rw is the precision (1/σ²_noise) directly — no extra odom_w scaling.
+    # This makes the MAP interpretation exact: base_sw=1, base_rw=1 are
+    # correct when rw and sw come from the auto-tuner.
+    reg_w_vec = jnp.array(
         [rw_trans] * 3 + [rw_rot] * 3, dtype=jnp.float32)
 
     _odom_res_batch = jax.vmap(
