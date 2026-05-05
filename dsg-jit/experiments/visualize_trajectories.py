@@ -10,7 +10,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import glob
 import json
+import os
 import sys
 
 import numpy as np
@@ -51,15 +53,33 @@ def plot_sequence(ax, seq_data: dict, title: str):
 def main():
     parser = argparse.ArgumentParser(
         description="3D trajectory visualizer for exp34 results")
-    parser.add_argument("json_file", type=str,
+    parser.add_argument("json_file", type=str, nargs="?", default=None,
                         help="Path to exp34 results JSON")
+    parser.add_argument("--latest", action="store_true",
+                        help="Auto-pick the most recent exp34 result file")
+    parser.add_argument("--results-dir", type=str,
+                        default="/data/tkocher/exp_res",
+                        help="Directory to search with --latest")
     parser.add_argument("--seq", type=str, default=None,
                         help="Comma-separated sequence IDs to plot (default: all)")
     parser.add_argument("--save", type=str, default=None,
                         help="Save figure to file instead of showing")
     args = parser.parse_args()
 
-    with open(args.json_file) as f:
+    if args.json_file:
+        json_path = args.json_file
+    elif args.latest:
+        pattern = os.path.join(args.results_dir, "exp34_*.json")
+        files = sorted(glob.glob(pattern))
+        if not files:
+            print(f"No exp34 results found in {args.results_dir}")
+            sys.exit(1)
+        json_path = files[-1]
+        print(f"Using: {json_path}")
+    else:
+        parser.error("Provide a json_file or use --latest")
+
+    with open(json_path) as f:
         data = json.load(f)
 
     sequences = data["sequences"]
