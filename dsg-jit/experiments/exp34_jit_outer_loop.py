@@ -95,6 +95,16 @@ def find_sequences(sequences_dir: str, seq_filter: str | None = None) -> list[tu
 # Per-pose metrics
 # ---------------------------------------------------------------------------
 
+def reconstruct_trajectory(start_pose: jnp.ndarray, measurements: jnp.ndarray) -> np.ndarray:
+    """Forward-compose measurements from a starting pose to build a trajectory."""
+    poses = [np.array(start_pose)]
+    current = start_pose
+    for i in range(measurements.shape[0]):
+        current = compose_pose_se3(current, measurements[i])
+        poses.append(np.array(current))
+    return np.stack(poses)
+
+
 def compute_per_pose_meas_error(
     measurements: jnp.ndarray,
     gt_measurements: jnp.ndarray,
@@ -421,6 +431,12 @@ def denoise_sequence(
     print(f"  Real-time factor (vs 10Hz): {poses_per_sec/10:.2f}x")
     print(f"  Real-time factor (vs 100Hz): {poses_per_sec/100:.2f}x")
 
+    # Reconstruct trajectories for visualization.
+    start_pose = gt_poses[0]
+    gt_traj = reconstruct_trajectory(start_pose, gt_measurements)
+    noisy_traj = reconstruct_trajectory(start_pose, noisy_measurements)
+    denoised_traj = reconstruct_trajectory(start_pose, denoised_meas_jnp)
+
     return {
         "sequence": seq_id,
         "n_poses": n_poses_total,
@@ -454,6 +470,11 @@ def denoise_sequence(
             "denoise_s": round(t_denoise, 2),
             "realtime_factor_10hz": round(poses_per_sec / 10, 2),
             "realtime_factor_100hz": round(poses_per_sec / 100, 2),
+        },
+        "trajectories": {
+            "gt": gt_traj.tolist(),
+            "noisy": noisy_traj.tolist(),
+            "denoised": denoised_traj.tolist(),
         },
     }
 
