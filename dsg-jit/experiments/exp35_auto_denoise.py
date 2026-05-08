@@ -110,12 +110,12 @@ def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
         sw  =  base_sw / σ²_process   (penalise deviations from smoothness)
         rw  =  base_rw / σ²_noise     (penalise deviations from observations)
 
-    SNR-based gradient masking:
+    SNR-based soft gradient masking:
         SNR = σ_process / σ_noise
-        When SNR > threshold, the signal varies much more than the noise,
-        meaning measurements are already clean.  Corrections would
-        introduce more error than they remove, so we mask out those
-        gradient components entirely.
+        mask = clamp(threshold / SNR, 0, 1)
+        When SNR is high (clean measurements), the gradient is dampened
+        proportionally rather than zeroed.  This avoids leaving
+        performance on the table while still protecting clean components.
     """
     sn_t = noise_model["sigma_noise_trans"]
     sn_r = noise_model["sigma_noise_rot"]
@@ -130,9 +130,10 @@ def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
     snr_trans = sp_t / max(sn_t, 1e-12)
     snr_rot = sp_r / max(sn_r, 1e-12)
 
-    # Mask: 1.0 = correct this component, 0.0 = leave it untouched
-    mask_trans = 1.0 if snr_trans <= snr_threshold else 0.0
-    mask_rot = 1.0 if snr_rot <= snr_threshold else 0.0
+    # Soft mask: full correction when SNR <= 1, linearly damped above,
+    # clamped to [0, 1].  mask = clamp(threshold / SNR, 0, 1)
+    mask_trans = float(np.clip(snr_threshold / max(snr_trans, 1e-12), 0.0, 1.0))
+    mask_rot = float(np.clip(snr_threshold / max(snr_rot, 1e-12), 0.0, 1.0))
 
     return {
         "sw_trans": sw_trans,
@@ -353,6 +354,7 @@ def denoise_sequence(
     args,
     sigma: jnp.ndarray,
     seq_id: str = "??",
+    seed: int = 42,
 ) -> dict:
     """Run the full denoising pipeline on a single sequence."""
     n_poses_total = gt_poses.shape[0]
@@ -368,7 +370,7 @@ def denoise_sequence(
     ])
 
     # Add calibrated noise.
-    key = jax.random.PRNGKey(args.seed)
+    key = jax.random.PRNGKey(seed)
     noise = jax.random.normal(key, shape=gt_measurements.shape) * sigma
     noisy_measurements = gt_measurements + noise
 
@@ -402,8 +404,8 @@ def denoise_sequence(
               f"base_rw={args.base_rw}) ---")
         print(f"  SNR: trans={snr_trans:.2f}, rot={snr_rot:.2f} "
               f"(threshold={args.snr_threshold})")
-        print(f"  Gradient mask: trans={'ON' if mask_trans else 'OFF'}, "
-              f"rot={'ON' if mask_rot else 'OFF'}")
+        print(f"  Gradient mask: trans={mask_trans:.2f}, "
+              f"rot={mask_rot:.2f}")
     else:
         sw_trans = args.sw_trans
         sw_rot = args.sw_rot
@@ -666,6 +668,8 @@ def main():
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n-seeds", type=int, default=1,
+                        help="Number of noise seeds to run (for statistics)")
     parser.add_argument("--output-dir", type=str,
                         default="/data/tkocher/exp_res")
 
@@ -720,36 +724,125 @@ def main():
 
     print(f"Found {len(sequences)} sequences: {[s[0] for s in sequences]}")
 
-    # Run.
-    all_results = []
-    t_total_start = time.perf_counter()
+    n_seeds = args.n_seeds
+    seeds = list(range(args.seed, args.seed + n_seeds))
+    if n_seeds > 1:
+        print(f"  Seeds: {n_seeds} (seed {seeds[0]}..{seeds[-1]})")
 
+    # Pre-load all GT poses.
+    seq_data = []
     for seq_id, poses_path in sequences:
         gt_poses, data_info = load_kitti_poses(poses_path, args.n_poses)
         if gt_poses.shape[0] < args.window_size:
             print(f"\n  Sequence {seq_id}: skipping ({gt_poses.shape[0]} "
                   f"< {args.window_size} poses)")
             continue
-        result = denoise_sequence(gt_poses, args, sigma, seq_id=seq_id)
-        all_results.append(result)
+        seq_data.append((seq_id, gt_poses))
+
+    # Run all seeds.
+    # all_seed_results[seed_idx] = list of per-sequence result dicts
+    all_seed_results = []
+    t_total_start = time.perf_counter()
+
+    for si, seed in enumerate(seeds):
+        if n_seeds > 1:
+            print(f"\n{'='*70}")
+            print(f"  Seed {si+1}/{n_seeds} (seed={seed})")
+            print(f"{'='*70}")
+
+        seed_results = []
+        for seq_id, gt_poses in seq_data:
+            result = denoise_sequence(
+                gt_poses, args, sigma, seq_id=seq_id, seed=seed)
+            # Only keep trajectories for first seed to save space.
+            if si > 0 and "trajectories" in result:
+                del result["trajectories"]
+            result["seed"] = seed
+            seed_results.append(result)
+
+        all_seed_results.append(seed_results)
+
+        # Print per-seed summary.
+        print()
+        print(f"  {'Seq':>4s} {'Poses':>6s} {'Poses/s':>8s} "
+              f"{'T_RMSE%':>8s} {'R_RMSE%':>8s} {'Combined':>9s}")
+        print(f"  {'-'*4} {'-'*6} {'-'*8} "
+              f"{'-'*8} {'-'*8} {'-'*9}")
+        for r in seed_results:
+            tp = r['throughput']
+            imp = r['improvement_pct']
+            print(f"  {r['sequence']:>4s} {r['n_poses']:>6d} "
+                  f"{tp['poses_per_sec']:>7.1f} "
+                  f"{imp['trans_rmse']:>+7.1f}% "
+                  f"{imp['rot_rmse']:>+7.1f}% "
+                  f"{imp['combined']:>+8.1f}%")
 
     t_total = time.perf_counter() - t_total_start
 
-    # Summary.
+    # Aggregate statistics across seeds.
+    if n_seeds > 1:
+        print()
+        print("=" * 70)
+        print(f"  AGGREGATE RESULTS ({n_seeds} seeds)")
+        print("=" * 70)
+        print()
+        print(f"  {'Seq':>4s} {'Poses':>6s} "
+              f"{'T_mean':>8s} {'T_std':>7s} "
+              f"{'R_mean':>8s} {'R_std':>7s} "
+              f"{'C_mean':>8s} {'C_std':>7s}")
+        print(f"  {'-'*4} {'-'*6} "
+              f"{'-'*8} {'-'*7} "
+              f"{'-'*8} {'-'*7} "
+              f"{'-'*8} {'-'*7}")
+
+        aggregate = []
+        for si_seq in range(len(seq_data)):
+            seq_id = seq_data[si_seq][0]
+            n_poses = seq_data[si_seq][1].shape[0]
+            t_vals = [all_seed_results[si][si_seq]['improvement_pct']['trans_rmse']
+                      for si in range(n_seeds)]
+            r_vals = [all_seed_results[si][si_seq]['improvement_pct']['rot_rmse']
+                      for si in range(n_seeds)]
+            c_vals = [all_seed_results[si][si_seq]['improvement_pct']['combined']
+                      for si in range(n_seeds)]
+
+            stats = {
+                "sequence": seq_id,
+                "n_poses": n_poses,
+                "trans_mean": round(float(np.mean(t_vals)), 2),
+                "trans_std": round(float(np.std(t_vals)), 2),
+                "rot_mean": round(float(np.mean(r_vals)), 2),
+                "rot_std": round(float(np.std(r_vals)), 2),
+                "combined_mean": round(float(np.mean(c_vals)), 2),
+                "combined_std": round(float(np.std(c_vals)), 2),
+            }
+            aggregate.append(stats)
+
+            print(f"  {seq_id:>4s} {n_poses:>6d} "
+                  f"{stats['trans_mean']:>+7.1f}% {stats['trans_std']:>6.1f} "
+                  f"{stats['rot_mean']:>+7.1f}% {stats['rot_std']:>6.1f} "
+                  f"{stats['combined_mean']:>+7.1f}% "
+                  f"{stats['combined_std']:>6.1f}")
+    else:
+        aggregate = None
+
+    # Summary table (last seed or single seed).
     print()
     print("=" * 70)
-    print("  RESULTS")
+    print("  RESULTS" + (f" (seed {seeds[-1]})" if n_seeds == 1 else
+                         f" (last seed {seeds[-1]})"))
     print("=" * 70)
     print()
 
-    if all_results:
+    last_results = all_seed_results[-1]
+    if last_results:
         print(f"  {'Seq':>4s} {'Poses':>6s} {'Poses/s':>8s} "
               f"{'RT@10Hz':>8s} {'RT@100Hz':>9s} "
               f"{'T_RMSE%':>8s} {'R_RMSE%':>8s} {'Combined':>9s}")
         print(f"  {'-'*4} {'-'*6} {'-'*8} "
               f"{'-'*8} {'-'*9} {'-'*8} {'-'*8} {'-'*9}")
 
-        for r in all_results:
+        for r in last_results:
             tp = r['throughput']
             imp = r['improvement_pct']
             print(f"  {r['sequence']:>4s} {r['n_poses']:>6d} "
@@ -765,6 +858,11 @@ def main():
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(
         args.output_dir, f"exp35_{timestamp}.json")
+
+    # Flatten all seed results into a single list.
+    all_results_flat = []
+    for seed_results in all_seed_results:
+        all_results_flat.extend(seed_results)
 
     output = {
         "config": {
@@ -782,8 +880,11 @@ def main():
             "aw_rot": args.aw_rot,
             "inner_anchor_sigma": args.inner_anchor_sigma,
             "outer_loop": "lax.fori_loop (fused)",
+            "n_seeds": n_seeds,
+            "seeds": seeds,
         },
-        "sequences": all_results,
+        "sequences": all_results_flat,
+        "aggregate": aggregate,
         "total_time_s": round(t_total, 1),
     }
 
