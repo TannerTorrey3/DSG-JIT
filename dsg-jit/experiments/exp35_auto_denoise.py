@@ -110,12 +110,10 @@ def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
         sw  =  base_sw / σ²_process   (penalise deviations from smoothness)
         rw  =  base_rw / σ²_noise     (penalise deviations from observations)
 
-    SNR-based soft gradient masking:
+    Hard SNR-based gradient masking:
         SNR = σ_process / σ_noise
-        mask = clamp(threshold / SNR, 0, 1)
-        When SNR is high (clean measurements), the gradient is dampened
-        proportionally rather than zeroed.  This avoids leaving
-        performance on the table while still protecting clean components.
+        When SNR > threshold, the component is clean enough that denoising
+        would hurt — gradient is fully zeroed for that component.
     """
     sn_t = noise_model["sigma_noise_trans"]
     sn_r = noise_model["sigma_noise_rot"]
@@ -130,10 +128,10 @@ def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
     snr_trans = sp_t / max(sn_t, 1e-12)
     snr_rot = sp_r / max(sn_r, 1e-12)
 
-    # Soft mask: full correction when SNR <= 1, linearly damped above,
-    # clamped to [0, 1].  mask = clamp(threshold / SNR, 0, 1)
-    mask_trans = float(np.clip(snr_threshold / max(snr_trans, 1e-12), 0.0, 1.0))
-    mask_rot = float(np.clip(snr_threshold / max(snr_rot, 1e-12), 0.0, 1.0))
+    # Hard mask: 1.0 if SNR <= threshold (noisy, correct it),
+    #            0.0 if SNR > threshold (clean, leave it alone).
+    mask_trans = 1.0 if snr_trans <= snr_threshold else 0.0
+    mask_rot = 1.0 if snr_rot <= snr_threshold else 0.0
 
     return {
         "sw_trans": sw_trans,
@@ -308,8 +306,8 @@ def build_denoiser(
 
     grad_fn = jax.grad(outer_loss)
 
-    # SNR-based gradient mask: zero out components where noise is too
-    # small relative to signal variation (denoising would hurt).
+    # Hard SNR-based gradient mask: zero out components where the signal
+    # is clean enough that denoising would hurt.
     grad_mask = jnp.array(
         [mask_trans] * 3 + [mask_rot] * 3, dtype=jnp.float32)
 
@@ -321,7 +319,7 @@ def build_denoiser(
         def adam_body(i, state):
             theta, m, v = state
             g = grad_fn(theta, x_init, anchor_targets, noisy_meas)
-            g = g * grad_mask  # mask out high-SNR components
+            g = g * grad_mask  # zero out clean components
 
             t = (i + 1).astype(jnp.float32)
             m_new = 0.9 * m + 0.1 * g
@@ -404,8 +402,8 @@ def denoise_sequence(
               f"base_rw={args.base_rw}) ---")
         print(f"  SNR: trans={snr_trans:.2f}, rot={snr_rot:.2f} "
               f"(threshold={args.snr_threshold})")
-        print(f"  Gradient mask: trans={mask_trans:.2f}, "
-              f"rot={mask_rot:.2f}")
+        print(f"  Gradient mask: trans={mask_trans:.1f}, "
+              f"rot={mask_rot:.1f}")
     else:
         sw_trans = args.sw_trans
         sw_rot = args.sw_rot
@@ -684,7 +682,7 @@ def main():
     parser.add_argument("--base-rw", type=float, default=1.0,
                         help="Base regularization scale for auto weights")
     parser.add_argument("--snr-threshold", type=float, default=2.0,
-                        help="SNR above which gradient is masked (no correction)")
+                        help="SNR threshold for hard gradient masking")
 
     # Manual weight overrides (used when --no-auto-weights)
     parser.add_argument("--sw-trans", type=float, default=35.0)
