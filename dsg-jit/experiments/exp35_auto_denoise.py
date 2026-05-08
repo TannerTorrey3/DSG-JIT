@@ -739,10 +739,36 @@ def main():
             continue
         seq_data.append((seq_id, gt_poses))
 
-    # Run all seeds.
-    # all_seed_results[seed_idx] = list of per-sequence result dicts
+    # Output directory for this run.
+    os.makedirs(args.output_dir, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(args.output_dir, f"exp35_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+
+    config = {
+        "window_size": args.window_size,
+        "anchor_spacing": args.anchor_spacing,
+        "n_outer_iters": args.n_outer_iters,
+        "gn_iters": args.gn_iters,
+        "lr": args.lr,
+        "sigma_trans": args.sigma_trans,
+        "sigma_rot": args.sigma_rot,
+        "auto_weights": args.auto_weights,
+        "base_sw": args.base_sw,
+        "base_rw": args.base_rw,
+        "snr_threshold": args.snr_threshold,
+        "aw_trans": args.aw_trans,
+        "aw_rot": args.aw_rot,
+        "inner_anchor_sigma": args.inner_anchor_sigma,
+        "outer_loop": "lax.fori_loop (fused)",
+        "n_seeds": n_seeds,
+        "seeds": seeds,
+    }
+
+    # Run all seeds, saving each independently.
     all_seed_results = []
     t_total_start = time.perf_counter()
+    summary_lines = []  # for the combined results text file
 
     for si, seed in enumerate(seeds):
         if n_seeds > 1:
@@ -754,28 +780,56 @@ def main():
         for seq_id, gt_poses in seq_data:
             result = denoise_sequence(
                 gt_poses, args, sigma, seq_id=seq_id, seed=seed)
-            # Only keep trajectories for first seed to save space.
-            if si > 0 and "trajectories" in result:
-                del result["trajectories"]
             result["seed"] = seed
             seed_results.append(result)
 
         all_seed_results.append(seed_results)
 
-        # Print per-seed summary.
+        # Save per-seed JSON file.
+        seed_output = {
+            "config": config,
+            "seed": seed,
+            "sequences": seed_results,
+        }
+        seed_path = os.path.join(run_dir, f"seed_{seed:04d}.json")
+        with open(seed_path, "w") as f:
+            json.dump(seed_output, f, indent=2)
+
+        # Build results table for this seed.
+        table_header = (
+            f"{'Seq':>4s} {'Poses':>6s} {'Poses/s':>8s} "
+            f"{'RT@10Hz':>8s} {'RT@100Hz':>9s} "
+            f"{'T_RMSE%':>8s} {'R_RMSE%':>8s} {'Combined':>9s}")
+        table_sep = (
+            f"{'-'*4} {'-'*6} {'-'*8} "
+            f"{'-'*8} {'-'*9} {'-'*8} {'-'*8} {'-'*9}")
+
+        summary_lines.append(f"{'='*70}")
+        summary_lines.append(f"  RESULTS — Seed {seed}")
+        summary_lines.append(f"{'='*70}")
+        summary_lines.append("")
+        summary_lines.append(f"  {table_header}")
+        summary_lines.append(f"  {table_sep}")
+
         print()
-        print(f"  {'Seq':>4s} {'Poses':>6s} {'Poses/s':>8s} "
-              f"{'T_RMSE%':>8s} {'R_RMSE%':>8s} {'Combined':>9s}")
-        print(f"  {'-'*4} {'-'*6} {'-'*8} "
-              f"{'-'*8} {'-'*8} {'-'*9}")
+        print(f"  {table_header}")
+        print(f"  {table_sep}")
+
         for r in seed_results:
             tp = r['throughput']
             imp = r['improvement_pct']
-            print(f"  {r['sequence']:>4s} {r['n_poses']:>6d} "
-                  f"{tp['poses_per_sec']:>7.1f} "
-                  f"{imp['trans_rmse']:>+7.1f}% "
-                  f"{imp['rot_rmse']:>+7.1f}% "
-                  f"{imp['combined']:>+8.1f}%")
+            row = (f"  {r['sequence']:>4s} {r['n_poses']:>6d} "
+                   f"{tp['poses_per_sec']:>7.1f} "
+                   f"{tp['realtime_factor_10hz']:>7.2f}x "
+                   f"{tp['realtime_factor_100hz']:>8.2f}x "
+                   f"{imp['trans_rmse']:>+7.1f}% "
+                   f"{imp['rot_rmse']:>+7.1f}% "
+                   f"{imp['combined']:>+8.1f}%")
+            print(row)
+            summary_lines.append(row)
+
+        summary_lines.append("")
+        print(f"  Saved: {seed_path}")
 
     t_total = time.perf_counter() - t_total_start
 
@@ -786,14 +840,27 @@ def main():
         print(f"  AGGREGATE RESULTS ({n_seeds} seeds)")
         print("=" * 70)
         print()
-        print(f"  {'Seq':>4s} {'Poses':>6s} "
-              f"{'T_mean':>8s} {'T_std':>7s} "
-              f"{'R_mean':>8s} {'R_std':>7s} "
-              f"{'C_mean':>8s} {'C_std':>7s}")
-        print(f"  {'-'*4} {'-'*6} "
-              f"{'-'*8} {'-'*7} "
-              f"{'-'*8} {'-'*7} "
-              f"{'-'*8} {'-'*7}")
+
+        agg_header = (
+            f"{'Seq':>4s} {'Poses':>6s} "
+            f"{'T_mean':>8s} {'T_std':>7s} "
+            f"{'R_mean':>8s} {'R_std':>7s} "
+            f"{'C_mean':>8s} {'C_std':>7s}")
+        agg_sep = (
+            f"{'-'*4} {'-'*6} "
+            f"{'-'*8} {'-'*7} "
+            f"{'-'*8} {'-'*7} "
+            f"{'-'*8} {'-'*7}")
+
+        print(f"  {agg_header}")
+        print(f"  {agg_sep}")
+
+        summary_lines.append(f"{'='*70}")
+        summary_lines.append(f"  AGGREGATE RESULTS ({n_seeds} seeds)")
+        summary_lines.append(f"{'='*70}")
+        summary_lines.append("")
+        summary_lines.append(f"  {agg_header}")
+        summary_lines.append(f"  {agg_sep}")
 
         aggregate = []
         for si_seq in range(len(seq_data)):
@@ -818,79 +885,29 @@ def main():
             }
             aggregate.append(stats)
 
-            print(f"  {seq_id:>4s} {n_poses:>6d} "
-                  f"{stats['trans_mean']:>+7.1f}% {stats['trans_std']:>6.1f} "
-                  f"{stats['rot_mean']:>+7.1f}% {stats['rot_std']:>6.1f} "
-                  f"{stats['combined_mean']:>+7.1f}% "
-                  f"{stats['combined_std']:>6.1f}")
-    else:
-        aggregate = None
+            row = (f"  {seq_id:>4s} {n_poses:>6d} "
+                   f"{stats['trans_mean']:>+7.1f}% {stats['trans_std']:>6.1f} "
+                   f"{stats['rot_mean']:>+7.1f}% {stats['rot_std']:>6.1f} "
+                   f"{stats['combined_mean']:>+7.1f}% "
+                   f"{stats['combined_std']:>6.1f}")
+            print(row)
+            summary_lines.append(row)
 
-    # Summary table (last seed or single seed).
-    print()
-    print("=" * 70)
-    print("  RESULTS" + (f" (seed {seeds[-1]})" if n_seeds == 1 else
-                         f" (last seed {seeds[-1]})"))
-    print("=" * 70)
-    print()
+        # Save aggregate JSON.
+        agg_path = os.path.join(run_dir, "aggregate.json")
+        with open(agg_path, "w") as f:
+            json.dump({"config": config, "aggregate": aggregate,
+                       "total_time_s": round(t_total, 1)}, f, indent=2)
+        print(f"\n  Aggregate: {agg_path}")
 
-    last_results = all_seed_results[-1]
-    if last_results:
-        print(f"  {'Seq':>4s} {'Poses':>6s} {'Poses/s':>8s} "
-              f"{'RT@10Hz':>8s} {'RT@100Hz':>9s} "
-              f"{'T_RMSE%':>8s} {'R_RMSE%':>8s} {'Combined':>9s}")
-        print(f"  {'-'*4} {'-'*6} {'-'*8} "
-              f"{'-'*8} {'-'*9} {'-'*8} {'-'*8} {'-'*9}")
+    # Write combined results text file.
+    results_path = os.path.join(run_dir, "results.txt")
+    with open(results_path, "w") as f:
+        f.write("\n".join(summary_lines) + "\n")
 
-        for r in last_results:
-            tp = r['throughput']
-            imp = r['improvement_pct']
-            print(f"  {r['sequence']:>4s} {r['n_poses']:>6d} "
-                  f"{tp['poses_per_sec']:>7.1f} "
-                  f"{tp['realtime_factor_10hz']:>7.2f}x "
-                  f"{tp['realtime_factor_100hz']:>8.2f}x "
-                  f"{imp['trans_rmse']:>+7.1f}% "
-                  f"{imp['rot_rmse']:>+7.1f}% "
-                  f"{imp['combined']:>+8.1f}%")
-
-    # Save results.
-    os.makedirs(args.output_dir, exist_ok=True)
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(
-        args.output_dir, f"exp35_{timestamp}.json")
-
-    # Flatten all seed results into a single list.
-    all_results_flat = []
-    for seed_results in all_seed_results:
-        all_results_flat.extend(seed_results)
-
-    output = {
-        "config": {
-            "window_size": args.window_size,
-            "anchor_spacing": args.anchor_spacing,
-            "n_outer_iters": args.n_outer_iters,
-            "gn_iters": args.gn_iters,
-            "lr": args.lr,
-            "sigma_trans": args.sigma_trans,
-            "sigma_rot": args.sigma_rot,
-            "auto_weights": args.auto_weights,
-            "base_sw": args.base_sw,
-            "base_rw": args.base_rw,
-            "aw_trans": args.aw_trans,
-            "aw_rot": args.aw_rot,
-            "inner_anchor_sigma": args.inner_anchor_sigma,
-            "outer_loop": "lax.fori_loop (fused)",
-            "n_seeds": n_seeds,
-            "seeds": seeds,
-        },
-        "sequences": all_results_flat,
-        "aggregate": aggregate,
-        "total_time_s": round(t_total, 1),
-    }
-
-    with open(output_path, "w") as f:
-        json.dump(output, f, indent=2)
-    print(f"\nResults written to {output_path}")
+    print(f"\n  All results: {run_dir}/")
+    print(f"  Summary:     {results_path}")
+    print(f"  Total time:  {t_total:.1f}s")
 
 
 if __name__ == "__main__":
