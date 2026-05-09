@@ -779,6 +779,9 @@ def main():
             result = denoise_sequence(
                 gt_poses, args, sigma, seq_id=seq_id, seed=seed)
             result["seed"] = seed
+            # Only keep trajectories for the first seed to avoid huge files.
+            if si > 0 and "trajectories" in result:
+                del result["trajectories"]
             seed_results.append(result)
 
         all_seed_results.append(seed_results)
