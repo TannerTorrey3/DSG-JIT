@@ -315,8 +315,14 @@ def build_denoiser(
     n_trans_iters: int = 50,
     n_rot_iters: int = 20,
     lr: float = 1e-3,
+    cg_iters: int = 20,
 ):
-    """Build a JIT-compiled denoiser with IFT backward pass and two-phase Adam."""
+    """Build a JIT-compiled denoiser with IFT backward pass and two-phase Adam.
+
+    Uses implicit Jacobian-vector products (JVP/VJP) + conjugate gradient
+    instead of materialising the full dense Jacobian.  Each CG iteration
+    costs 2 residual evaluations vs n_variables for the full Jacobian.
+    """
     n_meas = n_poses - 1
     odom_w = sigma_to_weight(sigma)
     sqrt_odom_w = jnp.sqrt(odom_w)
@@ -350,10 +356,14 @@ def build_denoiser(
         def r_fn(x_):
             return residual_fn(x_, theta, anchor_targets)
         r = r_fn(x)
-        J = jax.jacobian(r_fn)(x)
-        n = x.shape[0]
-        H = J.T @ J + gn_damping * jnp.eye(n)
-        delta = jnp.linalg.solve(H, J.T @ r)
+        # J^T r via VJP (no materialised Jacobian)
+        _, vjp_fn = jax.vjp(r_fn, x)
+        jtr = vjp_fn(r)[0]
+        # H v = J^T(J v) + damping * v, solved via CG
+        def hv(v):
+            _, jv = jax.jvp(r_fn, (x,), (v,))
+            return vjp_fn(jv)[0] + gn_damping * v
+        delta, _ = jax.scipy.sparse.linalg.cg(hv, jtr, maxiter=cg_iters)
         poses = x.reshape(n_poses, 6)
         deltas = delta.reshape(n_poses, 6)
         norms = jnp.linalg.norm(deltas, axis=1, keepdims=True)
@@ -377,24 +387,22 @@ def build_denoiser(
     def inner_solve_bwd(res, g):
         x_star, theta, anchor_targets = res
 
-        # Jacobian of residual w.r.t. x at the converged point
+        # Implicit J via JVP/VJP at converged point (no materialised Jacobian)
         r_fn_x = lambda x_: residual_fn(x_, theta, anchor_targets)
-        J = jax.jacobian(r_fn_x)(x_star)
+        _, vjp_fn_x = jax.vjp(r_fn_x, x_star)
 
-        # GN Hessian approximation
-        n = x_star.shape[0]
-        H = J.T @ J + gn_damping * jnp.eye(n)
+        # H v = J_x^T(J_x v) + damping * v, solved via CG
+        def hv(v):
+            _, jv = jax.jvp(r_fn_x, (x_star,), (v,))
+            return vjp_fn_x(jv)[0] + gn_damping * v
+        u, _ = jax.scipy.sparse.linalg.cg(hv, g, maxiter=cg_iters)
 
-        # Solve H u = g  (one linear solve replaces backprop through GN)
-        u = jnp.linalg.solve(H, g)
-
-        # VJP of residual w.r.t. theta at the converged point
-        # At convergence J^T r ≈ 0, so the (dJ/dtheta)^T r term vanishes
-        # and we only need first-order VJPs.
-        _, vjp_fn = jax.vjp(
+        # J_x u via JVP, then dtheta via VJP w.r.t. theta
+        # At convergence J^T r ≈ 0, so (dJ/dtheta)^T r vanishes.
+        _, ju = jax.jvp(r_fn_x, (x_star,), (u,))
+        _, vjp_fn_theta = jax.vjp(
             lambda t: residual_fn(x_star, t, anchor_targets), theta)
-        v = J @ u  # project into residual space
-        dtheta = -vjp_fn(v)[0]
+        dtheta = -vjp_fn_theta(ju)[0]
 
         return (dtheta, jnp.zeros_like(x_star), jnp.zeros_like(anchor_targets))
 
@@ -586,7 +594,7 @@ def denoise_sequence(
           f"({anchor_density:.1f}% density)")
     print(f"  Outer loop: Two-phase ({args.n_trans_iters} trans + "
           f"{args.n_rot_iters} rot = {n_total_iters} total)")
-    print(f"  Inner GN: {args.gn_iters} iters (IFT backward)")
+    print(f"  Inner GN: {args.gn_iters} iters (IFT backward, CG={args.cg_iters})")
 
     # Baseline error.
     baseline = compute_per_pose_meas_error(noisy_measurements, gt_measurements)
@@ -602,7 +610,8 @@ def denoise_sequence(
         inner_anchor_sigma=args.inner_anchor_sigma,
         n_trans_iters=args.n_trans_iters,
         n_rot_iters=args.n_rot_iters,
-        lr=args.lr)
+        lr=args.lr,
+        cg_iters=args.cg_iters)
 
     # Warm-up the fused optimizer.
     n_meas_window = actual_window - 1
@@ -804,6 +813,8 @@ def main():
     parser.add_argument("--n-rot-iters", type=int, default=20,
                         help="Phase 2 (rotation) Adam iterations")
     parser.add_argument("--gn-iters", type=int, default=10)
+    parser.add_argument("--cg-iters", type=int, default=20,
+                        help="Conjugate gradient iterations per solve")
     parser.add_argument("--aw-trans", type=float, default=5.0)
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
@@ -863,7 +874,7 @@ def main():
               f"rw_t={args.rw_trans}, rw_r={args.rw_rot}")
     print(f"  Outer loop: Two-phase ({args.n_trans_iters} trans + "
           f"{args.n_rot_iters} rot = {n_total_iters}), lr={args.lr}")
-    print(f"  Inner GN: {args.gn_iters} iters (IFT backward)")
+    print(f"  Inner GN: {args.gn_iters} iters (IFT backward, CG={args.cg_iters})")
     print()
 
     # Find sequences.
@@ -902,6 +913,7 @@ def main():
         "n_rot_iters": args.n_rot_iters,
         "n_total_iters": n_total_iters,
         "gn_iters": args.gn_iters,
+        "cg_iters": args.cg_iters,
         "lr": args.lr,
         "sigma_trans": args.sigma_trans,
         "sigma_rot": args.sigma_rot,
@@ -912,7 +924,7 @@ def main():
         "aw_rot": args.aw_rot,
         "inner_anchor_sigma": args.inner_anchor_sigma,
         "outer_loop": f"two-phase ({args.n_trans_iters} trans + {args.n_rot_iters} rot)",
-        "inner_backward": "IFT (custom_vjp)",
+        "inner_backward": f"IFT (custom_vjp, CG={args.cg_iters})",
         "noise_estimation": "batch_mad" if args.batch_noise else "online_ema",
         "noise_ema_alpha": args.noise_ema_alpha,
         "noise_init_size": args.noise_init_size,
