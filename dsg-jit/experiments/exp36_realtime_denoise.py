@@ -123,15 +123,21 @@ def estimate_noise_online(
     where the full sequence is not available upfront.
 
     Algorithm:
-        1. Initialise running median and MAD from the first *init_size*
-           consecutive differences using batch median/MAD.
+        1. Initialise running median/MAD and global mean/variance from
+           the first *init_size* consecutive differences.
         2. For each subsequent difference d:
            - Update running median via sign-based step (step size scaled
              by running MAD for scale-invariance).
            - Update running MAD via EMA of |d − median|.
-           - Update running variance via EMA.
+           - Update global E[d] and E[d²] via slow EMA (α/5) so that
+             the total variance captures both signal and noise.
         3. Convert final estimates to σ_noise and σ_process using the
            same formulas as the batch estimator.
+
+    Note: the total variance must track E[d²]−E[d]² using a SLOW alpha,
+    not the variance around the running median.  The running median adapts
+    to the signal, so variance around it is pure noise — subtracting
+    2σ²_noise then gives ≈0, collapsing σ_process.
     """
     diffs = measurements[1:] - measurements[:-1]
     n_diffs = len(diffs)
@@ -139,27 +145,35 @@ def estimate_noise_online(
 
     # Initialise from first init_size diffs
     init_diffs = diffs[:actual_init]
+
+    # Noise estimation: running median + MAD (fast alpha)
     running_median = np.median(init_diffs, axis=0)
     running_mad = np.median(np.abs(init_diffs - running_median), axis=0)
-    running_var = np.var(init_diffs, axis=0)
+
+    # Total variance: E[d²] − E[d]² with slow alpha so the global mean
+    # doesn't track individual diffs (effective window ≈ 5/alpha samples).
+    alpha_var = alpha / 5.0
+    ema_mean = np.mean(init_diffs, axis=0)
+    ema_sq = np.mean(init_diffs ** 2, axis=0)
 
     # Stream remaining diffs
     for i in range(actual_init, n_diffs):
         d = diffs[i]
-        # Sign-based running median (step ∝ MAD for scale invariance)
+        # Noise: fast-adapting median + MAD
         step = alpha * np.maximum(running_mad, 1e-10)
         running_median += step * np.sign(d - running_median)
-        # EMA of absolute deviations ≈ running MAD
         abs_dev = np.abs(d - running_median)
         running_mad = (1.0 - alpha) * running_mad + alpha * abs_dev
-        # EMA variance
-        running_var = (1.0 - alpha) * running_var + alpha * (d - running_median) ** 2
+        # Variance: slow-adapting (captures signal + noise variation)
+        ema_mean = (1.0 - alpha_var) * ema_mean + alpha_var * d
+        ema_sq = (1.0 - alpha_var) * ema_sq + alpha_var * d ** 2
 
     # Convert MAD → σ_noise (same scaling as batch)
     sigma_noise = running_mad / (np.sqrt(2) * 0.6745)
 
-    # Process variance = total variance − noise variance
-    var_process = np.maximum(running_var - 2 * sigma_noise ** 2, 1e-12)
+    # Total variance from Welford EMA, then subtract noise
+    total_var = np.maximum(ema_sq - ema_mean ** 2, 0.0)
+    var_process = np.maximum(total_var - 2 * sigma_noise ** 2, 1e-12)
     sigma_process = np.sqrt(var_process)
 
     # Aggregate trans/rot
