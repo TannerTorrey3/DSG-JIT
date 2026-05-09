@@ -356,14 +356,10 @@ def build_denoiser(
         def r_fn(x_):
             return residual_fn(x_, theta, anchor_targets)
         r = r_fn(x)
-        # J^T r via VJP (no materialised Jacobian)
-        _, vjp_fn = jax.vjp(r_fn, x)
-        jtr = vjp_fn(r)[0]
-        # H v = J^T(J v) + damping * v, solved via CG
-        def hv(v):
-            _, jv = jax.jvp(r_fn, (x,), (v,))
-            return vjp_fn(jv)[0] + gn_damping * v
-        delta, _ = jax.scipy.sparse.linalg.cg(hv, jtr, maxiter=cg_iters)
+        J = jax.jacobian(r_fn)(x)
+        n = x.shape[0]
+        H = J.T @ J + gn_damping * jnp.eye(n)
+        delta = jnp.linalg.solve(H, J.T @ r)
         poses = x.reshape(n_poses, 6)
         deltas = delta.reshape(n_poses, 6)
         norms = jnp.linalg.norm(deltas, axis=1, keepdims=True)
@@ -387,22 +383,21 @@ def build_denoiser(
     def inner_solve_bwd(res, g):
         x_star, theta, anchor_targets = res
 
-        # Implicit J via JVP/VJP at converged point (no materialised Jacobian)
+        # Dense Jacobian at converged point (GPU-parallel)
         r_fn_x = lambda x_: residual_fn(x_, theta, anchor_targets)
-        _, vjp_fn_x = jax.vjp(r_fn_x, x_star)
+        J = jax.jacobian(r_fn_x)(x_star)
 
-        # H v = J_x^T(J_x v) + damping * v, solved via CG
-        def hv(v):
-            _, jv = jax.jvp(r_fn_x, (x_star,), (v,))
-            return vjp_fn_x(jv)[0] + gn_damping * v
-        u, _ = jax.scipy.sparse.linalg.cg(hv, g, maxiter=cg_iters)
+        # GN Hessian approximation + dense solve
+        n = x_star.shape[0]
+        H = J.T @ J + gn_damping * jnp.eye(n)
+        u = jnp.linalg.solve(H, g)
 
-        # J_x u via JVP, then dtheta via VJP w.r.t. theta
+        # dtheta via VJP of residual w.r.t. theta
         # At convergence J^T r ≈ 0, so (dJ/dtheta)^T r vanishes.
-        _, ju = jax.jvp(r_fn_x, (x_star,), (u,))
-        _, vjp_fn_theta = jax.vjp(
+        _, vjp_fn = jax.vjp(
             lambda t: residual_fn(x_star, t, anchor_targets), theta)
-        dtheta = -vjp_fn_theta(ju)[0]
+        v = J @ u
+        dtheta = -vjp_fn(v)[0]
 
         return (dtheta, jnp.zeros_like(x_star), jnp.zeros_like(anchor_targets))
 
