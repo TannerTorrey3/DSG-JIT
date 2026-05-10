@@ -509,29 +509,18 @@ def build_robust_denoiser(
             0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
         return state[0]
 
-    # ===== Combined: Phase A → Phase B → Phase C =====
+    # ===== Combined: Phase A → Phase B =====
 
     def robust_denoise(noisy_meas, x_init, anchor_targets):
-        """Full pipeline: detect outliers, denoise, replace rejected edges."""
+        """Full pipeline: detect outliers, then denoise with weights."""
         # Phase A: initial solve → residuals → weights
         x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
         weights, chi_scores = compute_weights(x_star_init, noisy_meas)
 
-        # Phase B: weighted IFT denoiser (corrects inlier edges)
+        # Phase B: weighted IFT denoiser (corrects all edges)
         theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets, weights)
 
-        # Phase C: post-filter — replace rejected edges with fitted relative poses.
-        # The initial solve already produced x* that interpolated past outliers
-        # using anchors + neighboring measurements. Extract those relative poses.
-        poses_star = x_star_init.reshape(n_poses, 6)
-        fitted_rel = _relative_batch(poses_star[:-1], poses_star[1:])
-
-        # Blend: for low-weight edges use fitted, for high-weight use denoised theta.
-        # weight=1 → theta_opt, weight=0 → fitted_rel
-        w_blend = weights[:, None]  # (n_meas, 1)
-        theta_final = w_blend * theta_opt + (1.0 - w_blend) * fitted_rel
-
-        return theta_final, weights, chi_scores
+        return theta_opt, weights, chi_scores
 
     robust_denoise_jit = jax.jit(robust_denoise)
     return robust_denoise_jit
