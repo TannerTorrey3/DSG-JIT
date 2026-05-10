@@ -158,6 +158,73 @@ def estimate_noise_online(
     }
 
 
+def estimate_noise_robust(
+    measurements: np.ndarray,
+    initial_noise_model: dict,
+    kernel_scale: float = 3.0,
+    anchor_poses: np.ndarray | None = None,
+) -> dict:
+    """Two-pass noise estimation: detect outliers, then re-estimate without them.
+
+    Pass 1: Use initial (contaminated) noise model to compute chi scores.
+    Pass 2: Exclude edges with chi > kernel_scale, re-estimate from inliers only.
+    """
+    n_meas = measurements.shape[0]
+    sigma_init = np.array(initial_noise_model["sigma_noise_per_comp"])
+
+    # Compute approximate chi from consecutive differences (no PGO needed).
+    # For sequential odometry, the "residual" of edge i relative to its neighbors
+    # is approximated by: m_i - (m_{i-1} + m_{i+1}) / 2
+    # This catches isolated outlier spikes.
+    chi_scores = np.zeros(n_meas)
+    for i in range(1, n_meas - 1):
+        expected = (measurements[i - 1] + measurements[i + 1]) / 2.0
+        residual = measurements[i] - expected
+        normalised = residual / np.maximum(sigma_init, 1e-10)
+        chi_scores[i] = np.linalg.norm(normalised)
+
+    # Edge cases: first and last use single neighbor.
+    if n_meas > 1:
+        r0 = measurements[0] - measurements[1]
+        chi_scores[0] = np.linalg.norm(r0 / np.maximum(sigma_init, 1e-10))
+        rn = measurements[-1] - measurements[-2]
+        chi_scores[-1] = np.linalg.norm(rn / np.maximum(sigma_init, 1e-10))
+
+    # Identify likely inliers.
+    inlier_mask = chi_scores < kernel_scale * 2.0  # generous threshold for re-estimation
+    n_inliers = int(np.sum(inlier_mask))
+
+    if n_inliers < 20:
+        # Not enough inliers — fall back to initial estimate.
+        return initial_noise_model
+
+    # Re-estimate noise from inlier measurements only.
+    inlier_meas = measurements[inlier_mask]
+    diffs = inlier_meas[1:] - inlier_meas[:-1]
+    mad = np.median(np.abs(diffs - np.median(diffs, axis=0)), axis=0)
+    sigma_noise = mad / (np.sqrt(2) * 0.6745)
+
+    var_diffs = np.var(diffs, axis=0)
+    var_process = np.maximum(var_diffs - 2 * sigma_noise ** 2, 1e-12)
+    sigma_process = np.sqrt(var_process)
+
+    sigma_noise_trans = float(np.mean(sigma_noise[:3]))
+    sigma_noise_rot = float(np.mean(sigma_noise[3:]))
+    sigma_process_trans = float(np.mean(sigma_process[:3]))
+    sigma_process_rot = float(np.mean(sigma_process[3:]))
+
+    return {
+        "sigma_noise_per_comp": sigma_noise.tolist(),
+        "sigma_process_per_comp": sigma_process.tolist(),
+        "sigma_noise_trans": sigma_noise_trans,
+        "sigma_noise_rot": sigma_noise_rot,
+        "sigma_process_trans": sigma_process_trans,
+        "sigma_process_rot": sigma_process_rot,
+        "n_inliers_used": n_inliers,
+        "n_total": n_meas,
+    }
+
+
 def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
                          base_rw: float = 1.0,
                          sw_ratio: float = 3.0) -> dict:
@@ -442,18 +509,29 @@ def build_robust_denoiser(
             0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
         return state[0]
 
-    # ===== Combined: Phase A → Phase B =====
+    # ===== Combined: Phase A → Phase B → Phase C =====
 
     def robust_denoise(noisy_meas, x_init, anchor_targets):
-        """Full pipeline: detect outliers, then denoise with weights."""
+        """Full pipeline: detect outliers, denoise, replace rejected edges."""
         # Phase A: initial solve → residuals → weights
         x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
         weights, chi_scores = compute_weights(x_star_init, noisy_meas)
 
-        # Phase B: weighted IFT denoiser
+        # Phase B: weighted IFT denoiser (corrects inlier edges)
         theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets, weights)
 
-        return theta_opt, weights, chi_scores
+        # Phase C: post-filter — replace rejected edges with fitted relative poses.
+        # The initial solve already produced x* that interpolated past outliers
+        # using anchors + neighboring measurements. Extract those relative poses.
+        poses_star = x_star_init.reshape(n_poses, 6)
+        fitted_rel = _relative_batch(poses_star[:-1], poses_star[1:])
+
+        # Blend: for low-weight edges use fitted, for high-weight use denoised theta.
+        # weight=1 → theta_opt, weight=0 → fitted_rel
+        w_blend = weights[:, None]  # (n_meas, 1)
+        theta_final = w_blend * theta_opt + (1.0 - w_blend) * fitted_rel
+
+        return theta_final, weights, chi_scores
 
     robust_denoise_jit = jax.jit(robust_denoise)
     return robust_denoise_jit
@@ -496,9 +574,14 @@ def evaluate_sequence(
     outlier_mask_np = np.array(outlier_mask)
     n_outliers = int(np.sum(outlier_mask_np))
 
-    # Noise estimation.
+    # Noise estimation — two-pass: initial → detect outliers → re-estimate.
     noisy_np = np.array(corrupted_measurements)
-    noise_model = estimate_noise_online(noisy_np)
+    noise_model_raw = estimate_noise_online(noisy_np)
+
+    # Pass 2: robust re-estimation excluding likely outliers.
+    noise_model = estimate_noise_robust(
+        noisy_np, noise_model_raw, kernel_scale=args.kernel_scale)
+
     auto_w = compute_auto_weights(
         noise_model, base_sw=args.base_sw, base_rw=args.base_rw,
         sw_ratio=args.sw_ratio)
@@ -508,7 +591,9 @@ def evaluate_sequence(
 
     print(f"\n  Sequence {seq_id}: {n_poses_total} poses, "
           f"{n_outliers} outliers ({args.outlier_ratio*100:.0f}%)")
-    print(f"  σ_noise: trans={noise_model['sigma_noise_trans']:.5f}, "
+    print(f"  σ_noise (raw): trans={noise_model_raw['sigma_noise_trans']:.5f}, "
+          f"rot={noise_model_raw['sigma_noise_rot']:.5f}")
+    print(f"  σ_noise (robust): trans={noise_model['sigma_noise_trans']:.5f}, "
           f"rot={noise_model['sigma_noise_rot']:.5f}")
     print(f"  sw_trans={auto_w['sw_trans']:.2f}, rw_trans={auto_w['rw_trans']:.2f}")
     print(f"  Kernel scale: {args.kernel_scale}")
