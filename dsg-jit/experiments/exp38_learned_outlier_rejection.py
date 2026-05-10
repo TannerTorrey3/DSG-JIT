@@ -368,6 +368,9 @@ def build_robust_denoiser(
 
     # --- Outer loss ---
 
+    # Initial log_w value: start trusting all measurements (w ≈ 0.95)
+    log_w_init_val = 3.0
+
     def outer_loss(theta, log_w, x_init, anchor_targets, noisy_meas):
         weights = jax.nn.sigmoid(log_w)
         x_star = inner_solve(theta, x_init, anchor_targets, weights)
@@ -385,83 +388,92 @@ def build_robust_denoiser(
         s_diffs = theta[1:] - theta[:-1]
         s_loss = jnp.sum(sw_vec * s_diffs ** 2)
 
-        # Weight regularisation: mild prior toward w=1 (trust measurements)
-        # Uses log_w directly: penalises deviation from log_w=0 (w=0.5 midpoint)
-        # Shifted: penalise log_w < 2 (w < 0.88) less, penalise w → 0 more
-        w_reg_loss = weight_reg * jnp.sum(jnp.maximum(0.0, -log_w) ** 2)
+        # Weight regularisation: L2 toward initial value (w ≈ 1).
+        # Only the anchor loss gradient can overcome this prior —
+        # outlier edges hurt anchor accuracy, driving their weights down.
+        w_reg_loss = weight_reg * jnp.sum((log_w - log_w_init_val) ** 2)
 
         return a_loss + r_loss + s_loss + w_reg_loss
 
     grad_fn = jax.grad(outer_loss, argnums=(0, 1))
 
-    # --- Three-phase optimisation ---
+    # --- Joint optimisation: theta + weights together ---
     trans_mask = jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
     def fused_optimize(theta_init, log_w_init, x_init, anchor_targets, noisy_meas):
-        """Three-phase: (1) translation, (2) rotation, (3) weights."""
+        """Joint optimisation: theta (two-phase) + weights updated together."""
 
-        # Phase 1 — Translation
-        m0 = jnp.zeros_like(theta_init)
-        v0 = jnp.zeros_like(theta_init)
+        # Phase 1 — Translation + weights jointly
+        m_theta = jnp.zeros_like(theta_init)
+        v_theta = jnp.zeros_like(theta_init)
+        m_w = jnp.zeros_like(log_w_init)
+        v_w = jnp.zeros_like(log_w_init)
 
         def trans_body(i, state):
-            theta, log_w, m, v = state
-            g_theta, _ = grad_fn(theta, log_w, x_init, anchor_targets, noisy_meas)
-            g = g_theta * trans_mask
+            theta, log_w, mt, vt, mw, vw = state
+            g_theta, g_w = grad_fn(theta, log_w, x_init, anchor_targets, noisy_meas)
+            g_t = g_theta * trans_mask
             t = (i + 1).astype(jnp.float32)
-            m_new = 0.9 * m + 0.1 * g
-            v_new = 0.999 * v + 0.001 * g ** 2
-            m_hat = m_new / (1.0 - 0.9 ** t)
-            v_hat = v_new / (1.0 - 0.999 ** t)
-            update = lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
-            return (theta - update, log_w, m_new, v_new)
+
+            # Update theta (translation only)
+            mt_new = 0.9 * mt + 0.1 * g_t
+            vt_new = 0.999 * vt + 0.001 * g_t ** 2
+            mt_hat = mt_new / (1.0 - 0.9 ** t)
+            vt_hat = vt_new / (1.0 - 0.999 ** t)
+            theta_update = lr * mt_hat / (jnp.sqrt(vt_hat) + 1e-8)
+
+            # Update weights
+            mw_new = 0.9 * mw + 0.1 * g_w
+            vw_new = 0.999 * vw + 0.001 * g_w ** 2
+            mw_hat = mw_new / (1.0 - 0.9 ** t)
+            vw_hat = vw_new / (1.0 - 0.999 ** t)
+            w_update = weight_lr * mw_hat / (jnp.sqrt(vw_hat) + 1e-8)
+
+            return (theta - theta_update, log_w - w_update,
+                    mt_new, vt_new, mw_new, vw_new)
 
         state = jax.lax.fori_loop(
             0, n_trans_iters, trans_body,
-            (theta_init, log_w_init, m0, v0))
-        theta_t = state[0]
+            (theta_init, log_w_init, m_theta, v_theta, m_w, v_w))
+        theta_t, log_w_t = state[0], state[1]
 
-        # Phase 2 — Rotation
-        m0r = jnp.zeros_like(theta_t)
-        v0r = jnp.zeros_like(theta_t)
+        # Phase 2 — Rotation + weights jointly (fresh Adam for theta, continue for w)
+        m_theta_r = jnp.zeros_like(theta_t)
+        v_theta_r = jnp.zeros_like(theta_t)
+        # Continue weight momentum from phase 1
+        mw_cont = state[4]
+        vw_cont = state[5]
 
         def rot_body(i, state):
-            theta, log_w, m, v = state
-            g_theta, _ = grad_fn(theta, log_w, x_init, anchor_targets, noisy_meas)
-            g = g_theta * rot_mask
+            theta, log_w, mt, vt, mw, vw = state
+            g_theta, g_w = grad_fn(theta, log_w, x_init, anchor_targets, noisy_meas)
+            g_r = g_theta * rot_mask
             t = (i + 1).astype(jnp.float32)
-            m_new = 0.9 * m + 0.1 * g
-            v_new = 0.999 * v + 0.001 * g ** 2
-            m_hat = m_new / (1.0 - 0.9 ** t)
-            v_hat = v_new / (1.0 - 0.999 ** t)
-            update = lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
-            return (theta - update, log_w, m_new, v_new)
+
+            # Update theta (rotation only)
+            mt_new = 0.9 * mt + 0.1 * g_r
+            vt_new = 0.999 * vt + 0.001 * g_r ** 2
+            mt_hat = mt_new / (1.0 - 0.9 ** t)
+            vt_hat = vt_new / (1.0 - 0.999 ** t)
+            theta_update = lr * mt_hat / (jnp.sqrt(vt_hat) + 1e-8)
+
+            # Update weights (continuing)
+            t_w = (i + 1 + n_trans_iters).astype(jnp.float32)
+            mw_new = 0.9 * mw + 0.1 * g_w
+            vw_new = 0.999 * vw + 0.001 * g_w ** 2
+            mw_hat = mw_new / (1.0 - 0.9 ** t_w)
+            vw_hat = vw_new / (1.0 - 0.999 ** t_w)
+            w_update = weight_lr * mw_hat / (jnp.sqrt(vw_hat) + 1e-8)
+
+            return (theta - theta_update, log_w - w_update,
+                    mt_new, vt_new, mw_new, vw_new)
 
         state = jax.lax.fori_loop(
-            0, n_rot_iters, rot_body, (theta_t, log_w_init, m0r, v0r))
-        theta_tr = state[0]
+            0, n_rot_iters, rot_body,
+            (theta_t, log_w_t, m_theta_r, v_theta_r, mw_cont, vw_cont))
 
-        # Phase 3 — Weights (with current theta fixed)
-        mw = jnp.zeros_like(log_w_init)
-        vw = jnp.zeros_like(log_w_init)
-
-        def weight_body(i, state):
-            log_w, m, v = state
-            _, g_w = grad_fn(theta_tr, log_w, x_init, anchor_targets, noisy_meas)
-            t = (i + 1).astype(jnp.float32)
-            m_new = 0.9 * m + 0.1 * g_w
-            v_new = 0.999 * v + 0.001 * g_w ** 2
-            m_hat = m_new / (1.0 - 0.9 ** t)
-            v_hat = v_new / (1.0 - 0.999 ** t)
-            update = weight_lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
-            return (log_w - update, m_new, v_new)
-
-        state_w = jax.lax.fori_loop(
-            0, n_weight_iters, weight_body, (log_w_init, mw, vw))
-        log_w_opt = state_w[0]
-
-        return theta_tr, log_w_opt
+        return state[0], state[1]
 
     fused_optimize_jit = jax.jit(fused_optimize)
 
@@ -560,7 +572,7 @@ def evaluate_sequence(
     dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
     dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6), dtype=jnp.float32)
-    dummy_log_w = jnp.zeros(n_meas_window, dtype=jnp.float32)
+    dummy_log_w = jnp.full(n_meas_window, 3.0, dtype=jnp.float32)
     _ = fused_opt(dummy_theta, dummy_log_w, dummy_x, dummy_anchors,
                   dummy_theta)
     jax.block_until_ready(_)
@@ -608,7 +620,8 @@ def evaluate_sequence(
         x_init = _forward_compose_jit(origin, w_noisy).ravel()
 
         # Initial log_weights: start at 0 (w=0.5 midpoint).
-        log_w_init = jnp.zeros(w_n_meas, dtype=jnp.float32)
+        # Start with w ≈ 0.95 (trust all), let gradient push outliers down.
+        log_w_init = jnp.full(w_n_meas, 3.0, dtype=jnp.float32)
 
         # Optimise.
         theta_opt, log_w_opt = fused_opt(
@@ -755,7 +768,8 @@ def main():
     parser.add_argument("--gn-iters", type=int, default=10)
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
-    parser.add_argument("--n-weight-iters", type=int, default=30)
+    parser.add_argument("--n-weight-iters", type=int, default=0,
+                        help="(deprecated, weights now joint with theta)")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-lr", type=float, default=3e-3)
     parser.add_argument("--weight-reg", type=float, default=0.1,
@@ -772,7 +786,7 @@ def main():
     sigma = jnp.array([args.sigma_trans] * 3 + [args.sigma_rot] * 3,
                        dtype=jnp.float32)
     seeds = list(range(args.seed, args.seed + args.n_seeds))
-    n_total_iters = args.n_trans_iters + args.n_rot_iters + args.n_weight_iters
+    n_total_iters = args.n_trans_iters + args.n_rot_iters
 
     print("=" * 70)
     print("  exp38 -- Learned Outlier Rejection via Differentiable PGO")
@@ -784,10 +798,10 @@ def main():
           f"mag_t={args.outlier_mag_trans}, mag_r={args.outlier_mag_rot}")
     print(f"  Denoiser: window={args.window_size}, "
           f"anchor_spacing={args.anchor_spacing}")
-    print(f"  Optimiser: {args.n_trans_iters} trans + {args.n_rot_iters} rot + "
-          f"{args.n_weight_iters} weight = {n_total_iters} total")
+    print(f"  Optimiser: {args.n_trans_iters} trans + {args.n_rot_iters} rot "
+          f"= {n_total_iters} (joint θ+w)")
     print(f"  LR: theta={args.lr}, weights={args.weight_lr}")
-    print(f"  Weight reg: {args.weight_reg}")
+    print(f"  Weight reg: {args.weight_reg}, init w≈0.95")
     print(f"  Seeds: {args.n_seeds}")
     print()
 
