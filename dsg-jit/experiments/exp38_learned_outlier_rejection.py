@@ -574,27 +574,29 @@ def evaluate_sequence(
     outlier_mask_np = np.array(outlier_mask)
     n_outliers = int(np.sum(outlier_mask_np))
 
-    # Noise estimation — two-pass: initial → detect outliers → re-estimate.
+    # Noise estimation — two separate estimates for two purposes:
+    # 1. Raw estimate → used for chi normalization (matches GN residual scale)
+    # 2. Robust estimate → used for IFT denoiser auto-weights (correct sw/rw)
     noisy_np = np.array(corrupted_measurements)
     noise_model_raw = estimate_noise_online(noisy_np)
-
-    # Pass 2: robust re-estimation excluding likely outliers.
-    noise_model = estimate_noise_robust(
+    noise_model_robust = estimate_noise_robust(
         noisy_np, noise_model_raw, kernel_scale=args.kernel_scale)
 
-    auto_w = compute_auto_weights(
-        noise_model, base_sw=args.base_sw, base_rw=args.base_rw,
-        sw_ratio=args.sw_ratio)
-
+    # Chi normalization uses RAW sigma (matches GN residual magnitude).
     inner_sigma = jnp.array(
-        noise_model["sigma_noise_per_comp"], dtype=jnp.float32)
+        noise_model_raw["sigma_noise_per_comp"], dtype=jnp.float32)
+
+    # Denoiser auto-weights use ROBUST sigma (correct loss balance).
+    auto_w = compute_auto_weights(
+        noise_model_robust, base_sw=args.base_sw, base_rw=args.base_rw,
+        sw_ratio=args.sw_ratio)
 
     print(f"\n  Sequence {seq_id}: {n_poses_total} poses, "
           f"{n_outliers} outliers ({args.outlier_ratio*100:.0f}%)")
-    print(f"  σ_noise (raw): trans={noise_model_raw['sigma_noise_trans']:.5f}, "
+    print(f"  σ_noise (raw/chi): trans={noise_model_raw['sigma_noise_trans']:.5f}, "
           f"rot={noise_model_raw['sigma_noise_rot']:.5f}")
-    print(f"  σ_noise (robust): trans={noise_model['sigma_noise_trans']:.5f}, "
-          f"rot={noise_model['sigma_noise_rot']:.5f}")
+    print(f"  σ_noise (robust/denoise): trans={noise_model_robust['sigma_noise_trans']:.5f}, "
+          f"rot={noise_model_robust['sigma_noise_rot']:.5f}")
     print(f"  sw_trans={auto_w['sw_trans']:.2f}, rw_trans={auto_w['rw_trans']:.2f}")
     print(f"  Kernel scale: {args.kernel_scale}")
 
