@@ -302,7 +302,6 @@ def build_robust_denoiser(
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
     kernel_scale: float = 3.0,
-    reject_threshold: float = 0.5,
     aw_trans: float = 5.0,
     aw_rot: float = 5.0,
     rw_trans: float = 0.25,
@@ -510,10 +509,10 @@ def build_robust_denoiser(
             0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
         return state[0]
 
-    # ===== Combined: Phase A → Phase B → Phase C =====
+    # ===== Combined: Phase A → Phase B =====
 
     def robust_denoise(noisy_meas, x_init, anchor_targets):
-        """Full pipeline: detect outliers, denoise, replace rejected edges."""
+        """Full pipeline: detect outliers, then denoise with weights."""
         # Phase A: initial solve → residuals → weights
         x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
         weights, chi_scores = compute_weights(x_star_init, noisy_meas)
@@ -521,20 +520,7 @@ def build_robust_denoiser(
         # Phase B: weighted IFT denoiser (corrects all edges)
         theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets, weights)
 
-        # Phase C: hard replacement for rejected outlier edges.
-        # With dense anchors (spacing=10), the Phase A solve trajectory is
-        # well-constrained at every point — nearby GT anchors force the
-        # trajectory through truth. Extract relative poses from this
-        # well-constrained solution and use them for outlier edges only.
-        poses_star = x_star_init.reshape(n_poses, 6)
-        fitted_rel = _relative_batch(poses_star[:-1], poses_star[1:])
-
-        # Hard replace: only outlier edges (w < threshold) get replaced.
-        # Inlier edges keep theta_opt untouched (preserves +7.5% denoising).
-        rejected = (weights < reject_threshold)[:, None]  # (n_meas, 1)
-        theta_final = jnp.where(rejected, fitted_rel, theta_opt)
-
-        return theta_final, weights, chi_scores
+        return theta_opt, weights, chi_scores
 
     robust_denoise_jit = jax.jit(robust_denoise)
     return robust_denoise_jit
@@ -624,7 +610,7 @@ def evaluate_sequence(
     robust_denoise = build_robust_denoiser(
         actual_window, anchor_pos_in_window, inner_sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
-        kernel_scale=args.kernel_scale, reject_threshold=args.reject_threshold,
+        kernel_scale=args.kernel_scale,
         aw_trans=args.aw_trans, aw_rot=args.aw_rot,
         rw_trans=auto_w["rw_trans"], rw_rot=auto_w["rw_rot"],
         sw_trans=auto_w["sw_trans"], sw_rot=auto_w["sw_rot"],
@@ -716,6 +702,59 @@ def evaluate_sequence(
     t_denoise = time.perf_counter() - t_denoise_start
     poses_per_sec = n_poses_total / t_denoise
 
+    # Compute Phase B (denoiser-only) metrics for comparison.
+    phase_b_error = compute_per_edge_error(
+        jnp.array(denoised_measurements), gt_measurements)
+    phase_b_t_imp = (1 - phase_b_error['rmse_trans'] /
+                     compute_per_edge_error(
+                         jnp.array(corrupted_measurements),
+                         gt_measurements)['rmse_trans']) * 100
+    phase_b_r_imp = (1 - phase_b_error['rmse_rot'] /
+                     compute_per_edge_error(
+                         jnp.array(corrupted_measurements),
+                         gt_measurements)['rmse_rot']) * 100
+
+    # --- Phase C: post-process rejected edges via neighbor interpolation ---
+    # For KITTI's smooth trajectories, replacing an outlier edge with the
+    # average of its nearest inlier neighbors is far better than keeping
+    # the corrupted measurement (0.5m outlier >> interpolation error).
+    rejected_mask = all_weights < args.reject_threshold
+    n_rejected_total = int(np.sum(rejected_mask))
+    n_replaced = 0
+
+    if n_rejected_total > 0:
+        for i in range(n_meas_total):
+            if not rejected_mask[i]:
+                continue
+            # Find nearest inlier neighbors on each side.
+            left = None
+            for j in range(i - 1, -1, -1):
+                if not rejected_mask[j]:
+                    left = j
+                    break
+            right = None
+            for j in range(i + 1, n_meas_total):
+                if not rejected_mask[j]:
+                    right = j
+                    break
+
+            # Interpolate from available neighbors.
+            if left is not None and right is not None:
+                # Average of nearest inlier neighbors (both sides).
+                denoised_measurements[i] = (
+                    denoised_measurements[left] + denoised_measurements[right]
+                ) / 2.0
+                n_replaced += 1
+            elif left is not None:
+                denoised_measurements[i] = denoised_measurements[left]
+                n_replaced += 1
+            elif right is not None:
+                denoised_measurements[i] = denoised_measurements[right]
+                n_replaced += 1
+
+        print(f"\n  Phase C: replaced {n_replaced}/{n_rejected_total} "
+              f"rejected edges via neighbor interpolation")
+
     # --- Metrics ---
     baseline = compute_per_edge_error(
         jnp.array(corrupted_measurements), gt_measurements)
@@ -729,8 +768,8 @@ def evaluate_sequence(
     w_outlier = all_weights[outlier_mask_np]
     w_inlier = all_weights[~outlier_mask_np]
 
-    # Classification at threshold 0.5.
-    predicted_outlier = all_weights < 0.5
+    # Classification at reject threshold.
+    predicted_outlier = all_weights < args.reject_threshold
     tp = int(np.sum(predicted_outlier & outlier_mask_np))
     fp = int(np.sum(predicted_outlier & ~outlier_mask_np))
     fn = int(np.sum(~predicted_outlier & outlier_mask_np))
@@ -741,6 +780,8 @@ def evaluate_sequence(
     accuracy = (tp + tn) / n_meas_total
 
     print(f"\n  --- Results ---")
+    print(f"  Phase B only:  Trans {phase_b_t_imp:+.1f}%, Rot {phase_b_r_imp:+.1f}%")
+    print(f"  After Phase C: Trans {trans_improv:+.1f}%, Rot {rot_improv:+.1f}%")
     print(f"  Trans RMSE: {baseline['rmse_trans']:.5f} → "
           f"{after['rmse_trans']:.5f} ({trans_improv:+.1f}%)")
     print(f"  Rot RMSE:   {baseline['rmse_rot']:.5f} → "
@@ -830,7 +871,7 @@ def main():
 
     # Denoiser config
     parser.add_argument("--window-size", type=int, default=100)
-    parser.add_argument("--anchor-spacing", type=int, default=10)
+    parser.add_argument("--anchor-spacing", type=int, default=100)
     parser.add_argument("--gn-iters", type=int, default=10)
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
