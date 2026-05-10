@@ -265,17 +265,25 @@ def estimate_noise_online(
 # ---------------------------------------------------------------------------
 
 def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
-                         base_rw: float = 1.0) -> dict:
-    """Derive sw and rw from the estimated noise model."""
+                         base_rw: float = 1.0,
+                         sw_ratio: float = 3.0) -> dict:
+    """Derive sw and rw from the estimated noise model.
+
+    sw_ratio caps smoothness weight relative to regularization weight:
+        sw = min(1/σ_process², sw_ratio * rw)
+    This prevents the smoothness term from dominating when σ_process
+    collapses to ~0, which would flatten curvature in the measurements.
+    """
     sigma_p_t = noise_model["sigma_process_trans"]
     sigma_p_r = noise_model["sigma_process_rot"]
     sigma_n_t = noise_model["sigma_noise_trans"]
     sigma_n_r = noise_model["sigma_noise_rot"]
 
-    sw_trans = base_sw / max(sigma_p_t ** 2, 1e-12)
-    sw_rot = base_sw / max(sigma_p_r ** 2, 1e-12)
     rw_trans = base_rw / max(sigma_n_t ** 2, 1e-12)
     rw_rot = base_rw / max(sigma_n_r ** 2, 1e-12)
+
+    sw_trans = min(base_sw / max(sigma_p_t ** 2, 1e-12), sw_ratio * rw_trans)
+    sw_rot = min(base_sw / max(sigma_p_r ** 2, 1e-12), sw_ratio * rw_rot)
 
     snr_trans = sigma_p_t / max(sigma_n_t, 1e-12)
     snr_rot = sigma_p_r / max(sigma_n_r, 1e-12)
@@ -633,6 +641,9 @@ def main():
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
     parser.add_argument("--base-sw", type=float, default=1.0)
     parser.add_argument("--base-rw", type=float, default=1.0)
+    parser.add_argument("--sw-ratio", type=float, default=3.0,
+                        help="Cap sw at sw_ratio * rw (prevents smoothness "
+                             "from destroying curvature)")
 
     args = parser.parse_args()
 
@@ -650,6 +661,7 @@ def main():
     print(f"  Denoiser:       window={args.window_size}, "
           f"iters={args.n_trans_iters}+{args.n_rot_iters}, "
           f"gn={args.gn_iters}")
+    print(f"  sw_ratio:       {args.sw_ratio} (cap: sw ≤ {args.sw_ratio}×rw)")
     print()
 
     # Find and load sequences.
@@ -693,6 +705,7 @@ def main():
         "inner_anchor_sigma": args.inner_anchor_sigma,
         "base_sw": args.base_sw,
         "base_rw": args.base_rw,
+        "sw_ratio": args.sw_ratio,
     }
 
     all_results = []
@@ -724,7 +737,8 @@ def main():
             rep_key, shape=rep_meas.shape) * sigma
         noise_model = estimate_noise_online(np.array(rep_noisy))
         auto_w = compute_auto_weights(
-            noise_model, base_sw=args.base_sw, base_rw=args.base_rw)
+            noise_model, base_sw=args.base_sw, base_rw=args.base_rw,
+            sw_ratio=args.sw_ratio)
 
         print(f"  Building denoiser (JIT compile)...", end="", flush=True)
         t_jit_start = time.perf_counter()
