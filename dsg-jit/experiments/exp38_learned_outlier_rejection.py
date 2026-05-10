@@ -302,6 +302,7 @@ def build_robust_denoiser(
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
     kernel_scale: float = 3.0,
+    reject_threshold: float = 0.5,
     aw_trans: float = 5.0,
     aw_rot: float = 5.0,
     rw_trans: float = 0.25,
@@ -509,10 +510,10 @@ def build_robust_denoiser(
             0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
         return state[0]
 
-    # ===== Combined: Phase A → Phase B =====
+    # ===== Combined: Phase A → Phase B → Phase C =====
 
     def robust_denoise(noisy_meas, x_init, anchor_targets):
-        """Full pipeline: detect outliers, then denoise with weights."""
+        """Full pipeline: detect outliers, denoise, replace rejected edges."""
         # Phase A: initial solve → residuals → weights
         x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
         weights, chi_scores = compute_weights(x_star_init, noisy_meas)
@@ -520,7 +521,20 @@ def build_robust_denoiser(
         # Phase B: weighted IFT denoiser (corrects all edges)
         theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets, weights)
 
-        return theta_opt, weights, chi_scores
+        # Phase C: hard replacement for rejected outlier edges.
+        # With dense anchors (spacing=10), the Phase A solve trajectory is
+        # well-constrained at every point — nearby GT anchors force the
+        # trajectory through truth. Extract relative poses from this
+        # well-constrained solution and use them for outlier edges only.
+        poses_star = x_star_init.reshape(n_poses, 6)
+        fitted_rel = _relative_batch(poses_star[:-1], poses_star[1:])
+
+        # Hard replace: only outlier edges (w < threshold) get replaced.
+        # Inlier edges keep theta_opt untouched (preserves +7.5% denoising).
+        rejected = (weights < reject_threshold)[:, None]  # (n_meas, 1)
+        theta_final = jnp.where(rejected, fitted_rel, theta_opt)
+
+        return theta_final, weights, chi_scores
 
     robust_denoise_jit = jax.jit(robust_denoise)
     return robust_denoise_jit
@@ -610,7 +624,7 @@ def evaluate_sequence(
     robust_denoise = build_robust_denoiser(
         actual_window, anchor_pos_in_window, inner_sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
-        kernel_scale=args.kernel_scale,
+        kernel_scale=args.kernel_scale, reject_threshold=args.reject_threshold,
         aw_trans=args.aw_trans, aw_rot=args.aw_rot,
         rw_trans=auto_w["rw_trans"], rw_rot=auto_w["rw_rot"],
         sw_trans=auto_w["sw_trans"], sw_rot=auto_w["sw_rot"],
@@ -816,7 +830,7 @@ def main():
 
     # Denoiser config
     parser.add_argument("--window-size", type=int, default=100)
-    parser.add_argument("--anchor-spacing", type=int, default=100)
+    parser.add_argument("--anchor-spacing", type=int, default=10)
     parser.add_argument("--gn-iters", type=int, default=10)
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
@@ -824,6 +838,10 @@ def main():
     parser.add_argument("--kernel-scale", type=float, default=3.0,
                         help="Welsch kernel scale (in sigma units). "
                              "Edges with chi > c are strongly downweighted.")
+    parser.add_argument("--reject-threshold", type=float, default=0.5,
+                        help="Weight threshold for Phase C hard replacement. "
+                             "Edges with w < threshold are replaced by "
+                             "trajectory-fitted relative poses.")
     parser.add_argument("--aw-trans", type=float, default=5.0)
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
@@ -848,7 +866,8 @@ def main():
           f"mag_t={args.outlier_mag_trans}, mag_r={args.outlier_mag_rot}")
     print(f"  Denoiser: window={args.window_size}, "
           f"anchor_spacing={args.anchor_spacing}")
-    print(f"  Kernel: Welsch, scale={args.kernel_scale}σ")
+    print(f"  Kernel: Welsch, scale={args.kernel_scale}σ, "
+          f"reject_threshold={args.reject_threshold}")
     print(f"  Optimiser: {args.n_trans_iters} trans + {args.n_rot_iters} rot "
           f"= {n_total_iters}")
     print(f"  LR: {args.lr}")
@@ -891,6 +910,7 @@ def main():
         "n_rot_iters": args.n_rot_iters,
         "lr": args.lr,
         "kernel_scale": args.kernel_scale,
+        "reject_threshold": args.reject_threshold,
         "sw_ratio": args.sw_ratio,
         "n_seeds": args.n_seeds,
         "seeds": seeds,
