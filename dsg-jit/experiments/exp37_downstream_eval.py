@@ -450,20 +450,16 @@ def evaluate_sequence(
     sigma: jnp.ndarray,
     seq_id: str,
     seed: int,
+    fused_opt,
     *,
     window_size: int = 100,
     anchor_spacing: int = 100,
-    gn_iters: int = 10,
-    n_trans_iters: int = 50,
-    n_rot_iters: int = 20,
-    lr: float = 1e-3,
-    aw_trans: float = 5.0,
-    aw_rot: float = 5.0,
-    inner_anchor_sigma: float = 0.01,
-    base_sw: float = 1.0,
-    base_rw: float = 1.0,
 ) -> dict:
-    """Denoise a sequence and compute trajectory-level metrics."""
+    """Denoise a sequence and compute trajectory-level metrics.
+
+    The fused_opt function must be pre-built and JIT-warmed to avoid
+    recompilation on every call.
+    """
     n_poses_total = gt_poses.shape[0]
     n_meas_total = n_poses_total - 1
 
@@ -474,18 +470,6 @@ def evaluate_sequence(
     key = jax.random.PRNGKey(seed)
     noise = jax.random.normal(key, shape=gt_measurements.shape) * sigma
     noisy_measurements = gt_measurements + noise
-
-    # Noise estimation (online).
-    noisy_np = np.array(noisy_measurements)
-    noise_model = estimate_noise_online(noisy_np)
-    auto_w = compute_auto_weights(noise_model, base_sw=base_sw, base_rw=base_rw)
-    sw_trans = auto_w["sw_trans"]
-    sw_rot = auto_w["sw_rot"]
-    rw_trans = auto_w["rw_trans"]
-    rw_rot = auto_w["rw_rot"]
-
-    inner_sigma = jnp.array(
-        noise_model["sigma_noise_per_comp"], dtype=jnp.float32)
 
     # Plan windows.
     overlap = min(10, window_size // 5)
@@ -505,25 +489,6 @@ def evaluate_sequence(
     anchor_pos_in_window = list(range(0, actual_window, anchor_spacing))
     if anchor_pos_in_window[-1] != actual_window - 1:
         anchor_pos_in_window.append(actual_window - 1)
-
-    # Build denoiser.
-    fused_opt = build_denoiser(
-        actual_window, anchor_pos_in_window, inner_sigma,
-        gn_iters=gn_iters, gn_damping=5e-3,
-        aw_trans=aw_trans, aw_rot=aw_rot,
-        rw_trans=rw_trans, rw_rot=rw_rot,
-        sw_trans=sw_trans, sw_rot=sw_rot,
-        inner_anchor_sigma=inner_anchor_sigma,
-        n_trans_iters=n_trans_iters,
-        n_rot_iters=n_rot_iters,
-        lr=lr)
-
-    # Warm-up.
-    n_meas_window = actual_window - 1
-    dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
-    dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
-    dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6), dtype=jnp.float32)
-    _ = fused_opt(dummy_theta, dummy_x, dummy_anchors, dummy_theta).block_until_ready()
 
     # Commit ranges.
     commit_ranges = []
@@ -720,6 +685,12 @@ def main():
     all_results = []
     t_total_start = time.perf_counter()
 
+    # Precompute window/anchor layout (constant across all evaluations).
+    actual_window = min(args.window_size, min(gp.shape[0] for _, gp in seq_data))
+    anchor_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
+    if anchor_pos_in_window[-1] != actual_window - 1:
+        anchor_pos_in_window.append(actual_window - 1)
+
     for sigma_trans in sigma_levels:
         sigma_rot = sigma_trans * args.sigma_rot_ratio
         sigma = jnp.array(
@@ -730,6 +701,46 @@ def main():
               f"σ_r={sigma_rot:.4f}")
         print(f"{'='*70}")
 
+        # Build denoiser ONCE per noise level.
+        # Use the injected sigma as inner_sigma (known noise level).
+        # Auto-weights: estimate from a representative sequence to get sw/rw.
+        rep_gt = seq_data[0][1]
+        rep_meas = jax.vmap(relative_pose_se3)(rep_gt[:-1], rep_gt[1:])
+        rep_key = jax.random.PRNGKey(seeds[0])
+        rep_noisy = rep_meas + jax.random.normal(
+            rep_key, shape=rep_meas.shape) * sigma
+        noise_model = estimate_noise_online(np.array(rep_noisy))
+        auto_w = compute_auto_weights(
+            noise_model, base_sw=args.base_sw, base_rw=args.base_rw)
+
+        print(f"  Building denoiser (JIT compile)...", end="", flush=True)
+        t_jit_start = time.perf_counter()
+
+        fused_opt = build_denoiser(
+            actual_window, anchor_pos_in_window, sigma,
+            gn_iters=args.gn_iters, gn_damping=5e-3,
+            aw_trans=args.aw_trans, aw_rot=args.aw_rot,
+            rw_trans=auto_w["rw_trans"], rw_rot=auto_w["rw_rot"],
+            sw_trans=auto_w["sw_trans"], sw_rot=auto_w["sw_rot"],
+            inner_anchor_sigma=args.inner_anchor_sigma,
+            n_trans_iters=args.n_trans_iters,
+            n_rot_iters=args.n_rot_iters,
+            lr=args.lr)
+
+        # Warm-up JIT.
+        n_meas_window = actual_window - 1
+        dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
+        dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
+        dummy_anchors = jnp.zeros(
+            (len(anchor_pos_in_window), 6), dtype=jnp.float32)
+        _ = fused_opt(
+            dummy_theta, dummy_x, dummy_anchors, dummy_theta
+        ).block_until_ready()
+
+        t_jit = time.perf_counter() - t_jit_start
+        print(f" done ({t_jit:.1f}s)")
+        print()
+
         level_results = []
 
         for seq_id, gt_poses in seq_data:
@@ -738,18 +749,9 @@ def main():
                 t0 = time.perf_counter()
 
                 result = evaluate_sequence(
-                    gt_poses, sigma, seq_id, seed,
+                    gt_poses, sigma, seq_id, seed, fused_opt,
                     window_size=args.window_size,
                     anchor_spacing=args.anchor_spacing,
-                    gn_iters=args.gn_iters,
-                    n_trans_iters=args.n_trans_iters,
-                    n_rot_iters=args.n_rot_iters,
-                    lr=args.lr,
-                    aw_trans=args.aw_trans,
-                    aw_rot=args.aw_rot,
-                    inner_anchor_sigma=args.inner_anchor_sigma,
-                    base_sw=args.base_sw,
-                    base_rw=args.base_rw,
                 )
 
                 dt = time.perf_counter() - t0
