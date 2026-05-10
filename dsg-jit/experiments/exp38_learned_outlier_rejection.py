@@ -1,30 +1,29 @@
 # experiments/exp38_learned_outlier_rejection.py
 """
-Learned outlier rejection through differentiable pose graph optimisation.
+Robust outlier rejection via residual-based weighting in streaming IFT denoiser.
 
-Extends exp36's bilevel IFT denoiser with per-edge confidence weights
-learned end-to-end through the Gauss-Newton solver.  Given a stream of
-odometry measurements with unknown outliers, the system simultaneously:
+Architecture (per window):
+    Phase A — Outlier detection:
+        1. Run GN solve on corrupted measurements with GT anchors → x*
+        2. Compute per-edge residuals: r_i = relative_pose(x*[i], x*[i+1]) - m_i
+        3. Normalise: chi_i = ||r_i|| / sigma_estimated
+        4. Welsch kernel: w_i = exp(-chi_i² / (2 * c²)), c from noise model
 
-    1. Denoises clean edges (additive corrections θ)
-    2. Rejects corrupted edges (learned weights w → 0 for outliers)
-
-No outlier labels are required — weights are learned purely from anchor
-supervision by differentiating through the inner GN solver via IFT.
+    Phase B — Weighted IFT denoising (exp36 architecture):
+        5. Run bilevel IFT with weighted inner solver (outlier edges ignored)
+        6. Two-phase Adam on theta (translation, then rotation)
+        7. Commit denoised measurements for inlier edges
 
 Novelty vs prior work:
-    - GNC (Yang et al., 2020): fixed kernel, manual annealing, no gradients
-    - Switchable constraints (Sünderhauf & Protzel, 2012): binary, no E2E learning
-    - Roessle et al. (ICCV 2023): learned confidence for feature matching only
-    - THIS: continuous weights through full GN, real-time via IFT, self-tuned
+    - GNC (Yang et al., 2020): requires multiple annealing passes, manual kernel schedule
+    - Switchable constraints: binary switch, not continuous, no denoising
+    - THIS: single-pass, real-time, kernel scale auto-tuned from online noise
+      estimate, integrated with IFT denoising in a streaming framework
 
 Usage:
     python -m experiments.exp38_learned_outlier_rejection \
         --sequences-dir /data/afnan/SemanticKitti/dataset/sequences --seq 06 \
         --outlier-ratio 0.1
-    python -m experiments.exp38_learned_outlier_rejection \
-        --sequences-dir /data/afnan/SemanticKitti/dataset/sequences \
-        --outlier-ratio 0.2 --outlier-mag 0.5
 """
 
 from __future__ import annotations
@@ -113,11 +112,6 @@ def _forward_compose_scan(start_pose: jnp.ndarray, measurements: jnp.ndarray) ->
 _forward_compose_jit = jax.jit(_forward_compose_scan)
 
 
-def reconstruct_trajectory(start_pose: jnp.ndarray, measurements: jnp.ndarray) -> np.ndarray:
-    """Forward-compose measurements from a starting pose to build a trajectory."""
-    return np.array(_forward_compose_jit(start_pose, measurements))
-
-
 # ---------------------------------------------------------------------------
 # Noise estimation (online EMA from exp36)
 # ---------------------------------------------------------------------------
@@ -167,10 +161,7 @@ def estimate_noise_online(
 def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
                          base_rw: float = 1.0,
                          sw_ratio: float = 3.0) -> dict:
-    """Derive sw and rw from the estimated noise model.
-
-    sw is capped at sw_ratio * rw to prevent smoothness from dominating.
-    """
+    """Derive sw and rw from the estimated noise model."""
     sigma_p_t = noise_model["sigma_process_trans"]
     sigma_p_r = noise_model["sigma_process_rot"]
     sigma_n_t = noise_model["sigma_noise_trans"]
@@ -182,16 +173,11 @@ def compute_auto_weights(noise_model: dict, *, base_sw: float = 1.0,
     sw_trans = min(base_sw / max(sigma_p_t ** 2, 1e-12), sw_ratio * rw_trans)
     sw_rot = min(base_sw / max(sigma_p_r ** 2, 1e-12), sw_ratio * rw_rot)
 
-    snr_trans = sigma_p_t / max(sigma_n_t, 1e-12)
-    snr_rot = sigma_p_r / max(sigma_n_r, 1e-12)
-
     return {
         "sw_trans": sw_trans,
         "sw_rot": sw_rot,
         "rw_trans": rw_trans,
         "rw_rot": rw_rot,
-        "snr_trans": snr_trans,
-        "snr_rot": snr_rot,
     }
 
 
@@ -224,43 +210,33 @@ def inject_outliers(
     outlier_mag_trans: float = 0.5,
     outlier_mag_rot: float = 0.2,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Inject random outliers into a fraction of measurements.
-
-    Returns:
-        corrupted: measurements with outliers injected
-        outlier_mask: boolean array, True for corrupted edges
-    """
+    """Inject random outliers into a fraction of measurements."""
     n_meas = measurements.shape[0]
     key1, key2 = jax.random.split(key)
 
-    # Select which edges are outliers.
     outlier_mask = jax.random.uniform(key1, (n_meas,)) < outlier_ratio
-
-    # Generate large random perturbations for outliers.
     outlier_sigma = jnp.array(
         [outlier_mag_trans] * 3 + [outlier_mag_rot] * 3, dtype=jnp.float32)
     perturbation = jax.random.normal(key2, shape=measurements.shape) * outlier_sigma
-
-    # Apply perturbation only to outlier edges.
     corrupted = measurements + perturbation * outlier_mask[:, None]
 
     return corrupted, outlier_mask
 
 
 # ---------------------------------------------------------------------------
-# Bilevel solver with learned outlier weights
+# Robust denoiser: residual-based weights + IFT denoising
 # ---------------------------------------------------------------------------
 
 def build_robust_denoiser(
     n_poses: int,
-    inner_anchor_positions: list[int],
-    eval_positions: list[int],
+    anchor_positions: list[int],
     sigma: jnp.ndarray,
     *,
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
-    aw_trans: float = 15.0,
-    aw_rot: float = 15.0,
+    kernel_scale: float = 3.0,
+    aw_trans: float = 5.0,
+    aw_rot: float = 5.0,
     rw_trans: float = 0.25,
     rw_rot: float = 0.1,
     sw_trans: float = 25.0,
@@ -269,34 +245,25 @@ def build_robust_denoiser(
     n_trans_iters: int = 50,
     n_rot_iters: int = 20,
     lr: float = 1e-3,
-    weight_lr: float = 1e-2,
-    weight_reg: float = 0.01,
-    n_weight_iters: int = 30,
 ):
-    """Build a JIT-compiled robust denoiser with learned per-edge weights.
+    """Build a JIT-compiled robust denoiser.
 
-    Key architecture: inner and outer anchors are SEPARATED.
-      - Inner solver uses sparse gauge-fix anchors (first/last) so the
-        pose graph is measurement-dominated. Outliers corrupt the trajectory.
-      - Outer loss evaluates at dense GT positions to detect corruption.
-        This asymmetry creates strong gradient signal for weight learning.
+    Two-phase architecture:
+        A) Initial GN solve → per-edge residuals → Welsch kernel weights
+        B) Weighted IFT denoiser (exp36-style) with outlier edges suppressed
 
-    Learns simultaneously:
-        1. Measurement corrections θ (additive, 6D per edge)
-        2. Per-edge confidence weights w = sigmoid(log_w) ∈ (0, 1)
+    The kernel scale `c` controls sensitivity: edges with normalised residual
+    > c are strongly downweighted.  Derived from the noise model automatically.
     """
     n_meas = n_poses - 1
     odom_w = sigma_to_weight(sigma)
     sqrt_odom_w = jnp.sqrt(odom_w)
+    anchor_w = sigma_to_weight(jnp.full(6, inner_anchor_sigma))
+    sqrt_anchor_w = jnp.sqrt(anchor_w)
+    anchor_idx = jnp.array(anchor_positions, dtype=jnp.int32)
 
-    # Inner anchors: sparse, for gauge fixing only
-    inner_anchor_w = sigma_to_weight(jnp.full(6, inner_anchor_sigma))
-    sqrt_inner_anchor_w = jnp.sqrt(inner_anchor_w)
-    inner_anchor_idx = jnp.array(inner_anchor_positions, dtype=jnp.int32)
-    n_inner_anchors = len(inner_anchor_positions)
-
-    # Outer eval positions: dense, for supervision
-    eval_idx = jnp.array(eval_positions, dtype=jnp.int32)
+    # Sigma per component for normalisation (from noise model)
+    sigma_per_comp = sigma  # already per-component [6]
 
     anchor_w_vec = jnp.array(
         [aw_trans] * 3 + [aw_rot] * 3, dtype=jnp.float32)
@@ -305,25 +272,24 @@ def build_robust_denoiser(
     sw_vec = jnp.array(
         [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
 
-    _odom_res_batch = jax.vmap(
+    _odom_res_batch_unweighted = jax.vmap(
+        lambda a, b, m: (relative_pose_se3(a, b) - m) * sqrt_odom_w)
+    _odom_res_batch_weighted = jax.vmap(
         lambda a, b, m, w: w * (relative_pose_se3(a, b) - m) * sqrt_odom_w)
+    _relative_batch = jax.vmap(relative_pose_se3)
     _retract_batch = jax.vmap(se3_retract_left)
     max_step_per_pose = 0.5
 
-    # --- Inner PGO residual with learned weights ---
-    # Only uses sparse gauge-fix anchors (first/last pose).
+    # ===== PHASE A: Initial GN solve (unweighted) for residual computation =====
 
-    def residual_fn(x, theta, inner_anchor_targets, weights):
-        """Weighted residual: w_i scales each odometry residual."""
+    def residual_unweighted(x, meas, anchor_targets):
         poses = x.reshape(n_poses, 6)
-        w_broad = weights[:, None]  # (n_meas, 1)
-        r_odom = _odom_res_batch(poses[:-1], poses[1:], theta, w_broad)
-        r_anch = (poses[inner_anchor_idx] - inner_anchor_targets) * sqrt_inner_anchor_w
+        r_odom = _odom_res_batch_unweighted(poses[:-1], poses[1:], meas)
+        r_anch = (poses[anchor_idx] - anchor_targets) * sqrt_anchor_w
         return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
 
-    def gn_step(x, theta, inner_anchor_targets, weights):
-        def r_fn(x_):
-            return residual_fn(x_, theta, inner_anchor_targets, weights)
+    def gn_step_unweighted(x, meas, anchor_targets):
+        r_fn = lambda x_: residual_unweighted(x_, meas, anchor_targets)
         r = r_fn(x)
         J = jax.jacobian(r_fn)(x)
         n = x.shape[0]
@@ -336,163 +302,161 @@ def build_robust_denoiser(
         deltas = deltas * scales
         return _retract_batch(poses, -deltas).ravel()
 
-    # --- IFT inner solve ---
-
-    @jax.custom_vjp
-    def inner_solve(theta, x_init, inner_anchor_targets, weights):
+    def initial_solve(meas, x_init, anchor_targets):
+        """Run GN to convergence on raw measurements (no custom_vjp needed)."""
         def scan_body(x, _):
-            return gn_step(x, theta, inner_anchor_targets, weights), None
+            return gn_step_unweighted(x, meas, anchor_targets), None
         x_star, _ = jax.lax.scan(scan_body, x_init, None, length=gn_iters)
         return x_star
 
-    def inner_solve_fwd(theta, x_init, inner_anchor_targets, weights):
-        x_star = inner_solve(theta, x_init, inner_anchor_targets, weights)
-        return x_star, (x_star, theta, inner_anchor_targets, weights)
+    def compute_weights(x_star, meas):
+        """Compute per-edge Welsch kernel weights from residuals."""
+        poses = x_star.reshape(n_poses, 6)
+        # Per-edge residual: difference between fitted relative pose and measurement
+        fitted_rel = _relative_batch(poses[:-1], poses[1:])
+        residual = fitted_rel - meas  # (n_meas, 6)
+
+        # Normalise by estimated sigma per component, then take norm
+        normalised = residual / sigma_per_comp  # element-wise
+        chi = jnp.linalg.norm(normalised, axis=1)  # (n_meas,)
+
+        # Welsch kernel: w = exp(-chi²/(2c²))
+        weights = jnp.exp(-chi ** 2 / (2.0 * kernel_scale ** 2))
+        return weights, chi
+
+    # ===== PHASE B: Weighted IFT denoiser (exp36 architecture) =====
+
+    def residual_weighted(x, theta, anchor_targets, weights):
+        poses = x.reshape(n_poses, 6)
+        w_broad = weights[:, None]
+        r_odom = _odom_res_batch_weighted(poses[:-1], poses[1:], theta, w_broad)
+        r_anch = (poses[anchor_idx] - anchor_targets) * sqrt_anchor_w
+        return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
+
+    def gn_step_weighted(x, theta, anchor_targets, weights):
+        r_fn = lambda x_: residual_weighted(x_, theta, anchor_targets, weights)
+        r = r_fn(x)
+        J = jax.jacobian(r_fn)(x)
+        n = x.shape[0]
+        H = J.T @ J + gn_damping * jnp.eye(n)
+        delta = jnp.linalg.solve(H, J.T @ r)
+        poses = x.reshape(n_poses, 6)
+        deltas = delta.reshape(n_poses, 6)
+        norms = jnp.linalg.norm(deltas, axis=1, keepdims=True)
+        scales = jnp.minimum(1.0, max_step_per_pose / (norms + 1e-9))
+        deltas = deltas * scales
+        return _retract_batch(poses, -deltas).ravel()
+
+    # IFT inner solve (only theta gradient, weights are fixed input)
+    @jax.custom_vjp
+    def inner_solve(theta, x_init, anchor_targets, weights):
+        def scan_body(x, _):
+            return gn_step_weighted(x, theta, anchor_targets, weights), None
+        x_star, _ = jax.lax.scan(scan_body, x_init, None, length=gn_iters)
+        return x_star
+
+    def inner_solve_fwd(theta, x_init, anchor_targets, weights):
+        x_star = inner_solve(theta, x_init, anchor_targets, weights)
+        return x_star, (x_star, theta, anchor_targets, weights)
 
     def inner_solve_bwd(res, g):
-        x_star, theta, inner_anchor_targets, weights = res
-        r_fn_x = lambda x_: residual_fn(x_, theta, inner_anchor_targets, weights)
+        x_star, theta, anchor_targets, weights = res
+        r_fn_x = lambda x_: residual_weighted(x_, theta, anchor_targets, weights)
         J = jax.jacobian(r_fn_x)(x_star)
         n = x_star.shape[0]
         H = J.T @ J + gn_damping * jnp.eye(n)
         u = jnp.linalg.solve(H, g)
 
-        # Gradient w.r.t. theta
-        _, vjp_theta = jax.vjp(
-            lambda t: residual_fn(x_star, t, inner_anchor_targets, weights), theta)
+        _, vjp_fn = jax.vjp(
+            lambda t: residual_weighted(x_star, t, anchor_targets, weights), theta)
         v = J @ u
-        dtheta = -vjp_theta(v)[0]
-
-        # Gradient w.r.t. weights
-        _, vjp_weights = jax.vjp(
-            lambda w: residual_fn(x_star, theta, inner_anchor_targets, w), weights)
-        dweights = -vjp_weights(v)[0]
+        dtheta = -vjp_fn(v)[0]
 
         return (dtheta, jnp.zeros_like(x_star),
-                jnp.zeros_like(inner_anchor_targets), dweights)
+                jnp.zeros_like(anchor_targets), jnp.zeros_like(weights))
 
     inner_solve.defvjp(inner_solve_fwd, inner_solve_bwd)
 
-    # --- Outer loss ---
-    # Uses RELATIVE evaluation between consecutive eval positions.
-    # This localises the error signal: only the eval pair straddling an
-    # outlier sees large error, concentrating gradient on the actual outlier
-    # rather than spreading it across the entire downstream chain.
-
-    log_w_init_val = 3.0
-    _relative_batch = jax.vmap(relative_pose_se3)
-
-    def outer_loss(theta, log_w, x_init, inner_anchor_targets,
-                   eval_rel_targets, noisy_meas):
-        weights = jax.nn.sigmoid(log_w)
-        x_star = inner_solve(theta, x_init, inner_anchor_targets, weights)
+    # Outer loss (same as exp36 — no weight learning)
+    def outer_loss(theta, x_init, anchor_targets, weights, noisy_meas):
+        x_star = inner_solve(theta, x_init, anchor_targets, weights)
         poses_opt = x_star.reshape(n_poses, 6)
 
-        # Relative evaluation: compare relative poses between consecutive
-        # eval positions in solved trajectory vs GT.
-        # This is LOCAL — each pair only depends on edges between those positions.
-        solved_rel = _relative_batch(poses_opt[eval_idx[:-1]], poses_opt[eval_idx[1:]])
-        eval_diffs = solved_rel - eval_rel_targets
-        a_loss = jnp.sum(anchor_w_vec * eval_diffs ** 2)
+        diffs = poses_opt[anchor_idx] - anchor_targets
+        a_loss = jnp.sum(anchor_w_vec * diffs ** 2)
 
-        # Regularisation: corrected measurements near original
         dev = theta - noisy_meas
         r_loss = jnp.sum(reg_w_vec * dev ** 2)
 
-        # Smoothness
         s_diffs = theta[1:] - theta[:-1]
         s_loss = jnp.sum(sw_vec * s_diffs ** 2)
 
-        # Weight regularisation: L2 toward initial value (w ≈ 1).
-        w_reg_loss = weight_reg * jnp.sum((log_w - log_w_init_val) ** 2)
+        return a_loss + r_loss + s_loss
 
-        return a_loss + r_loss + s_loss + w_reg_loss
+    grad_fn = jax.grad(outer_loss)
 
-    grad_fn = jax.grad(outer_loss, argnums=(0, 1))
-
-    # --- Joint optimisation: theta + weights together ---
+    # Two-phase Adam (exp36 architecture)
     trans_mask = jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
-    def fused_optimize(theta_init, log_w_init, x_init,
-                       inner_anchor_targets, eval_rel_targets, noisy_meas):
-        """Joint optimisation: theta (two-phase) + weights updated together."""
+    def fused_optimize(noisy_meas, x_init, anchor_targets, weights):
+        """Two-phase Adam with fixed weights: translation first, rotation second."""
 
-        # Phase 1 — Translation + weights jointly
-        m_theta = jnp.zeros_like(theta_init)
-        v_theta = jnp.zeros_like(theta_init)
-        m_w = jnp.zeros_like(log_w_init)
-        v_w = jnp.zeros_like(log_w_init)
+        # Phase 1 — Translation
+        m0 = jnp.zeros_like(noisy_meas)
+        v0 = jnp.zeros_like(noisy_meas)
 
         def trans_body(i, state):
-            theta, log_w, mt, vt, mw, vw = state
-            g_theta, g_w = grad_fn(theta, log_w, x_init,
-                                   inner_anchor_targets, eval_rel_targets, noisy_meas)
-            g_t = g_theta * trans_mask
+            theta, m, v = state
+            g = grad_fn(theta, x_init, anchor_targets, weights, noisy_meas)
+            g = g * trans_mask
             t = (i + 1).astype(jnp.float32)
-
-            # Update theta (translation only)
-            mt_new = 0.9 * mt + 0.1 * g_t
-            vt_new = 0.999 * vt + 0.001 * g_t ** 2
-            mt_hat = mt_new / (1.0 - 0.9 ** t)
-            vt_hat = vt_new / (1.0 - 0.999 ** t)
-            theta_update = lr * mt_hat / (jnp.sqrt(vt_hat) + 1e-8)
-
-            # Update weights
-            mw_new = 0.9 * mw + 0.1 * g_w
-            vw_new = 0.999 * vw + 0.001 * g_w ** 2
-            mw_hat = mw_new / (1.0 - 0.9 ** t)
-            vw_hat = vw_new / (1.0 - 0.999 ** t)
-            w_update = weight_lr * mw_hat / (jnp.sqrt(vw_hat) + 1e-8)
-
-            return (theta - theta_update, log_w - w_update,
-                    mt_new, vt_new, mw_new, vw_new)
+            m_new = 0.9 * m + 0.1 * g
+            v_new = 0.999 * v + 0.001 * g ** 2
+            m_hat = m_new / (1.0 - 0.9 ** t)
+            v_hat = v_new / (1.0 - 0.999 ** t)
+            update = lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
+            return (theta - update, m_new, v_new)
 
         state = jax.lax.fori_loop(
-            0, n_trans_iters, trans_body,
-            (theta_init, log_w_init, m_theta, v_theta, m_w, v_w))
-        theta_t, log_w_t = state[0], state[1]
+            0, n_trans_iters, trans_body, (noisy_meas, m0, v0))
+        theta_t = state[0]
 
-        # Phase 2 — Rotation + weights jointly (fresh Adam for theta, continue for w)
-        m_theta_r = jnp.zeros_like(theta_t)
-        v_theta_r = jnp.zeros_like(theta_t)
-        mw_cont = state[4]
-        vw_cont = state[5]
+        # Phase 2 — Rotation
+        m0_r = jnp.zeros_like(theta_t)
+        v0_r = jnp.zeros_like(theta_t)
 
         def rot_body(i, state):
-            theta, log_w, mt, vt, mw, vw = state
-            g_theta, g_w = grad_fn(theta, log_w, x_init,
-                                   inner_anchor_targets, eval_rel_targets, noisy_meas)
-            g_r = g_theta * rot_mask
+            theta, m, v = state
+            g = grad_fn(theta, x_init, anchor_targets, weights, noisy_meas)
+            g = g * rot_mask
             t = (i + 1).astype(jnp.float32)
-
-            # Update theta (rotation only)
-            mt_new = 0.9 * mt + 0.1 * g_r
-            vt_new = 0.999 * vt + 0.001 * g_r ** 2
-            mt_hat = mt_new / (1.0 - 0.9 ** t)
-            vt_hat = vt_new / (1.0 - 0.999 ** t)
-            theta_update = lr * mt_hat / (jnp.sqrt(vt_hat) + 1e-8)
-
-            # Update weights (continuing)
-            t_w = (i + 1 + n_trans_iters).astype(jnp.float32)
-            mw_new = 0.9 * mw + 0.1 * g_w
-            vw_new = 0.999 * vw + 0.001 * g_w ** 2
-            mw_hat = mw_new / (1.0 - 0.9 ** t_w)
-            vw_hat = vw_new / (1.0 - 0.999 ** t_w)
-            w_update = weight_lr * mw_hat / (jnp.sqrt(vw_hat) + 1e-8)
-
-            return (theta - theta_update, log_w - w_update,
-                    mt_new, vt_new, mw_new, vw_new)
+            m_new = 0.9 * m + 0.1 * g
+            v_new = 0.999 * v + 0.001 * g ** 2
+            m_hat = m_new / (1.0 - 0.9 ** t)
+            v_hat = v_new / (1.0 - 0.999 ** t)
+            update = lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
+            return (theta - update, m_new, v_new)
 
         state = jax.lax.fori_loop(
-            0, n_rot_iters, rot_body,
-            (theta_t, log_w_t, m_theta_r, v_theta_r, mw_cont, vw_cont))
+            0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
+        return state[0]
 
-        return state[0], state[1]
+    # ===== Combined: Phase A → Phase B =====
 
-    fused_optimize_jit = jax.jit(fused_optimize)
+    def robust_denoise(noisy_meas, x_init, anchor_targets):
+        """Full pipeline: detect outliers, then denoise with weights."""
+        # Phase A: initial solve → residuals → weights
+        x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
+        weights, chi_scores = compute_weights(x_star_init, noisy_meas)
 
-    return fused_optimize_jit
+        # Phase B: weighted IFT denoiser
+        theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets, weights)
+
+        return theta_opt, weights, chi_scores
+
+    robust_denoise_jit = jax.jit(robust_denoise)
+    return robust_denoise_jit
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +495,6 @@ def evaluate_sequence(
     )
     outlier_mask_np = np.array(outlier_mask)
     n_outliers = int(np.sum(outlier_mask_np))
-    n_inliers = n_meas_total - n_outliers
 
     # Noise estimation.
     noisy_np = np.array(corrupted_measurements)
@@ -548,6 +511,7 @@ def evaluate_sequence(
     print(f"  σ_noise: trans={noise_model['sigma_noise_trans']:.5f}, "
           f"rot={noise_model['sigma_noise_rot']:.5f}")
     print(f"  sw_trans={auto_w['sw_trans']:.2f}, rw_trans={auto_w['rw_trans']:.2f}")
+    print(f"  Kernel scale: {args.kernel_scale}")
 
     # Plan windows.
     actual_window = min(window_size, n_poses_total)
@@ -560,22 +524,17 @@ def evaluate_sequence(
         if windows[-1][1] < n_poses_total:
             windows.append((n_poses_total - actual_window, n_poses_total))
 
-    # Inner anchors: first and last pose only (gauge fix).
-    inner_anchor_pos = [0, actual_window - 1]
-
-    # Outer eval positions: dense (every anchor_spacing poses).
-    eval_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
-    if eval_pos_in_window[-1] != actual_window - 1:
-        eval_pos_in_window.append(actual_window - 1)
-
-    print(f"  Inner anchors: {len(inner_anchor_pos)} (gauge fix)")
-    print(f"  Eval positions: {len(eval_pos_in_window)} (every {args.anchor_spacing})")
+    # Anchor positions (same as exp36 — dense for inner solver).
+    anchor_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
+    if anchor_pos_in_window[-1] != actual_window - 1:
+        anchor_pos_in_window.append(actual_window - 1)
 
     # Build denoiser.
     t_jit_start = time.perf_counter()
-    fused_opt = build_robust_denoiser(
-        actual_window, inner_anchor_pos, eval_pos_in_window, inner_sigma,
+    robust_denoise = build_robust_denoiser(
+        actual_window, anchor_pos_in_window, inner_sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
+        kernel_scale=args.kernel_scale,
         aw_trans=args.aw_trans, aw_rot=args.aw_rot,
         rw_trans=auto_w["rw_trans"], rw_rot=auto_w["rw_rot"],
         sw_trans=auto_w["sw_trans"], sw_rot=auto_w["sw_rot"],
@@ -583,22 +542,15 @@ def evaluate_sequence(
         n_trans_iters=args.n_trans_iters,
         n_rot_iters=args.n_rot_iters,
         lr=args.lr,
-        weight_lr=args.weight_lr,
-        weight_reg=args.weight_reg,
-        n_weight_iters=args.n_weight_iters,
     )
 
     # Warm-up.
     n_meas_window = actual_window - 1
-    n_eval_pairs = len(eval_pos_in_window) - 1
-    dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
+    dummy_meas = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
-    dummy_inner_anchors = jnp.zeros((len(inner_anchor_pos), 6), dtype=jnp.float32)
-    dummy_eval_rel = jnp.zeros((n_eval_pairs, 6), dtype=jnp.float32)
-    dummy_log_w = jnp.full(n_meas_window, 3.0, dtype=jnp.float32)
-    _ = fused_opt(dummy_theta, dummy_log_w, dummy_x, dummy_inner_anchors,
-                  dummy_eval_rel, dummy_theta)
-    jax.block_until_ready(_)
+    dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6), dtype=jnp.float32)
+    _ = robust_denoise(dummy_meas, dummy_x, dummy_anchors)
+    jax.block_until_ready(_[0])
     t_jit = time.perf_counter() - t_jit_start
     print(f"  JIT: {t_jit:.1f}s")
 
@@ -620,11 +572,11 @@ def evaluate_sequence(
             commit_end = (next_first_edge + w_last_edge) // 2
         commit_ranges.append((commit_start, commit_end))
 
-    # Denoise + learn weights.
+    # Denoise window by window.
     t_denoise_start = time.perf_counter()
     denoised_measurements = np.array(corrupted_measurements).copy()
-    learned_weights = np.ones(n_meas_total, dtype=np.float32)
-    window_times = []
+    all_weights = np.ones(n_meas_total, dtype=np.float32)
+    all_chi = np.zeros(n_meas_total, dtype=np.float32)
 
     for wi, (w_start, w_end) in enumerate(windows):
         t_win_start = time.perf_counter()
@@ -632,71 +584,63 @@ def evaluate_sequence(
         w_n_meas = w_n_poses - 1
         w_noisy = jnp.array(corrupted_measurements[w_start:w_start + w_n_meas])
 
-        # Inner anchor targets (gauge fix: first and last).
+        # Anchor targets from GT (same as exp36).
         gt_first = gt_poses[w_start]
-        inner_anchor_global = gt_poses[w_start + jnp.array(inner_anchor_pos)]
-        w_inner_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
-            gt_first, inner_anchor_global)
+        anchor_global = gt_poses[w_start + jnp.array(anchor_pos_in_window)]
+        w_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
+            gt_first, anchor_global)
 
-        # Outer eval: RELATIVE poses between consecutive eval positions.
-        eval_global = gt_poses[w_start + jnp.array(eval_pos_in_window)]
-        w_eval_rel_targets = jax.vmap(relative_pose_se3)(
-            eval_global[:-1], eval_global[1:])
-
-        # x_init.
+        # x_init: forward-compose from origin.
         origin = jnp.zeros(6, dtype=jnp.float32)
         x_init = _forward_compose_jit(origin, w_noisy).ravel()
 
-        # Initial log_weights: w ≈ 0.95 (trust all), gradient pushes outliers down.
-        log_w_init = jnp.full(w_n_meas, 3.0, dtype=jnp.float32)
-
-        # Optimise.
-        theta_opt, log_w_opt = fused_opt(
-            w_noisy, log_w_init, x_init, w_inner_anchor_targets,
-            w_eval_rel_targets, w_noisy)
+        # Run robust denoiser (Phase A + Phase B).
+        theta_opt, weights, chi_scores = robust_denoise(
+            w_noisy, x_init, w_anchor_targets)
         jax.block_until_ready(theta_opt)
 
         # Commit.
         theta_np = np.array(theta_opt)
-        w_np = float(jax.nn.sigmoid(log_w_opt).mean())  # for logging
-        weights_np = np.array(jax.nn.sigmoid(log_w_opt))
+        weights_np = np.array(weights)
+        chi_np = np.array(chi_scores)
         commit_start, commit_end = commit_ranges[wi]
         for gi in range(commit_start, commit_end + 1):
             local_i = gi - w_start
             if 0 <= local_i < w_n_meas and gi < n_meas_total:
                 denoised_measurements[gi] = theta_np[local_i]
-                learned_weights[gi] = weights_np[local_i]
+                all_weights[gi] = weights_np[local_i]
+                all_chi[gi] = chi_np[local_i]
 
         t_win = time.perf_counter() - t_win_start
-        window_times.append(t_win)
 
         if (wi + 1) % 10 == 0 or wi == len(windows) - 1:
             elapsed = time.perf_counter() - t_denoise_start
             avg_hz = (wi + 1) * actual_window / elapsed
+            mean_w = float(weights_np.mean())
+            n_rejected = int((weights_np < 0.5).sum())
             print(f"    Window {wi+1}/{len(windows)} done "
                   f"({elapsed:.1f}s, {avg_hz:.1f} poses/s, "
-                  f"avg_w={w_np:.3f})", flush=True)
+                  f"avg_w={mean_w:.3f}, rejected={n_rejected}/{w_n_meas})",
+                  flush=True)
 
     t_denoise = time.perf_counter() - t_denoise_start
     poses_per_sec = n_poses_total / t_denoise
 
     # --- Metrics ---
-    # Baseline: corrupted vs GT
     baseline = compute_per_edge_error(
         jnp.array(corrupted_measurements), gt_measurements)
-    # After denoising
     after = compute_per_edge_error(
         jnp.array(denoised_measurements), gt_measurements)
 
     trans_improv = (1 - after['rmse_trans'] / baseline['rmse_trans']) * 100
     rot_improv = (1 - after['rmse_rot'] / baseline['rmse_rot']) * 100
 
-    # Weight analysis
-    w_outlier = learned_weights[outlier_mask_np]
-    w_inlier = learned_weights[~outlier_mask_np]
+    # Weight analysis.
+    w_outlier = all_weights[outlier_mask_np]
+    w_inlier = all_weights[~outlier_mask_np]
 
-    # Classification accuracy at threshold 0.5
-    predicted_outlier = learned_weights < 0.5
+    # Classification at threshold 0.5.
+    predicted_outlier = all_weights < 0.5
     tp = int(np.sum(predicted_outlier & outlier_mask_np))
     fp = int(np.sum(predicted_outlier & ~outlier_mask_np))
     fn = int(np.sum(~predicted_outlier & outlier_mask_np))
@@ -715,6 +659,8 @@ def evaluate_sequence(
     print(f"\n  --- Outlier Detection ---")
     print(f"  Mean weight (outliers): {np.mean(w_outlier):.4f}")
     print(f"  Mean weight (inliers):  {np.mean(w_inlier):.4f}")
+    print(f"  Mean chi (outliers):    {np.mean(all_chi[outlier_mask_np]):.2f}")
+    print(f"  Mean chi (inliers):     {np.mean(all_chi[~outlier_mask_np]):.2f}")
     print(f"  Precision: {precision:.3f}, Recall: {recall:.3f}, "
           f"F1: {f1:.3f}, Accuracy: {accuracy:.3f}")
 
@@ -723,7 +669,7 @@ def evaluate_sequence(
         "seed": seed,
         "n_poses": n_poses_total,
         "n_outliers": n_outliers,
-        "n_inliers": n_inliers,
+        "n_inliers": n_meas_total - n_outliers,
         "outlier_ratio_actual": round(n_outliers / n_meas_total, 4),
         "baseline": {
             "trans_rmse": round(baseline['rmse_trans'], 6),
@@ -741,10 +687,10 @@ def evaluate_sequence(
         "weight_stats": {
             "outlier_mean_w": round(float(np.mean(w_outlier)), 4),
             "outlier_std_w": round(float(np.std(w_outlier)), 4),
-            "outlier_median_w": round(float(np.median(w_outlier)), 4),
             "inlier_mean_w": round(float(np.mean(w_inlier)), 4),
             "inlier_std_w": round(float(np.std(w_inlier)), 4),
-            "inlier_median_w": round(float(np.median(w_inlier)), 4),
+            "outlier_mean_chi": round(float(np.mean(all_chi[outlier_mask_np])), 2),
+            "inlier_mean_chi": round(float(np.mean(all_chi[~outlier_mask_np])), 2),
         },
         "classification": {
             "precision": round(precision, 4),
@@ -758,7 +704,8 @@ def evaluate_sequence(
             "jit_s": round(t_jit, 2),
             "denoise_s": round(t_denoise, 2),
         },
-        "learned_weights": learned_weights.tolist(),
+        "weights": all_weights.tolist(),
+        "chi_scores": all_chi.tolist(),
         "outlier_mask": outlier_mask_np.tolist(),
     }
 
@@ -769,7 +716,8 @@ def evaluate_sequence(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="exp38: learned outlier rejection through differentiable PGO")
+        description="exp38: robust outlier rejection via residual-based "
+                    "weighting in streaming IFT denoiser")
     parser.add_argument("--sequences-dir", type=str, required=True)
     parser.add_argument("--seq", type=str, default=None)
     parser.add_argument("--n-poses", type=int, default=None)
@@ -792,18 +740,16 @@ def main():
 
     # Denoiser config
     parser.add_argument("--window-size", type=int, default=100)
-    parser.add_argument("--anchor-spacing", type=int, default=10)
+    parser.add_argument("--anchor-spacing", type=int, default=100)
     parser.add_argument("--gn-iters", type=int, default=10)
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
-    parser.add_argument("--n-weight-iters", type=int, default=0,
-                        help="(deprecated, weights now joint with theta)")
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight-lr", type=float, default=1e-2)
-    parser.add_argument("--weight-reg", type=float, default=0.01,
-                        help="Regularisation toward w=1 (trust measurements)")
-    parser.add_argument("--aw-trans", type=float, default=15.0)
-    parser.add_argument("--aw-rot", type=float, default=15.0)
+    parser.add_argument("--kernel-scale", type=float, default=3.0,
+                        help="Welsch kernel scale (in sigma units). "
+                             "Edges with chi > c are strongly downweighted.")
+    parser.add_argument("--aw-trans", type=float, default=5.0)
+    parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
     parser.add_argument("--base-sw", type=float, default=1.0)
     parser.add_argument("--base-rw", type=float, default=1.0)
@@ -817,7 +763,7 @@ def main():
     n_total_iters = args.n_trans_iters + args.n_rot_iters
 
     print("=" * 70)
-    print("  exp38 -- Learned Outlier Rejection via Differentiable PGO")
+    print("  exp38 -- Robust Outlier Rejection via Residual-Weighted IFT")
     print("=" * 70)
     _print_device_info()
     print()
@@ -825,13 +771,11 @@ def main():
     print(f"  Outliers: {args.outlier_ratio*100:.0f}% ratio, "
           f"mag_t={args.outlier_mag_trans}, mag_r={args.outlier_mag_rot}")
     print(f"  Denoiser: window={args.window_size}, "
-          f"eval_spacing={args.anchor_spacing}")
-    print(f"  Architecture: inner=2 gauge anchors, "
-          f"outer=dense eval every {args.anchor_spacing}")
+          f"anchor_spacing={args.anchor_spacing}")
+    print(f"  Kernel: Welsch, scale={args.kernel_scale}σ")
     print(f"  Optimiser: {args.n_trans_iters} trans + {args.n_rot_iters} rot "
-          f"= {n_total_iters} (joint θ+w)")
-    print(f"  LR: theta={args.lr}, weights={args.weight_lr}")
-    print(f"  Weight reg: {args.weight_reg}, aw={args.aw_trans}, init w≈0.95")
+          f"= {n_total_iters}")
+    print(f"  LR: {args.lr}")
     print(f"  Seeds: {args.n_seeds}")
     print()
 
@@ -869,10 +813,8 @@ def main():
         "gn_iters": args.gn_iters,
         "n_trans_iters": args.n_trans_iters,
         "n_rot_iters": args.n_rot_iters,
-        "n_weight_iters": args.n_weight_iters,
         "lr": args.lr,
-        "weight_lr": args.weight_lr,
-        "weight_reg": args.weight_reg,
+        "kernel_scale": args.kernel_scale,
         "sw_ratio": args.sw_ratio,
         "n_seeds": args.n_seeds,
         "seeds": seeds,
@@ -903,10 +845,12 @@ def main():
     header = (f"  {'Seq':>4s} {'Seed':>5s} {'Out%':>5s} "
               f"{'T_imp%':>7s} {'R_imp%':>7s} "
               f"{'w_out':>6s} {'w_in':>6s} "
+              f"{'chi_out':>7s} {'chi_in':>6s} "
               f"{'Prec':>5s} {'Rec':>5s} {'F1':>5s} {'Hz':>6s}")
     print(header)
     print(f"  {'-'*4} {'-'*5} {'-'*5} {'-'*7} {'-'*7} "
-          f"{'-'*6} {'-'*6} {'-'*5} {'-'*5} {'-'*5} {'-'*6}")
+          f"{'-'*6} {'-'*6} {'-'*7} {'-'*6} "
+          f"{'-'*5} {'-'*5} {'-'*5} {'-'*6}")
 
     for r in all_results:
         imp = r['improvement_pct']
@@ -916,6 +860,7 @@ def main():
               f"{r['outlier_ratio_actual']*100:>4.0f}% "
               f"{imp['trans_rmse']:>+6.1f}% {imp['rot_rmse']:>+6.1f}% "
               f"{ws['outlier_mean_w']:>5.3f} {ws['inlier_mean_w']:>5.3f} "
+              f"{ws['outlier_mean_chi']:>6.1f} {ws['inlier_mean_chi']:>5.1f} "
               f"{cl['precision']:>5.3f} {cl['recall']:>5.3f} "
               f"{cl['f1']:>5.3f} {r['throughput']['poses_per_sec']:>5.0f}")
 
@@ -924,15 +869,10 @@ def main():
         t_vals = [r['improvement_pct']['trans_rmse'] for r in all_results]
         r_vals = [r['improvement_pct']['rot_rmse'] for r in all_results]
         f1_vals = [r['classification']['f1'] for r in all_results]
-        w_out_vals = [r['weight_stats']['outlier_mean_w'] for r in all_results]
-        w_in_vals = [r['weight_stats']['inlier_mean_w'] for r in all_results]
-
         print(f"\n  Aggregate ({len(all_results)} runs):")
         print(f"    Trans improvement: {np.mean(t_vals):+.1f}% ± {np.std(t_vals):.1f}")
         print(f"    Rot improvement:   {np.mean(r_vals):+.1f}% ± {np.std(r_vals):.1f}")
         print(f"    F1 score:          {np.mean(f1_vals):.3f} ± {np.std(f1_vals):.3f}")
-        print(f"    Mean w (outliers): {np.mean(w_out_vals):.4f}")
-        print(f"    Mean w (inliers):  {np.mean(w_in_vals):.4f}")
 
     print(f"\n  Total time: {t_total:.1f}s")
 
