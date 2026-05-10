@@ -253,13 +253,14 @@ def inject_outliers(
 
 def build_robust_denoiser(
     n_poses: int,
-    anchor_positions: list[int],
+    inner_anchor_positions: list[int],
+    eval_positions: list[int],
     sigma: jnp.ndarray,
     *,
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
-    aw_trans: float = 5.0,
-    aw_rot: float = 5.0,
+    aw_trans: float = 15.0,
+    aw_rot: float = 15.0,
     rw_trans: float = 0.25,
     rw_rot: float = 0.1,
     sw_trans: float = 25.0,
@@ -268,28 +269,34 @@ def build_robust_denoiser(
     n_trans_iters: int = 50,
     n_rot_iters: int = 20,
     lr: float = 1e-3,
-    weight_lr: float = 3e-3,
-    weight_reg: float = 0.1,
+    weight_lr: float = 1e-2,
+    weight_reg: float = 0.01,
     n_weight_iters: int = 30,
 ):
     """Build a JIT-compiled robust denoiser with learned per-edge weights.
 
-    Learns three things simultaneously:
+    Key architecture: inner and outer anchors are SEPARATED.
+      - Inner solver uses sparse gauge-fix anchors (first/last) so the
+        pose graph is measurement-dominated. Outliers corrupt the trajectory.
+      - Outer loss evaluates at dense GT positions to detect corruption.
+        This asymmetry creates strong gradient signal for weight learning.
+
+    Learns simultaneously:
         1. Measurement corrections θ (additive, 6D per edge)
         2. Per-edge confidence weights w = sigmoid(log_w) ∈ (0, 1)
-
-    The inner GN solver uses weighted residuals:
-        r_i = w_i * (relative_pose(a, b) - θ_i) * sqrt_info
-
-    The outer loss drives w → 0 for outliers and w → 1 for inliers,
-    learned entirely from anchor supervision via IFT.
     """
     n_meas = n_poses - 1
     odom_w = sigma_to_weight(sigma)
     sqrt_odom_w = jnp.sqrt(odom_w)
-    anchor_w = sigma_to_weight(jnp.full(6, inner_anchor_sigma))
-    sqrt_anchor_w = jnp.sqrt(anchor_w)
-    anchor_idx = jnp.array(anchor_positions, dtype=jnp.int32)
+
+    # Inner anchors: sparse, for gauge fixing only
+    inner_anchor_w = sigma_to_weight(jnp.full(6, inner_anchor_sigma))
+    sqrt_inner_anchor_w = jnp.sqrt(inner_anchor_w)
+    inner_anchor_idx = jnp.array(inner_anchor_positions, dtype=jnp.int32)
+    n_inner_anchors = len(inner_anchor_positions)
+
+    # Outer eval positions: dense, for supervision
+    eval_idx = jnp.array(eval_positions, dtype=jnp.int32)
 
     anchor_w_vec = jnp.array(
         [aw_trans] * 3 + [aw_rot] * 3, dtype=jnp.float32)
@@ -304,19 +311,19 @@ def build_robust_denoiser(
     max_step_per_pose = 0.5
 
     # --- Inner PGO residual with learned weights ---
+    # Only uses sparse gauge-fix anchors (first/last pose).
 
-    def residual_fn(x, theta, anchor_targets, weights):
+    def residual_fn(x, theta, inner_anchor_targets, weights):
         """Weighted residual: w_i scales each odometry residual."""
         poses = x.reshape(n_poses, 6)
-        # weights shape: (n_meas,) → broadcast to (n_meas, 6)
         w_broad = weights[:, None]  # (n_meas, 1)
         r_odom = _odom_res_batch(poses[:-1], poses[1:], theta, w_broad)
-        r_anch = (poses[anchor_idx] - anchor_targets) * sqrt_anchor_w
+        r_anch = (poses[inner_anchor_idx] - inner_anchor_targets) * sqrt_inner_anchor_w
         return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
 
-    def gn_step(x, theta, anchor_targets, weights):
+    def gn_step(x, theta, inner_anchor_targets, weights):
         def r_fn(x_):
-            return residual_fn(x_, theta, anchor_targets, weights)
+            return residual_fn(x_, theta, inner_anchor_targets, weights)
         r = r_fn(x)
         J = jax.jacobian(r_fn)(x)
         n = x.shape[0]
@@ -332,19 +339,19 @@ def build_robust_denoiser(
     # --- IFT inner solve ---
 
     @jax.custom_vjp
-    def inner_solve(theta, x_init, anchor_targets, weights):
+    def inner_solve(theta, x_init, inner_anchor_targets, weights):
         def scan_body(x, _):
-            return gn_step(x, theta, anchor_targets, weights), None
+            return gn_step(x, theta, inner_anchor_targets, weights), None
         x_star, _ = jax.lax.scan(scan_body, x_init, None, length=gn_iters)
         return x_star
 
-    def inner_solve_fwd(theta, x_init, anchor_targets, weights):
-        x_star = inner_solve(theta, x_init, anchor_targets, weights)
-        return x_star, (x_star, theta, anchor_targets, weights)
+    def inner_solve_fwd(theta, x_init, inner_anchor_targets, weights):
+        x_star = inner_solve(theta, x_init, inner_anchor_targets, weights)
+        return x_star, (x_star, theta, inner_anchor_targets, weights)
 
     def inner_solve_bwd(res, g):
-        x_star, theta, anchor_targets, weights = res
-        r_fn_x = lambda x_: residual_fn(x_, theta, anchor_targets, weights)
+        x_star, theta, inner_anchor_targets, weights = res
+        r_fn_x = lambda x_: residual_fn(x_, theta, inner_anchor_targets, weights)
         J = jax.jacobian(r_fn_x)(x_star)
         n = x_star.shape[0]
         H = J.T @ J + gn_damping * jnp.eye(n)
@@ -352,33 +359,37 @@ def build_robust_denoiser(
 
         # Gradient w.r.t. theta
         _, vjp_theta = jax.vjp(
-            lambda t: residual_fn(x_star, t, anchor_targets, weights), theta)
+            lambda t: residual_fn(x_star, t, inner_anchor_targets, weights), theta)
         v = J @ u
         dtheta = -vjp_theta(v)[0]
 
         # Gradient w.r.t. weights
         _, vjp_weights = jax.vjp(
-            lambda w: residual_fn(x_star, theta, anchor_targets, w), weights)
+            lambda w: residual_fn(x_star, theta, inner_anchor_targets, w), weights)
         dweights = -vjp_weights(v)[0]
 
         return (dtheta, jnp.zeros_like(x_star),
-                jnp.zeros_like(anchor_targets), dweights)
+                jnp.zeros_like(inner_anchor_targets), dweights)
 
     inner_solve.defvjp(inner_solve_fwd, inner_solve_bwd)
 
     # --- Outer loss ---
+    # Evaluates at DENSE GT positions (different from inner gauge anchors).
+    # This asymmetry is critical: the inner solver is measurement-dominated,
+    # so outliers corrupt intermediate poses. The outer loss detects this
+    # corruption at eval positions, creating gradient signal for weights.
 
-    # Initial log_w value: start trusting all measurements (w ≈ 0.95)
     log_w_init_val = 3.0
 
-    def outer_loss(theta, log_w, x_init, anchor_targets, noisy_meas):
+    def outer_loss(theta, log_w, x_init, inner_anchor_targets,
+                   eval_targets, noisy_meas):
         weights = jax.nn.sigmoid(log_w)
-        x_star = inner_solve(theta, x_init, anchor_targets, weights)
+        x_star = inner_solve(theta, x_init, inner_anchor_targets, weights)
         poses_opt = x_star.reshape(n_poses, 6)
 
-        # Anchor loss
-        diffs = poses_opt[anchor_idx] - anchor_targets
-        a_loss = jnp.sum(anchor_w_vec * diffs ** 2)
+        # Evaluation loss at dense GT positions (NOT the inner anchors)
+        eval_diffs = poses_opt[eval_idx] - eval_targets
+        a_loss = jnp.sum(anchor_w_vec * eval_diffs ** 2)
 
         # Regularisation: corrected measurements near original
         dev = theta - noisy_meas
@@ -389,8 +400,6 @@ def build_robust_denoiser(
         s_loss = jnp.sum(sw_vec * s_diffs ** 2)
 
         # Weight regularisation: L2 toward initial value (w ≈ 1).
-        # Only the anchor loss gradient can overcome this prior —
-        # outlier edges hurt anchor accuracy, driving their weights down.
         w_reg_loss = weight_reg * jnp.sum((log_w - log_w_init_val) ** 2)
 
         return a_loss + r_loss + s_loss + w_reg_loss
@@ -401,7 +410,8 @@ def build_robust_denoiser(
     trans_mask = jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
-    def fused_optimize(theta_init, log_w_init, x_init, anchor_targets, noisy_meas):
+    def fused_optimize(theta_init, log_w_init, x_init,
+                       inner_anchor_targets, eval_targets, noisy_meas):
         """Joint optimisation: theta (two-phase) + weights updated together."""
 
         # Phase 1 — Translation + weights jointly
@@ -412,7 +422,8 @@ def build_robust_denoiser(
 
         def trans_body(i, state):
             theta, log_w, mt, vt, mw, vw = state
-            g_theta, g_w = grad_fn(theta, log_w, x_init, anchor_targets, noisy_meas)
+            g_theta, g_w = grad_fn(theta, log_w, x_init,
+                                   inner_anchor_targets, eval_targets, noisy_meas)
             g_t = g_theta * trans_mask
             t = (i + 1).astype(jnp.float32)
 
@@ -441,13 +452,13 @@ def build_robust_denoiser(
         # Phase 2 — Rotation + weights jointly (fresh Adam for theta, continue for w)
         m_theta_r = jnp.zeros_like(theta_t)
         v_theta_r = jnp.zeros_like(theta_t)
-        # Continue weight momentum from phase 1
         mw_cont = state[4]
         vw_cont = state[5]
 
         def rot_body(i, state):
             theta, log_w, mt, vt, mw, vw = state
-            g_theta, g_w = grad_fn(theta, log_w, x_init, anchor_targets, noisy_meas)
+            g_theta, g_w = grad_fn(theta, log_w, x_init,
+                                   inner_anchor_targets, eval_targets, noisy_meas)
             g_r = g_theta * rot_mask
             t = (i + 1).astype(jnp.float32)
 
@@ -545,15 +556,21 @@ def evaluate_sequence(
         if windows[-1][1] < n_poses_total:
             windows.append((n_poses_total - actual_window, n_poses_total))
 
-    # Anchor positions.
-    anchor_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
-    if anchor_pos_in_window[-1] != actual_window - 1:
-        anchor_pos_in_window.append(actual_window - 1)
+    # Inner anchors: first and last pose only (gauge fix).
+    inner_anchor_pos = [0, actual_window - 1]
+
+    # Outer eval positions: dense (every anchor_spacing poses).
+    eval_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
+    if eval_pos_in_window[-1] != actual_window - 1:
+        eval_pos_in_window.append(actual_window - 1)
+
+    print(f"  Inner anchors: {len(inner_anchor_pos)} (gauge fix)")
+    print(f"  Eval positions: {len(eval_pos_in_window)} (every {args.anchor_spacing})")
 
     # Build denoiser.
     t_jit_start = time.perf_counter()
     fused_opt = build_robust_denoiser(
-        actual_window, anchor_pos_in_window, inner_sigma,
+        actual_window, inner_anchor_pos, eval_pos_in_window, inner_sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
         aw_trans=args.aw_trans, aw_rot=args.aw_rot,
         rw_trans=auto_w["rw_trans"], rw_rot=auto_w["rw_rot"],
@@ -571,10 +588,11 @@ def evaluate_sequence(
     n_meas_window = actual_window - 1
     dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
-    dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6), dtype=jnp.float32)
+    dummy_inner_anchors = jnp.zeros((len(inner_anchor_pos), 6), dtype=jnp.float32)
+    dummy_eval_targets = jnp.zeros((len(eval_pos_in_window), 6), dtype=jnp.float32)
     dummy_log_w = jnp.full(n_meas_window, 3.0, dtype=jnp.float32)
-    _ = fused_opt(dummy_theta, dummy_log_w, dummy_x, dummy_anchors,
-                  dummy_theta)
+    _ = fused_opt(dummy_theta, dummy_log_w, dummy_x, dummy_inner_anchors,
+                  dummy_eval_targets, dummy_theta)
     jax.block_until_ready(_)
     t_jit = time.perf_counter() - t_jit_start
     print(f"  JIT: {t_jit:.1f}s")
@@ -609,23 +627,28 @@ def evaluate_sequence(
         w_n_meas = w_n_poses - 1
         w_noisy = jnp.array(corrupted_measurements[w_start:w_start + w_n_meas])
 
-        # Anchor targets.
+        # Inner anchor targets (gauge fix: first and last).
         gt_first = gt_poses[w_start]
-        anchor_global = gt_poses[w_start + jnp.array(anchor_pos_in_window)]
-        w_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
-            gt_first, anchor_global)
+        inner_anchor_global = gt_poses[w_start + jnp.array(inner_anchor_pos)]
+        w_inner_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
+            gt_first, inner_anchor_global)
+
+        # Outer eval targets (dense GT supervision).
+        eval_global = gt_poses[w_start + jnp.array(eval_pos_in_window)]
+        w_eval_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
+            gt_first, eval_global)
 
         # x_init.
         origin = jnp.zeros(6, dtype=jnp.float32)
         x_init = _forward_compose_jit(origin, w_noisy).ravel()
 
-        # Initial log_weights: start at 0 (w=0.5 midpoint).
-        # Start with w ≈ 0.95 (trust all), let gradient push outliers down.
+        # Initial log_weights: w ≈ 0.95 (trust all), gradient pushes outliers down.
         log_w_init = jnp.full(w_n_meas, 3.0, dtype=jnp.float32)
 
         # Optimise.
         theta_opt, log_w_opt = fused_opt(
-            w_noisy, log_w_init, x_init, w_anchor_targets, w_noisy)
+            w_noisy, log_w_init, x_init, w_inner_anchor_targets,
+            w_eval_targets, w_noisy)
         jax.block_until_ready(theta_opt)
 
         # Commit.
@@ -764,18 +787,18 @@ def main():
 
     # Denoiser config
     parser.add_argument("--window-size", type=int, default=100)
-    parser.add_argument("--anchor-spacing", type=int, default=100)
+    parser.add_argument("--anchor-spacing", type=int, default=10)
     parser.add_argument("--gn-iters", type=int, default=10)
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
     parser.add_argument("--n-weight-iters", type=int, default=0,
                         help="(deprecated, weights now joint with theta)")
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight-lr", type=float, default=3e-3)
-    parser.add_argument("--weight-reg", type=float, default=0.1,
+    parser.add_argument("--weight-lr", type=float, default=1e-2)
+    parser.add_argument("--weight-reg", type=float, default=0.01,
                         help="Regularisation toward w=1 (trust measurements)")
-    parser.add_argument("--aw-trans", type=float, default=5.0)
-    parser.add_argument("--aw-rot", type=float, default=5.0)
+    parser.add_argument("--aw-trans", type=float, default=15.0)
+    parser.add_argument("--aw-rot", type=float, default=15.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
     parser.add_argument("--base-sw", type=float, default=1.0)
     parser.add_argument("--base-rw", type=float, default=1.0)
@@ -797,11 +820,13 @@ def main():
     print(f"  Outliers: {args.outlier_ratio*100:.0f}% ratio, "
           f"mag_t={args.outlier_mag_trans}, mag_r={args.outlier_mag_rot}")
     print(f"  Denoiser: window={args.window_size}, "
-          f"anchor_spacing={args.anchor_spacing}")
+          f"eval_spacing={args.anchor_spacing}")
+    print(f"  Architecture: inner=2 gauge anchors, "
+          f"outer=dense eval every {args.anchor_spacing}")
     print(f"  Optimiser: {args.n_trans_iters} trans + {args.n_rot_iters} rot "
           f"= {n_total_iters} (joint θ+w)")
     print(f"  LR: theta={args.lr}, weights={args.weight_lr}")
-    print(f"  Weight reg: {args.weight_reg}, init w≈0.95")
+    print(f"  Weight reg: {args.weight_reg}, aw={args.aw_trans}, init w≈0.95")
     print(f"  Seeds: {args.n_seeds}")
     print()
 
