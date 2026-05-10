@@ -100,11 +100,13 @@ def main():
     gt_first = gt_poses[0]
     inner_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
         gt_first, gt_poses[inner_anchor_idx])
-    eval_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
-        gt_first, gt_poses[eval_idx])
+    # Relative eval targets: relative poses between consecutive eval positions.
+    eval_rel_targets = jax.vmap(relative_pose_se3)(
+        gt_poses[eval_idx[:-1]], gt_poses[eval_idx[1:]])
 
     print(f"  Inner anchors: {len(inner_anchor_idx)} (positions {list(np.array(inner_anchor_idx))})")
     print(f"  Eval positions: {len(eval_idx)} (positions {list(np.array(eval_idx))})")
+    print(f"  Eval pairs (relative): {len(eval_rel_targets)}")
     print()
 
     # --- Residual and GN solver ---
@@ -162,16 +164,18 @@ def main():
 
     inner_solve.defvjp(inner_solve_fwd, inner_solve_bwd)
 
-    # --- Outer loss ---
+    # --- Outer loss (relative evaluation) ---
     log_w_init_val = 3.0
+    _relative_batch = jax.vmap(relative_pose_se3)
 
     def outer_loss(theta, log_w, x_init):
         weights = jax.nn.sigmoid(log_w)
         x_star = inner_solve(theta, x_init, weights)
         poses_opt = x_star.reshape(n_poses, 6)
 
-        # Eval loss (dense GT supervision)
-        eval_diffs = poses_opt[eval_idx] - eval_targets
+        # Relative eval: compare relative poses between consecutive eval positions
+        solved_rel = _relative_batch(poses_opt[eval_idx[:-1]], poses_opt[eval_idx[1:]])
+        eval_diffs = solved_rel - eval_rel_targets
         a_loss = jnp.sum(aw_vec * eval_diffs ** 2)
 
         # Reg loss
@@ -193,7 +197,8 @@ def main():
         x_star = inner_solve(theta, x_init, weights)
         poses_opt = x_star.reshape(n_poses, 6)
 
-        eval_diffs = poses_opt[eval_idx] - eval_targets
+        solved_rel = _relative_batch(poses_opt[eval_idx[:-1]], poses_opt[eval_idx[1:]])
+        eval_diffs = solved_rel - eval_rel_targets
         a_loss = jnp.sum(aw_vec * eval_diffs ** 2)
 
         dev = theta - noisy_meas

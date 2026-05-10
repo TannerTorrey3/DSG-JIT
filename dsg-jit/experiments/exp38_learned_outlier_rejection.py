@@ -374,21 +374,25 @@ def build_robust_denoiser(
     inner_solve.defvjp(inner_solve_fwd, inner_solve_bwd)
 
     # --- Outer loss ---
-    # Evaluates at DENSE GT positions (different from inner gauge anchors).
-    # This asymmetry is critical: the inner solver is measurement-dominated,
-    # so outliers corrupt intermediate poses. The outer loss detects this
-    # corruption at eval positions, creating gradient signal for weights.
+    # Uses RELATIVE evaluation between consecutive eval positions.
+    # This localises the error signal: only the eval pair straddling an
+    # outlier sees large error, concentrating gradient on the actual outlier
+    # rather than spreading it across the entire downstream chain.
 
     log_w_init_val = 3.0
+    _relative_batch = jax.vmap(relative_pose_se3)
 
     def outer_loss(theta, log_w, x_init, inner_anchor_targets,
-                   eval_targets, noisy_meas):
+                   eval_rel_targets, noisy_meas):
         weights = jax.nn.sigmoid(log_w)
         x_star = inner_solve(theta, x_init, inner_anchor_targets, weights)
         poses_opt = x_star.reshape(n_poses, 6)
 
-        # Evaluation loss at dense GT positions (NOT the inner anchors)
-        eval_diffs = poses_opt[eval_idx] - eval_targets
+        # Relative evaluation: compare relative poses between consecutive
+        # eval positions in solved trajectory vs GT.
+        # This is LOCAL — each pair only depends on edges between those positions.
+        solved_rel = _relative_batch(poses_opt[eval_idx[:-1]], poses_opt[eval_idx[1:]])
+        eval_diffs = solved_rel - eval_rel_targets
         a_loss = jnp.sum(anchor_w_vec * eval_diffs ** 2)
 
         # Regularisation: corrected measurements near original
@@ -411,7 +415,7 @@ def build_robust_denoiser(
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
     def fused_optimize(theta_init, log_w_init, x_init,
-                       inner_anchor_targets, eval_targets, noisy_meas):
+                       inner_anchor_targets, eval_rel_targets, noisy_meas):
         """Joint optimisation: theta (two-phase) + weights updated together."""
 
         # Phase 1 — Translation + weights jointly
@@ -423,7 +427,7 @@ def build_robust_denoiser(
         def trans_body(i, state):
             theta, log_w, mt, vt, mw, vw = state
             g_theta, g_w = grad_fn(theta, log_w, x_init,
-                                   inner_anchor_targets, eval_targets, noisy_meas)
+                                   inner_anchor_targets, eval_rel_targets, noisy_meas)
             g_t = g_theta * trans_mask
             t = (i + 1).astype(jnp.float32)
 
@@ -458,7 +462,7 @@ def build_robust_denoiser(
         def rot_body(i, state):
             theta, log_w, mt, vt, mw, vw = state
             g_theta, g_w = grad_fn(theta, log_w, x_init,
-                                   inner_anchor_targets, eval_targets, noisy_meas)
+                                   inner_anchor_targets, eval_rel_targets, noisy_meas)
             g_r = g_theta * rot_mask
             t = (i + 1).astype(jnp.float32)
 
@@ -586,13 +590,14 @@ def evaluate_sequence(
 
     # Warm-up.
     n_meas_window = actual_window - 1
+    n_eval_pairs = len(eval_pos_in_window) - 1
     dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
     dummy_inner_anchors = jnp.zeros((len(inner_anchor_pos), 6), dtype=jnp.float32)
-    dummy_eval_targets = jnp.zeros((len(eval_pos_in_window), 6), dtype=jnp.float32)
+    dummy_eval_rel = jnp.zeros((n_eval_pairs, 6), dtype=jnp.float32)
     dummy_log_w = jnp.full(n_meas_window, 3.0, dtype=jnp.float32)
     _ = fused_opt(dummy_theta, dummy_log_w, dummy_x, dummy_inner_anchors,
-                  dummy_eval_targets, dummy_theta)
+                  dummy_eval_rel, dummy_theta)
     jax.block_until_ready(_)
     t_jit = time.perf_counter() - t_jit_start
     print(f"  JIT: {t_jit:.1f}s")
@@ -633,10 +638,10 @@ def evaluate_sequence(
         w_inner_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
             gt_first, inner_anchor_global)
 
-        # Outer eval targets (dense GT supervision).
+        # Outer eval: RELATIVE poses between consecutive eval positions.
         eval_global = gt_poses[w_start + jnp.array(eval_pos_in_window)]
-        w_eval_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
-            gt_first, eval_global)
+        w_eval_rel_targets = jax.vmap(relative_pose_se3)(
+            eval_global[:-1], eval_global[1:])
 
         # x_init.
         origin = jnp.zeros(6, dtype=jnp.float32)
@@ -648,7 +653,7 @@ def evaluate_sequence(
         # Optimise.
         theta_opt, log_w_opt = fused_opt(
             w_noisy, log_w_init, x_init, w_inner_anchor_targets,
-            w_eval_targets, w_noisy)
+            w_eval_rel_targets, w_noisy)
         jax.block_until_ready(theta_opt)
 
         # Commit.
