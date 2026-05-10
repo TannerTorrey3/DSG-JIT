@@ -134,17 +134,13 @@ def compute_ate(estimated: np.ndarray, ground_truth: np.ndarray) -> dict:
 
 def compute_rpe(estimated: np.ndarray, ground_truth: np.ndarray) -> dict:
     """Relative Pose Error: per-edge relative pose error vs ground truth."""
-    n = estimated.shape[0]
-    te, re = [], []
-    for i in range(n - 1):
-        rel_e = np.array(relative_pose_se3(
-            jnp.array(estimated[i]), jnp.array(estimated[i + 1])))
-        rel_g = np.array(relative_pose_se3(
-            jnp.array(ground_truth[i]), jnp.array(ground_truth[i + 1])))
-        d = rel_e - rel_g
-        te.append(np.linalg.norm(d[:3]))
-        re.append(np.linalg.norm(d[3:]))
-    te, re = np.array(te), np.array(re)
+    est_jnp = jnp.array(estimated)
+    gt_jnp = jnp.array(ground_truth)
+    rel_e = jax.vmap(relative_pose_se3)(est_jnp[:-1], est_jnp[1:])
+    rel_g = jax.vmap(relative_pose_se3)(gt_jnp[:-1], gt_jnp[1:])
+    d = np.array(rel_e - rel_g)
+    te = np.linalg.norm(d[:, :3], axis=1)
+    re = np.linalg.norm(d[:, 3:], axis=1)
     return {
         "rpe_trans_rmse": float(np.sqrt(np.mean(te ** 2))),
         "rpe_trans_mean": float(np.mean(te)),
@@ -158,25 +154,40 @@ def compute_kitti_metric(estimated: np.ndarray, ground_truth: np.ndarray,
     """KITTI-style metric: translation error (%) and rotation error (deg/m)."""
     lengths = [100, 200, 300, 400, 500, 600, 700, 800]
     n = estimated.shape[0]
-    t_errs, r_errs = [], []
+
+    # Build all (start, end) pairs, then batch compute.
+    starts, ends = [], []
     for start in range(0, n, step_size):
         for length in lengths:
             end = start + length
             if end >= n:
                 continue
-            gt_rel = np.array(relative_pose_se3(
-                jnp.array(ground_truth[start]), jnp.array(ground_truth[end])))
-            est_rel = np.array(relative_pose_se3(
-                jnp.array(estimated[start]), jnp.array(estimated[end])))
-            path_len = float(np.linalg.norm(gt_rel[:3]))
-            if path_len < 1.0:
-                continue
-            t_errs.append(float(np.linalg.norm(est_rel[:3] - gt_rel[:3]))
-                          / path_len * 100.0)
-            r_errs.append(np.degrees(float(np.linalg.norm(est_rel[3:] - gt_rel[3:])))
-                          / path_len)
-    if not t_errs:
+            starts.append(start)
+            ends.append(end)
+
+    if not starts:
         return {"kitti_trans_err_pct": 0.0, "kitti_rot_err_degm": 0.0}
+
+    starts = np.array(starts)
+    ends = np.array(ends)
+
+    # Batch relative pose computation.
+    gt_jnp = jnp.array(ground_truth)
+    est_jnp = jnp.array(estimated)
+    gt_rels = np.array(jax.vmap(relative_pose_se3)(gt_jnp[starts], gt_jnp[ends]))
+    est_rels = np.array(jax.vmap(relative_pose_se3)(est_jnp[starts], est_jnp[ends]))
+
+    path_lens = np.linalg.norm(gt_rels[:, :3], axis=1)
+    valid = path_lens >= 1.0
+
+    if not np.any(valid):
+        return {"kitti_trans_err_pct": 0.0, "kitti_rot_err_degm": 0.0}
+
+    t_errs = (np.linalg.norm(est_rels[valid, :3] - gt_rels[valid, :3], axis=1)
+              / path_lens[valid] * 100.0)
+    r_errs = (np.degrees(np.linalg.norm(est_rels[valid, 3:] - gt_rels[valid, 3:], axis=1))
+              / path_lens[valid])
+
     return {
         "kitti_trans_err_pct": float(np.mean(t_errs)),
         "kitti_rot_err_degm": float(np.mean(r_errs)),
