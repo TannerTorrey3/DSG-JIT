@@ -132,13 +132,9 @@ def compute_ate(estimated: np.ndarray, ground_truth: np.ndarray) -> dict:
     }
 
 
-def compute_rpe(estimated: np.ndarray, ground_truth: np.ndarray) -> dict:
-    """Relative Pose Error: per-edge relative pose error vs ground truth."""
-    est_jnp = jnp.array(estimated)
-    gt_jnp = jnp.array(ground_truth)
-    rel_e = jax.vmap(relative_pose_se3)(est_jnp[:-1], est_jnp[1:])
-    rel_g = jax.vmap(relative_pose_se3)(gt_jnp[:-1], gt_jnp[1:])
-    d = np.array(rel_e - rel_g)
+def compute_rpe(denoised_meas: np.ndarray, gt_meas: np.ndarray) -> dict:
+    """Relative Pose Error: direct measurement comparison (no trajectory round-trip)."""
+    d = denoised_meas - gt_meas
     te = np.linalg.norm(d[:, :3], axis=1)
     re = np.linalg.norm(d[:, 3:], axis=1)
     return {
@@ -554,19 +550,25 @@ def evaluate_sequence(
 
     # Reconstruct trajectories.
     start_pose = gt_poses[0]
+    gt_meas_np = np.array(gt_measurements)
+    noisy_meas_np = np.array(noisy_measurements)
+    denoised_meas_np = np.array(denoised_measurements)
+
     gt_traj = reconstruct_trajectory(start_pose, gt_measurements)
     noisy_traj = reconstruct_trajectory(start_pose, jnp.array(noisy_measurements))
     denoised_traj = reconstruct_trajectory(start_pose, jnp.array(denoised_measurements))
 
     # Compute metrics.
+    # RPE: direct measurement comparison (no trajectory round-trip).
+    # ATE/KITTI: trajectory-level (requires forward-composed poses).
     noisy_metrics = {
         **compute_ate(noisy_traj, gt_traj),
-        **compute_rpe(noisy_traj, gt_traj),
+        **compute_rpe(noisy_meas_np, gt_meas_np),
         **compute_kitti_metric(noisy_traj, gt_traj),
     }
     denoised_metrics = {
         **compute_ate(denoised_traj, gt_traj),
-        **compute_rpe(denoised_traj, gt_traj),
+        **compute_rpe(denoised_meas_np, gt_meas_np),
         **compute_kitti_metric(denoised_traj, gt_traj),
     }
 
