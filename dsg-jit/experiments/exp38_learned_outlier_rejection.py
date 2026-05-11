@@ -736,13 +736,15 @@ def evaluate_sequence(
     # --- Phase C: component-wise post-processing ---
     # For rejected edges, compute interpolated value from neighbors, then
     # only replace components (trans/rot) that actually deviate significantly.
-    # This avoids damaging good rot denoising on false positive edges where
-    # only trans triggered the rejection.
+    # Rot uses a higher threshold because rotational dynamics are less smooth
+    # than translational — interpolation is less accurate for rot, so we
+    # need stronger evidence before replacing.
     robust_sigma = np.array(
         noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
     sigma_trans = np.maximum(robust_sigma[:3], 1e-10)
     sigma_rot = np.maximum(robust_sigma[3:], 1e-10)
-    comp_chi_threshold = 3.0  # per-component anomaly threshold
+    comp_chi_threshold_trans = 3.0
+    comp_chi_threshold_rot = 6.0  # conservative for rot (interpolation less reliable)
 
     rejected_mask = all_weights < args.reject_threshold
     n_rejected_total = int(np.sum(rejected_mask))
@@ -789,8 +791,8 @@ def evaluate_sequence(
             chi_t = np.linalg.norm(dev[:3] / sigma_trans)
             chi_r = np.linalg.norm(dev[3:] / sigma_rot)
 
-            replace_t = chi_t > comp_chi_threshold
-            replace_r = chi_r > comp_chi_threshold
+            replace_t = chi_t > comp_chi_threshold_trans
+            replace_r = chi_r > comp_chi_threshold_rot
 
             if replace_t:
                 denoised_measurements[i, :3] = interp[:3]
@@ -856,8 +858,8 @@ def evaluate_sequence(
             chi_t = np.linalg.norm(dev[:3] / sigma_trans)
             chi_r = np.linalg.norm(dev[3:] / sigma_rot)
 
-            replace_t = chi_t > comp_chi_threshold
-            replace_r = chi_r > comp_chi_threshold
+            replace_t = chi_t > comp_chi_threshold_trans
+            replace_r = chi_r > comp_chi_threshold_rot
 
             if replace_t or replace_r:
                 if replace_t:
