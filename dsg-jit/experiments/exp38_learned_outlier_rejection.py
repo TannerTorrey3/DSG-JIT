@@ -845,12 +845,12 @@ def evaluate_sequence(
     trans_improv = (1 - after['rmse_trans'] / baseline['rmse_trans']) * 100
     rot_improv = (1 - after['rmse_rot'] / baseline['rmse_rot']) * 100
 
-    # Weight analysis.
+    # Weight analysis (Phase A only).
     w_outlier = all_weights[outlier_mask_np]
     w_inlier = all_weights[~outlier_mask_np]
 
-    # Classification at reject threshold.
-    predicted_outlier = all_weights < args.reject_threshold
+    # Final classification uses rejected_mask (Phase C + all refine passes).
+    predicted_outlier = rejected_mask
     tp = int(np.sum(predicted_outlier & outlier_mask_np))
     fp = int(np.sum(predicted_outlier & ~outlier_mask_np))
     fn = int(np.sum(~predicted_outlier & outlier_mask_np))
@@ -868,13 +868,14 @@ def evaluate_sequence(
     print(f"  Rot RMSE:   {baseline['rmse_rot']:.5f} → "
           f"{after['rmse_rot']:.5f} ({rot_improv:+.1f}%)")
     print(f"  Throughput: {poses_per_sec:.1f} poses/sec")
-    print(f"\n  --- Outlier Detection ---")
-    print(f"  Mean weight (outliers): {np.mean(w_outlier):.4f}")
-    print(f"  Mean weight (inliers):  {np.mean(w_inlier):.4f}")
-    print(f"  Mean chi (outliers):    {np.mean(all_chi[outlier_mask_np]):.2f}")
-    print(f"  Mean chi (inliers):     {np.mean(all_chi[~outlier_mask_np]):.2f}")
+    print(f"\n  --- Outlier Detection (full pipeline) ---")
     print(f"  Precision: {precision:.3f}, Recall: {recall:.3f}, "
           f"F1: {f1:.3f}, Accuracy: {accuracy:.3f}")
+    print(f"  Phase A weights — outlier mean: {np.mean(w_outlier):.4f}, "
+          f"inlier mean: {np.mean(w_inlier):.4f}")
+    print(f"  Phase A chi — outlier mean: "
+          f"{np.mean(all_chi[outlier_mask_np]):.2f}, "
+          f"inlier mean: {np.mean(all_chi[~outlier_mask_np]):.2f}")
 
     return {
         "sequence": seq_id,
