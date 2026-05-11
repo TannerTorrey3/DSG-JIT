@@ -9,10 +9,13 @@ Architecture (per window):
         3. Normalise: chi_i = ||r_i|| / sigma_estimated
         4. Welsch kernel: w_i = exp(-chi_i² / (2 * c²)), c from noise model
 
-    Phase B — Weighted IFT denoising (exp36 architecture):
-        5. Run bilevel IFT with weighted inner solver (outlier edges ignored)
+    Phase B — IFT denoising (exp36 architecture):
+        5. Run bilevel IFT denoiser (unweighted, identical to exp36)
         6. Two-phase Adam on theta (translation, then rotation)
-        7. Commit denoised measurements for inlier edges
+
+    Phase C — Post-processing (outside JIT):
+        7. Replace rejected edges (w < threshold) via neighbor interpolation
+        8. Iterative refinement: detect remaining outliers via neighbor chi
 
 Novelty vs prior work:
     - GNC (Yang et al., 2020): requires multiple annealing passes, manual kernel schedule
@@ -317,10 +320,10 @@ def build_robust_denoiser(
 
     Two-phase architecture:
         A) Initial GN solve → per-edge residuals → Welsch kernel weights
-        B) Weighted IFT denoiser (exp36-style) with outlier edges suppressed
+        B) Unweighted IFT denoiser (identical to exp36 for maximum throughput)
 
-    The kernel scale `c` controls sensitivity: edges with normalised residual
-    > c are strongly downweighted.  Derived from the noise model automatically.
+    Weights from Phase A are returned for Phase C post-processing (outside JIT).
+    The kernel scale `c` controls detection sensitivity.
     """
     n_meas = n_poses - 1
     odom_w = sigma_to_weight(sigma)
@@ -339,24 +342,22 @@ def build_robust_denoiser(
     sw_vec = jnp.array(
         [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
 
-    _odom_res_batch_unweighted = jax.vmap(
+    _odom_res_batch = jax.vmap(
         lambda a, b, m: (relative_pose_se3(a, b) - m) * sqrt_odom_w)
-    _odom_res_batch_weighted = jax.vmap(
-        lambda a, b, m, w: w * (relative_pose_se3(a, b) - m) * sqrt_odom_w)
     _relative_batch = jax.vmap(relative_pose_se3)
     _retract_batch = jax.vmap(se3_retract_left)
     max_step_per_pose = 0.5
 
     # ===== PHASE A: Initial GN solve (unweighted) for residual computation =====
 
-    def residual_unweighted(x, meas, anchor_targets):
+    def residual_fn(x, meas, anchor_targets):
         poses = x.reshape(n_poses, 6)
-        r_odom = _odom_res_batch_unweighted(poses[:-1], poses[1:], meas)
+        r_odom = _odom_res_batch(poses[:-1], poses[1:], meas)
         r_anch = (poses[anchor_idx] - anchor_targets) * sqrt_anchor_w
         return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
 
-    def gn_step_unweighted(x, meas, anchor_targets):
-        r_fn = lambda x_: residual_unweighted(x_, meas, anchor_targets)
+    def gn_step(x, meas, anchor_targets):
+        r_fn = lambda x_: residual_fn(x_, meas, anchor_targets)
         r = r_fn(x)
         J = jax.jacobian(r_fn)(x)
         n = x.shape[0]
@@ -372,7 +373,7 @@ def build_robust_denoiser(
     def initial_solve(meas, x_init, anchor_targets):
         """Run GN to convergence on raw measurements (no custom_vjp needed)."""
         def scan_body(x, _):
-            return gn_step_unweighted(x, meas, anchor_targets), None
+            return gn_step(x, meas, anchor_targets), None
         x_star, _ = jax.lax.scan(scan_body, x_init, None, length=gn_iters)
         return x_star
 
@@ -391,17 +392,19 @@ def build_robust_denoiser(
         weights = jnp.exp(-chi ** 2 / (2.0 * kernel_scale ** 2))
         return weights, chi
 
-    # ===== PHASE B: Weighted IFT denoiser (exp36 architecture) =====
+    # ===== PHASE B: Unweighted IFT denoiser (exp36 architecture) =====
+    # Weights are NOT used in the inner solve — they only affect Phase C
+    # (post-processing). This keeps the JIT graph identical to exp36 for
+    # maximum throughput.
 
-    def residual_weighted(x, theta, anchor_targets, weights):
+    def residual_theta(x, theta, anchor_targets):
         poses = x.reshape(n_poses, 6)
-        w_broad = weights[:, None]
-        r_odom = _odom_res_batch_weighted(poses[:-1], poses[1:], theta, w_broad)
+        r_odom = _odom_res_batch(poses[:-1], poses[1:], theta)
         r_anch = (poses[anchor_idx] - anchor_targets) * sqrt_anchor_w
         return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
 
-    def gn_step_weighted(x, theta, anchor_targets, weights):
-        r_fn = lambda x_: residual_weighted(x_, theta, anchor_targets, weights)
+    def gn_step_theta(x, theta, anchor_targets):
+        r_fn = lambda x_: residual_theta(x_, theta, anchor_targets)
         r = r_fn(x)
         J = jax.jacobian(r_fn)(x)
         n = x.shape[0]
@@ -414,39 +417,38 @@ def build_robust_denoiser(
         deltas = deltas * scales
         return _retract_batch(poses, -deltas).ravel()
 
-    # IFT inner solve (only theta gradient, weights are fixed input)
     @jax.custom_vjp
-    def inner_solve(theta, x_init, anchor_targets, weights):
+    def inner_solve(theta, x_init, anchor_targets):
         def scan_body(x, _):
-            return gn_step_weighted(x, theta, anchor_targets, weights), None
+            return gn_step_theta(x, theta, anchor_targets), None
         x_star, _ = jax.lax.scan(scan_body, x_init, None, length=gn_iters)
         return x_star
 
-    def inner_solve_fwd(theta, x_init, anchor_targets, weights):
-        x_star = inner_solve(theta, x_init, anchor_targets, weights)
-        return x_star, (x_star, theta, anchor_targets, weights)
+    def inner_solve_fwd(theta, x_init, anchor_targets):
+        x_star = inner_solve(theta, x_init, anchor_targets)
+        return x_star, (x_star, theta, anchor_targets)
 
     def inner_solve_bwd(res, g):
-        x_star, theta, anchor_targets, weights = res
-        r_fn_x = lambda x_: residual_weighted(x_, theta, anchor_targets, weights)
+        x_star, theta, anchor_targets = res
+        r_fn_x = lambda x_: residual_theta(x_, theta, anchor_targets)
         J = jax.jacobian(r_fn_x)(x_star)
         n = x_star.shape[0]
         H = J.T @ J + gn_damping * jnp.eye(n)
         u = jnp.linalg.solve(H, g)
 
         _, vjp_fn = jax.vjp(
-            lambda t: residual_weighted(x_star, t, anchor_targets, weights), theta)
+            lambda t: residual_theta(x_star, t, anchor_targets), theta)
         v = J @ u
         dtheta = -vjp_fn(v)[0]
 
         return (dtheta, jnp.zeros_like(x_star),
-                jnp.zeros_like(anchor_targets), jnp.zeros_like(weights))
+                jnp.zeros_like(anchor_targets))
 
     inner_solve.defvjp(inner_solve_fwd, inner_solve_bwd)
 
-    # Outer loss (same as exp36 — no weight learning)
-    def outer_loss(theta, x_init, anchor_targets, weights, noisy_meas):
-        x_star = inner_solve(theta, x_init, anchor_targets, weights)
+    # Outer loss
+    def outer_loss(theta, x_init, anchor_targets, noisy_meas):
+        x_star = inner_solve(theta, x_init, anchor_targets)
         poses_opt = x_star.reshape(n_poses, 6)
 
         diffs = poses_opt[anchor_idx] - anchor_targets
@@ -462,12 +464,12 @@ def build_robust_denoiser(
 
     grad_fn = jax.grad(outer_loss)
 
-    # Two-phase Adam (exp36 architecture)
+    # Two-phase Adam
     trans_mask = jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
-    def fused_optimize(noisy_meas, x_init, anchor_targets, weights):
-        """Two-phase Adam with fixed weights: translation first, rotation second."""
+    def fused_optimize(noisy_meas, x_init, anchor_targets):
+        """Two-phase Adam: translation first, rotation second."""
 
         # Phase 1 — Translation
         m0 = jnp.zeros_like(noisy_meas)
@@ -475,7 +477,7 @@ def build_robust_denoiser(
 
         def trans_body(i, state):
             theta, m, v = state
-            g = grad_fn(theta, x_init, anchor_targets, weights, noisy_meas)
+            g = grad_fn(theta, x_init, anchor_targets, noisy_meas)
             g = g * trans_mask
             t = (i + 1).astype(jnp.float32)
             m_new = 0.9 * m + 0.1 * g
@@ -495,7 +497,7 @@ def build_robust_denoiser(
 
         def rot_body(i, state):
             theta, m, v = state
-            g = grad_fn(theta, x_init, anchor_targets, weights, noisy_meas)
+            g = grad_fn(theta, x_init, anchor_targets, noisy_meas)
             g = g * rot_mask
             t = (i + 1).astype(jnp.float32)
             m_new = 0.9 * m + 0.1 * g
@@ -509,16 +511,16 @@ def build_robust_denoiser(
             0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
         return state[0]
 
-    # ===== Combined: Phase A → Phase B =====
+    # ===== Combined: Phase A (detection) → Phase B (denoising) =====
 
     def robust_denoise(noisy_meas, x_init, anchor_targets):
-        """Full pipeline: detect outliers, then denoise with weights."""
+        """Phase A detects outliers, Phase B denoises all edges."""
         # Phase A: initial solve → residuals → weights
         x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
         weights, chi_scores = compute_weights(x_star_init, noisy_meas)
 
-        # Phase B: weighted IFT denoiser (corrects all edges)
-        theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets, weights)
+        # Phase B: unweighted IFT denoiser (identical to exp36)
+        theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets)
 
         return theta_opt, weights, chi_scores
 
