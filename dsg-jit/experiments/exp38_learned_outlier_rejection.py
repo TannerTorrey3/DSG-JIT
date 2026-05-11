@@ -891,14 +891,13 @@ def main():
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--kernel-scale", type=float, default=3.0,
+    parser.add_argument("--kernel-scale", type=float, default=2.0,
                         help="Welsch kernel scale (in sigma units). "
                              "Edges with chi > c are strongly downweighted.")
-    parser.add_argument("--reject-threshold", type=float, default=0.8,
+    parser.add_argument("--reject-threshold", type=float, default=0.5,
                         help="Weight threshold for Phase C replacement. "
                              "Edges with w < threshold are replaced via "
-                             "neighbor interpolation. Higher = more aggressive "
-                             "(safe on smooth trajectories).")
+                             "neighbor interpolation.")
     parser.add_argument("--aw-trans", type=float, default=5.0)
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
