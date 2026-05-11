@@ -770,6 +770,72 @@ def evaluate_sequence(
         print(f"\n  Phase C: replaced {n_replaced}/{n_rejected_total} "
               f"rejected edges (TP={n_replaced_tp}, FP={n_replaced_fp})")
 
+    # --- Iterative refinement ---
+    # After Phase C, missed outliers stand out against cleaned neighbors.
+    # Detect them via neighbor-comparison chi and replace iteratively.
+    robust_sigma = np.array(
+        noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
+
+    for refine_iter in range(args.refine_iters):
+        n_new_rejected = 0
+        n_refine_tp = 0
+        n_refine_fp = 0
+
+        for i in range(n_meas_total):
+            if rejected_mask[i]:
+                continue  # already handled
+
+            # Find nearest non-rejected neighbors on each side.
+            left = None
+            for j in range(i - 1, -1, -1):
+                if not rejected_mask[j]:
+                    left = j
+                    break
+            right = None
+            for j in range(i + 1, n_meas_total):
+                if not rejected_mask[j]:
+                    right = j
+                    break
+
+            if left is None and right is None:
+                continue
+
+            # Expected value from distance-weighted interpolation.
+            if left is not None and right is not None:
+                d_left = i - left
+                d_right = right - i
+                w_l = d_right / (d_left + d_right)
+                w_r = d_left / (d_left + d_right)
+                expected = (w_l * denoised_measurements[left] +
+                            w_r * denoised_measurements[right])
+            elif left is not None:
+                expected = denoised_measurements[left]
+            else:
+                expected = denoised_measurements[right]
+
+            residual = denoised_measurements[i] - expected
+            chi = np.linalg.norm(residual / np.maximum(robust_sigma, 1e-10))
+
+            # Threshold: edges deviating > 3σ from neighbors are outliers.
+            if chi > 3.0:
+                rejected_mask[i] = True
+                n_new_rejected += 1
+
+                # Replace with interpolation.
+                denoised_measurements[i] = expected
+                if outlier_mask_np[i]:
+                    n_refine_tp += 1
+                else:
+                    n_refine_fp += 1
+
+        if n_new_rejected == 0:
+            print(f"  Refine pass {refine_iter + 1}: no new outliers found, "
+                  f"stopping early")
+            break
+
+        print(f"  Refine pass {refine_iter + 1}: replaced {n_new_rejected} "
+              f"more edges (TP={n_refine_tp}, FP={n_refine_fp})")
+
     # --- Metrics ---
     baseline = compute_per_edge_error(
         jnp.array(corrupted_measurements), gt_measurements)
@@ -891,13 +957,17 @@ def main():
     parser.add_argument("--n-trans-iters", type=int, default=50)
     parser.add_argument("--n-rot-iters", type=int, default=20)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--kernel-scale", type=float, default=2.0,
+    parser.add_argument("--kernel-scale", type=float, default=3.0,
                         help="Welsch kernel scale (in sigma units). "
                              "Edges with chi > c are strongly downweighted.")
-    parser.add_argument("--reject-threshold", type=float, default=0.5,
+    parser.add_argument("--reject-threshold", type=float, default=0.8,
                         help="Weight threshold for Phase C replacement. "
                              "Edges with w < threshold are replaced via "
                              "neighbor interpolation.")
+    parser.add_argument("--refine-iters", type=int, default=2,
+                        help="Number of iterative refinement passes after "
+                             "Phase C. Each pass detects remaining outliers "
+                             "via neighbor comparison and replaces them.")
     parser.add_argument("--aw-trans", type=float, default=5.0)
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
@@ -923,7 +993,8 @@ def main():
     print(f"  Denoiser: window={args.window_size}, "
           f"anchor_spacing={args.anchor_spacing}")
     print(f"  Kernel: Welsch, scale={args.kernel_scale}σ, "
-          f"reject_threshold={args.reject_threshold}")
+          f"reject_threshold={args.reject_threshold}, "
+          f"refine_iters={args.refine_iters}")
     print(f"  Optimiser: {args.n_trans_iters} trans + {args.n_rot_iters} rot "
           f"= {n_total_iters}")
     print(f"  LR: {args.lr}")
@@ -967,6 +1038,7 @@ def main():
         "lr": args.lr,
         "kernel_scale": args.kernel_scale,
         "reject_threshold": args.reject_threshold,
+        "refine_iters": args.refine_iters,
         "sw_ratio": args.sw_ratio,
         "n_seeds": args.n_seeds,
         "seeds": seeds,
