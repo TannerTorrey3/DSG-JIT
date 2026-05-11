@@ -656,6 +656,8 @@ def evaluate_sequence(
     denoised_measurements = np.array(corrupted_measurements).copy()
     all_weights = np.ones(n_meas_total, dtype=np.float32)
     all_chi = np.zeros(n_meas_total, dtype=np.float32)
+    total_phase_a_s = 0.0
+    total_phase_b_s = 0.0
 
     for wi, (w_start, w_end) in enumerate(windows):
         t_win_start = time.perf_counter()
@@ -674,10 +676,18 @@ def evaluate_sequence(
         x_init = _forward_compose_jit(origin, w_noisy).ravel()
 
         # Phase A: detect outliers.
+        t_a = time.perf_counter()
         weights, chi_scores = detect_fn(w_noisy, x_init, w_anchor_targets)
+        jax.block_until_ready(weights)
+        t_a_done = time.perf_counter()
+
         # Phase B: denoise (independent of Phase A, identical to exp36).
         theta_opt = denoise_fn(w_noisy, x_init, w_anchor_targets)
         jax.block_until_ready(theta_opt)
+        t_b_done = time.perf_counter()
+
+        total_phase_a_s += t_a_done - t_a
+        total_phase_b_s += t_b_done - t_a_done
 
         # Commit.
         theta_np = np.array(theta_opt)
@@ -705,6 +715,11 @@ def evaluate_sequence(
 
     t_denoise = time.perf_counter() - t_denoise_start
     poses_per_sec = n_poses_total / t_denoise
+    phase_b_hz = n_poses_total / total_phase_b_s if total_phase_b_s > 0 else 0
+    print(f"\n  Timing: Phase A={total_phase_a_s:.1f}s, "
+          f"Phase B={total_phase_b_s:.1f}s, "
+          f"overhead={t_denoise - total_phase_a_s - total_phase_b_s:.1f}s")
+    print(f"  Phase B alone: {phase_b_hz:.1f} poses/sec")
 
     # Compute Phase B (denoiser-only) metrics for comparison.
     phase_b_error = compute_per_edge_error(
