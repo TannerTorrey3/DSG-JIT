@@ -733,23 +733,30 @@ def evaluate_sequence(
                          jnp.array(corrupted_measurements),
                          gt_measurements)['rmse_rot']) * 100
 
-    # --- Phase C: post-process rejected edges via neighbor interpolation ---
-    # On smooth trajectories, replacing an outlier edge with distance-weighted
-    # interpolation from nearest inlier neighbors is far better than keeping
-    # the corrupted measurement. False positives are nearly free: the cost of
-    # replacing an inlier (~0.005m² RMSE) is dwarfed by the gain from catching
-    # one true outlier (~0.25m²), so we use an aggressive threshold.
+    # --- Phase C: component-wise post-processing ---
+    # For rejected edges, compute interpolated value from neighbors, then
+    # only replace components (trans/rot) that actually deviate significantly.
+    # This avoids damaging good rot denoising on false positive edges where
+    # only trans triggered the rejection.
+    robust_sigma = np.array(
+        noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
+    sigma_trans = np.maximum(robust_sigma[:3], 1e-10)
+    sigma_rot = np.maximum(robust_sigma[3:], 1e-10)
+    comp_chi_threshold = 3.0  # per-component anomaly threshold
+
     rejected_mask = all_weights < args.reject_threshold
     n_rejected_total = int(np.sum(rejected_mask))
-    n_replaced = 0
-    n_replaced_tp = 0  # true positives replaced
-    n_replaced_fp = 0  # false positives replaced
+    n_replaced_trans = 0
+    n_replaced_rot = 0
+    n_replaced_both = 0
+    n_replaced_tp = 0
+    n_replaced_fp = 0
 
     if n_rejected_total > 0:
         for i in range(n_meas_total):
             if not rejected_mask[i]:
                 continue
-            # Find nearest inlier neighbors on each side.
+            # Find nearest non-rejected neighbors on each side.
             left = None
             for j in range(i - 1, -1, -1):
                 if not rejected_mask[j]:
@@ -761,40 +768,52 @@ def evaluate_sequence(
                     right = j
                     break
 
+            if left is None and right is None:
+                continue
+
             # Distance-weighted interpolation from available neighbors.
-            replaced = False
             if left is not None and right is not None:
                 d_left = i - left
                 d_right = right - i
-                w_left = d_right / (d_left + d_right)  # closer → higher weight
+                w_left = d_right / (d_left + d_right)
                 w_right = d_left / (d_left + d_right)
-                denoised_measurements[i] = (
-                    w_left * denoised_measurements[left] +
-                    w_right * denoised_measurements[right])
-                replaced = True
+                interp = (w_left * denoised_measurements[left] +
+                          w_right * denoised_measurements[right])
             elif left is not None:
-                denoised_measurements[i] = denoised_measurements[left]
-                replaced = True
-            elif right is not None:
-                denoised_measurements[i] = denoised_measurements[right]
-                replaced = True
+                interp = denoised_measurements[left].copy()
+            else:
+                interp = denoised_measurements[right].copy()
 
-            if replaced:
-                n_replaced += 1
+            # Check which components deviate significantly.
+            dev = denoised_measurements[i] - interp
+            chi_t = np.linalg.norm(dev[:3] / sigma_trans)
+            chi_r = np.linalg.norm(dev[3:] / sigma_rot)
+
+            replace_t = chi_t > comp_chi_threshold
+            replace_r = chi_r > comp_chi_threshold
+
+            if replace_t:
+                denoised_measurements[i, :3] = interp[:3]
+                n_replaced_trans += 1
+            if replace_r:
+                denoised_measurements[i, 3:] = interp[3:]
+                n_replaced_rot += 1
+            if replace_t and replace_r:
+                n_replaced_both += 1
+
+            if replace_t or replace_r:
                 if outlier_mask_np[i]:
                     n_replaced_tp += 1
                 else:
                     n_replaced_fp += 1
 
-        print(f"\n  Phase C: replaced {n_replaced}/{n_rejected_total} "
-              f"rejected edges (TP={n_replaced_tp}, FP={n_replaced_fp})")
+        print(f"\n  Phase C: {n_rejected_total} rejected edges → "
+              f"trans replaced={n_replaced_trans}, rot replaced={n_replaced_rot}, "
+              f"both={n_replaced_both}")
+        print(f"  Phase C: TP={n_replaced_tp}, FP={n_replaced_fp}")
 
-    # --- Iterative refinement ---
+    # --- Iterative refinement (component-wise) ---
     # After Phase C, missed outliers stand out against cleaned neighbors.
-    # Detect them via neighbor-comparison chi and replace iteratively.
-    robust_sigma = np.array(
-        noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
-
     for refine_iter in range(args.refine_iters):
         n_new_rejected = 0
         n_refine_tp = 0
@@ -832,16 +851,21 @@ def evaluate_sequence(
             else:
                 expected = denoised_measurements[right]
 
-            residual = denoised_measurements[i] - expected
-            chi = np.linalg.norm(residual / np.maximum(robust_sigma, 1e-10))
+            # Component-wise check.
+            dev = denoised_measurements[i] - expected
+            chi_t = np.linalg.norm(dev[:3] / sigma_trans)
+            chi_r = np.linalg.norm(dev[3:] / sigma_rot)
 
-            # Threshold: edges deviating > 3σ from neighbors are outliers.
-            if chi > 3.0:
+            replace_t = chi_t > comp_chi_threshold
+            replace_r = chi_r > comp_chi_threshold
+
+            if replace_t or replace_r:
+                if replace_t:
+                    denoised_measurements[i, :3] = expected[:3]
+                if replace_r:
+                    denoised_measurements[i, 3:] = expected[3:]
                 rejected_mask[i] = True
                 n_new_rejected += 1
-
-                # Replace with interpolation.
-                denoised_measurements[i] = expected
                 if outlier_mask_np[i]:
                     n_refine_tp += 1
                 else:
@@ -974,8 +998,8 @@ def main():
     parser.add_argument("--window-size", type=int, default=100)
     parser.add_argument("--anchor-spacing", type=int, default=100)
     parser.add_argument("--gn-iters", type=int, default=10)
-    parser.add_argument("--n-trans-iters", type=int, default=50)
-    parser.add_argument("--n-rot-iters", type=int, default=20)
+    parser.add_argument("--n-trans-iters", type=int, default=25)
+    parser.add_argument("--n-rot-iters", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--kernel-scale", type=float, default=3.0,
                         help="Welsch kernel scale (in sigma units). "
