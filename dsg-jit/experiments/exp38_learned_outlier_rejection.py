@@ -715,12 +715,16 @@ def evaluate_sequence(
                          gt_measurements)['rmse_rot']) * 100
 
     # --- Phase C: post-process rejected edges via neighbor interpolation ---
-    # For KITTI's smooth trajectories, replacing an outlier edge with the
-    # average of its nearest inlier neighbors is far better than keeping
-    # the corrupted measurement (0.5m outlier >> interpolation error).
+    # On smooth trajectories, replacing an outlier edge with distance-weighted
+    # interpolation from nearest inlier neighbors is far better than keeping
+    # the corrupted measurement. False positives are nearly free: the cost of
+    # replacing an inlier (~0.005m² RMSE) is dwarfed by the gain from catching
+    # one true outlier (~0.25m²), so we use an aggressive threshold.
     rejected_mask = all_weights < args.reject_threshold
     n_rejected_total = int(np.sum(rejected_mask))
     n_replaced = 0
+    n_replaced_tp = 0  # true positives replaced
+    n_replaced_fp = 0  # false positives replaced
 
     if n_rejected_total > 0:
         for i in range(n_meas_total):
@@ -738,22 +742,33 @@ def evaluate_sequence(
                     right = j
                     break
 
-            # Interpolate from available neighbors.
+            # Distance-weighted interpolation from available neighbors.
+            replaced = False
             if left is not None and right is not None:
-                # Average of nearest inlier neighbors (both sides).
+                d_left = i - left
+                d_right = right - i
+                w_left = d_right / (d_left + d_right)  # closer → higher weight
+                w_right = d_left / (d_left + d_right)
                 denoised_measurements[i] = (
-                    denoised_measurements[left] + denoised_measurements[right]
-                ) / 2.0
-                n_replaced += 1
+                    w_left * denoised_measurements[left] +
+                    w_right * denoised_measurements[right])
+                replaced = True
             elif left is not None:
                 denoised_measurements[i] = denoised_measurements[left]
-                n_replaced += 1
+                replaced = True
             elif right is not None:
                 denoised_measurements[i] = denoised_measurements[right]
+                replaced = True
+
+            if replaced:
                 n_replaced += 1
+                if outlier_mask_np[i]:
+                    n_replaced_tp += 1
+                else:
+                    n_replaced_fp += 1
 
         print(f"\n  Phase C: replaced {n_replaced}/{n_rejected_total} "
-              f"rejected edges via neighbor interpolation")
+              f"rejected edges (TP={n_replaced_tp}, FP={n_replaced_fp})")
 
     # --- Metrics ---
     baseline = compute_per_edge_error(
@@ -879,10 +894,11 @@ def main():
     parser.add_argument("--kernel-scale", type=float, default=3.0,
                         help="Welsch kernel scale (in sigma units). "
                              "Edges with chi > c are strongly downweighted.")
-    parser.add_argument("--reject-threshold", type=float, default=0.5,
-                        help="Weight threshold for Phase C hard replacement. "
-                             "Edges with w < threshold are replaced by "
-                             "trajectory-fitted relative poses.")
+    parser.add_argument("--reject-threshold", type=float, default=0.8,
+                        help="Weight threshold for Phase C replacement. "
+                             "Edges with w < threshold are replaced via "
+                             "neighbor interpolation. Higher = more aggressive "
+                             "(safe on smooth trajectories).")
     parser.add_argument("--aw-trans", type=float, default=5.0)
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
