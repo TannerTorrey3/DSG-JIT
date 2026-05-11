@@ -511,21 +511,20 @@ def build_robust_denoiser(
             0, n_rot_iters, rot_body, (theta_t, m0_r, v0_r))
         return state[0]
 
-    # ===== Combined: Phase A (detection) → Phase B (denoising) =====
+    # ===== Separate JIT functions for Phase A and Phase B =====
+    # Splitting avoids bloating Phase B's compiled graph with Phase A's
+    # Jacobian computation.  Phase B is now identical to exp36's JIT kernel.
 
-    def robust_denoise(noisy_meas, x_init, anchor_targets):
-        """Phase A detects outliers, Phase B denoises all edges."""
-        # Phase A: initial solve → residuals → weights
+    def detect_outliers(noisy_meas, x_init, anchor_targets):
+        """Phase A: GN solve → per-edge residuals → Welsch weights."""
         x_star_init = initial_solve(noisy_meas, x_init, anchor_targets)
         weights, chi_scores = compute_weights(x_star_init, noisy_meas)
+        return weights, chi_scores
 
-        # Phase B: unweighted IFT denoiser (identical to exp36)
-        theta_opt = fused_optimize(noisy_meas, x_init, anchor_targets)
+    detect_jit = jax.jit(detect_outliers)
+    denoise_jit = jax.jit(fused_optimize)
 
-        return theta_opt, weights, chi_scores
-
-    robust_denoise_jit = jax.jit(robust_denoise)
-    return robust_denoise_jit
+    return detect_jit, denoise_jit
 
 
 # ---------------------------------------------------------------------------
@@ -607,9 +606,9 @@ def evaluate_sequence(
     if anchor_pos_in_window[-1] != actual_window - 1:
         anchor_pos_in_window.append(actual_window - 1)
 
-    # Build denoiser.
+    # Build denoiser (returns two separate JIT functions).
     t_jit_start = time.perf_counter()
-    robust_denoise = build_robust_denoiser(
+    detect_fn, denoise_fn = build_robust_denoiser(
         actual_window, anchor_pos_in_window, inner_sigma,
         gn_iters=args.gn_iters, gn_damping=5e-3,
         kernel_scale=args.kernel_scale,
@@ -622,13 +621,15 @@ def evaluate_sequence(
         lr=args.lr,
     )
 
-    # Warm-up.
+    # Warm-up both JIT functions.
     n_meas_window = actual_window - 1
     dummy_meas = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
     dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
     dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6), dtype=jnp.float32)
-    _ = robust_denoise(dummy_meas, dummy_x, dummy_anchors)
-    jax.block_until_ready(_[0])
+    _w, _c = detect_fn(dummy_meas, dummy_x, dummy_anchors)
+    jax.block_until_ready(_w)
+    _t = denoise_fn(dummy_meas, dummy_x, dummy_anchors)
+    jax.block_until_ready(_t)
     t_jit = time.perf_counter() - t_jit_start
     print(f"  JIT: {t_jit:.1f}s")
 
@@ -672,9 +673,10 @@ def evaluate_sequence(
         origin = jnp.zeros(6, dtype=jnp.float32)
         x_init = _forward_compose_jit(origin, w_noisy).ravel()
 
-        # Run robust denoiser (Phase A + Phase B).
-        theta_opt, weights, chi_scores = robust_denoise(
-            w_noisy, x_init, w_anchor_targets)
+        # Phase A: detect outliers.
+        weights, chi_scores = detect_fn(w_noisy, x_init, w_anchor_targets)
+        # Phase B: denoise (independent of Phase A, identical to exp36).
+        theta_opt = denoise_fn(w_noisy, x_init, w_anchor_targets)
         jax.block_until_ready(theta_opt)
 
         # Commit.
