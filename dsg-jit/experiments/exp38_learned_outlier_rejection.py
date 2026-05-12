@@ -756,104 +756,79 @@ def evaluate_sequence(
         noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
     sigma_trans = np.maximum(robust_sigma[:3], 1e-10)
 
-    # --- Separation quality check ---
-    # Phase C relies on Phase A separating outliers from inliers.  When the
-    # weight distributions overlap (high-dynamics sequences compress chi
-    # scores), Phase C cannot avoid false positives → skip it entirely.
-    #
-    # Metric: Bimodal Separation Index (BSI).
-    # Split weights at the median; if the lower-half mean is close to the
-    # upper-half mean, the distribution is unimodal (poor separation).
-    # BSI = (upper_mean - lower_mean) / max(MAD, 0.01)
-    # BSI > 2.0 → clear bimodal gap, safe to proceed
-    # BSI ≤ 2.0 → overlapping distributions, skip Phase C
-    w_sorted = np.sort(all_weights)
-    w_median = float(np.median(all_weights))
-    w_mad = float(np.median(np.abs(all_weights - w_median)))
-    lower_half = w_sorted[:len(w_sorted) // 2]
-    upper_half = w_sorted[len(w_sorted) // 2:]
-    bsi = (float(np.mean(upper_half)) - float(np.mean(lower_half))) / max(w_mad, 0.01)
+    # --- Phase C: safe translational replacement ---
+    # Separate DETECTION (which edges are outliers) from REPLACEMENT (which
+    # edges we actually modify).  Detection uses Phase A weights for full
+    # recall.  Replacement adds a safety constraint: only interpolate when
+    # non-detected neighbors are close (within max_neighbor_gap edges).
+    # When neighbors are distant (clustered rejections on high-dynamics
+    # sequences), interpolation is inaccurate → skip replacement but still
+    # count the edge as detected for classification metrics.
+    max_neighbor_gap = args.max_neighbor_gap
 
-    # Adaptive reject threshold: median - 2*MAD.
-    adaptive_threshold = w_median - 2.0 * max(w_mad, 0.01)
-    reject_threshold = max(min(args.reject_threshold, adaptive_threshold), 0.05)
+    # Detection: use Phase A weights (aggressive for recall).
+    detected_mask = all_weights < args.reject_threshold
+    n_detected = int(np.sum(detected_mask))
 
-    skip_phase_c = bsi < 2.0
-    if skip_phase_c:
-        rejected_mask = np.zeros(n_meas_total, dtype=bool)
-        n_rejected_total = 0
-        print(f"\n  Phase C SKIPPED: poor separation (BSI={bsi:.2f} < 2.0, "
-              f"w_median={w_median:.3f}, w_mad={w_mad:.3f})")
+    # Adaptive chi_t threshold from inlier baseline.
+    inlier_chi_list = []
+    for i in range(1, n_meas_total - 1):
+        if detected_mask[i] or detected_mask[i - 1] or detected_mask[i + 1]:
+            continue
+        interp_t = 0.5 * (denoised_measurements[i - 1, :3] +
+                          denoised_measurements[i + 1, :3])
+        dev_t = denoised_measurements[i, :3] - interp_t
+        inlier_chi_list.append(float(np.linalg.norm(dev_t / sigma_trans)))
+
+    if len(inlier_chi_list) > 20:
+        baseline_chi_95 = float(np.percentile(inlier_chi_list, 95))
+        comp_chi_threshold_trans = max(3.0, baseline_chi_95)
     else:
-        rejected_mask = all_weights < reject_threshold
-        n_rejected_total = int(np.sum(rejected_mask))
-        print(f"\n  Phase C threshold: {reject_threshold:.3f} "
-              f"(BSI={bsi:.2f}, w_median={w_median:.3f}, w_mad={w_mad:.3f})")
+        comp_chi_threshold_trans = 3.0
 
-    # --- Adaptive chi_t threshold ---
-    # Compute how much non-rejected edges deviate from their neighbors.
-    # Only replace if deviation exceeds the 95th percentile of this baseline
-    # (or a floor of 3.0).  This prevents FPs on curvy sequences where
-    # neighbors legitimately differ.
-    comp_chi_threshold_trans = 3.0
-    if not skip_phase_c:
-        inlier_chi_list = []
-        for i in range(1, n_meas_total - 1):
-            if rejected_mask[i]:
-                continue
-            if rejected_mask[i - 1] or rejected_mask[i + 1]:
-                continue
-            interp_t = 0.5 * (denoised_measurements[i - 1, :3] +
-                              denoised_measurements[i + 1, :3])
-            dev_t = denoised_measurements[i, :3] - interp_t
-            inlier_chi_list.append(float(np.linalg.norm(dev_t / sigma_trans)))
+    print(f"\n  Phase C: {n_detected} detected (w < {args.reject_threshold}), "
+          f"max_neighbor_gap={max_neighbor_gap}, "
+          f"chi_t threshold={comp_chi_threshold_trans:.2f}")
 
-        if len(inlier_chi_list) > 20:
-            baseline_chi_95 = float(np.percentile(inlier_chi_list, 95))
-            comp_chi_threshold_trans = max(3.0, baseline_chi_95)
-            print(f"  Phase C chi_t threshold: {comp_chi_threshold_trans:.2f} "
-                  f"(inlier 95th pct: {baseline_chi_95:.2f})")
-        else:
-            print(f"  Phase C chi_t threshold: {comp_chi_threshold_trans:.2f} "
-                  f"(not enough inlier data, using default)")
-
+    # Replacement: only when interpolation is safe.
+    rejected_mask = detected_mask.copy()  # used for neighbor exclusion
     n_replaced_trans = 0
+    n_skipped_distant = 0
     n_replaced_tp = 0
     n_replaced_fp = 0
 
-    if n_rejected_total > 0:
+    if n_detected > 0:
         for i in range(n_meas_total):
-            if not rejected_mask[i]:
+            if not detected_mask[i]:
                 continue
-            # Find nearest non-rejected neighbors on each side.
+            # Find nearest non-detected neighbors on each side.
             left = None
             for j in range(i - 1, -1, -1):
-                if not rejected_mask[j]:
+                if not detected_mask[j]:
                     left = j
                     break
             right = None
             for j in range(i + 1, n_meas_total):
-                if not rejected_mask[j]:
+                if not detected_mask[j]:
                     right = j
                     break
 
-            if left is None and right is None:
+            # Safety: require both neighbors within max_neighbor_gap.
+            left_ok = left is not None and (i - left) <= max_neighbor_gap
+            right_ok = right is not None and (right - i) <= max_neighbor_gap
+            if not (left_ok and right_ok):
+                n_skipped_distant += 1
                 continue
 
-            # Distance-weighted interpolation from available neighbors.
-            if left is not None and right is not None:
-                d_left = i - left
-                d_right = right - i
-                w_left = d_right / (d_left + d_right)
-                w_right = d_left / (d_left + d_right)
-                interp_trans = (w_left * denoised_measurements[left, :3] +
-                                w_right * denoised_measurements[right, :3])
-            elif left is not None:
-                interp_trans = denoised_measurements[left, :3].copy()
-            else:
-                interp_trans = denoised_measurements[right, :3].copy()
+            # Distance-weighted interpolation from close neighbors.
+            d_left = i - left
+            d_right = right - i
+            w_left = d_right / (d_left + d_right)
+            w_right = d_left / (d_left + d_right)
+            interp_trans = (w_left * denoised_measurements[left, :3] +
+                            w_right * denoised_measurements[right, :3])
 
-            # Only replace translation if it deviates significantly.
+            # Only replace if deviation exceeds adaptive threshold.
             dev_t = denoised_measurements[i, :3] - interp_trans
             chi_t = np.linalg.norm(dev_t / sigma_trans)
 
@@ -865,13 +840,13 @@ def evaluate_sequence(
                 else:
                     n_replaced_fp += 1
 
-        print(f"\n  Phase C: {n_rejected_total} rejected edges → "
-              f"trans replaced={n_replaced_trans}")
+        print(f"  Phase C: replaced={n_replaced_trans}, "
+              f"skipped_distant={n_skipped_distant}")
         print(f"  Phase C: TP={n_replaced_tp}, FP={n_replaced_fp}")
 
     # --- Iterative refinement (translation only) ---
     # After Phase C, missed outliers stand out against cleaned neighbors.
-    # Uses the same adaptive chi_t threshold.
+    # Uses the same safety constraints.
     for refine_iter in range(args.refine_iters):
         n_new_rejected = 0
         n_refine_tp = 0
@@ -893,21 +868,18 @@ def evaluate_sequence(
                     right = j
                     break
 
-            if left is None and right is None:
+            # Same safety constraint for refinement.
+            left_ok = left is not None and (i - left) <= max_neighbor_gap
+            right_ok = right is not None and (right - i) <= max_neighbor_gap
+            if not (left_ok and right_ok):
                 continue
 
-            # Expected translation from distance-weighted interpolation.
-            if left is not None and right is not None:
-                d_left = i - left
-                d_right = right - i
-                w_l = d_right / (d_left + d_right)
-                w_r = d_left / (d_left + d_right)
-                expected_t = (w_l * denoised_measurements[left, :3] +
-                              w_r * denoised_measurements[right, :3])
-            elif left is not None:
-                expected_t = denoised_measurements[left, :3]
-            else:
-                expected_t = denoised_measurements[right, :3]
+            d_left = i - left
+            d_right = right - i
+            w_l = d_right / (d_left + d_right)
+            w_r = d_left / (d_left + d_right)
+            expected_t = (w_l * denoised_measurements[left, :3] +
+                          w_r * denoised_measurements[right, :3])
 
             dev_t = denoised_measurements[i, :3] - expected_t
             chi_t = np.linalg.norm(dev_t / sigma_trans)
@@ -942,8 +914,8 @@ def evaluate_sequence(
     w_outlier = all_weights[outlier_mask_np]
     w_inlier = all_weights[~outlier_mask_np]
 
-    # Final classification uses rejected_mask (Phase C + all refine passes).
-    predicted_outlier = rejected_mask
+    # Classification uses detected_mask (Phase A detection) for recall/precision.
+    predicted_outlier = detected_mask
     tp = int(np.sum(predicted_outlier & outlier_mask_np))
     fp = int(np.sum(predicted_outlier & ~outlier_mask_np))
     fn = int(np.sum(~predicted_outlier & outlier_mask_np))
@@ -1055,9 +1027,13 @@ def main():
                         help="Welsch kernel scale (in sigma units). "
                              "Edges with chi > c are strongly downweighted.")
     parser.add_argument("--reject-threshold", type=float, default=0.8,
-                        help="Weight threshold for Phase C replacement. "
-                             "Edges with w < threshold are replaced via "
-                             "neighbor interpolation.")
+                        help="Weight threshold for Phase C detection. "
+                             "Edges with w < threshold are candidates for "
+                             "replacement.")
+    parser.add_argument("--max-neighbor-gap", type=int, default=3,
+                        help="Max distance to nearest non-detected neighbor "
+                             "for safe interpolation. Edges with more distant "
+                             "neighbors are detected but not replaced.")
     parser.add_argument("--refine-iters", type=int, default=2,
                         help="Number of iterative refinement passes after "
                              "Phase C. Each pass detects remaining outliers "
