@@ -914,8 +914,8 @@ def evaluate_sequence(
     w_outlier = all_weights[outlier_mask_np]
     w_inlier = all_weights[~outlier_mask_np]
 
-    # Classification uses detected_mask (Phase A detection) for recall/precision.
-    predicted_outlier = detected_mask
+    # Classification uses rejected_mask (Phase A detection + refinement catches).
+    predicted_outlier = rejected_mask
     tp = int(np.sum(predicted_outlier & outlier_mask_np))
     fp = int(np.sum(predicted_outlier & ~outlier_mask_np))
     fn = int(np.sum(~predicted_outlier & outlier_mask_np))
