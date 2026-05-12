@@ -201,9 +201,18 @@ def estimate_noise_robust(
         # Not enough inliers — fall back to initial estimate.
         return initial_noise_model
 
-    # Re-estimate noise from inlier measurements only.
-    inlier_meas = measurements[inlier_mask]
-    diffs = inlier_meas[1:] - inlier_meas[:-1]
+    # Re-estimate noise from consecutive inlier pairs only.
+    # IMPORTANT: only diff measurements where BOTH i and i+1 are inliers,
+    # otherwise gaps from excluded outliers inflate the variance estimate.
+    consecutive_diffs = []
+    for i in range(n_meas - 1):
+        if inlier_mask[i] and inlier_mask[i + 1]:
+            consecutive_diffs.append(measurements[i + 1] - measurements[i])
+
+    if len(consecutive_diffs) < 20:
+        return initial_noise_model
+
+    diffs = np.array(consecutive_diffs)
     mad = np.median(np.abs(diffs - np.median(diffs, axis=0)), axis=0)
     sigma_noise = mad / (np.sqrt(2) * 0.6745)
 
