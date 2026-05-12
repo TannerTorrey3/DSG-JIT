@@ -742,24 +742,24 @@ def evaluate_sequence(
                          jnp.array(corrupted_measurements),
                          gt_measurements)['rmse_rot']) * 100
 
-    # --- Phase C: component-wise post-processing ---
-    # For rejected edges, compute interpolated value from neighbors, then
-    # only replace components (trans/rot) that actually deviate significantly.
-    # Rot uses a higher threshold because rotational dynamics are less smooth
-    # than translational — interpolation is less accurate for rot, so we
-    # need stronger evidence before replacing.
+    # --- Phase C: translational post-processing ---
+    # For rejected edges, replace translational components via neighbor
+    # interpolation.  Rotational components are NOT replaced because:
+    #   1. Phase B (IFT denoiser) already handles rot denoising universally
+    #   2. Neighbor interpolation is unreliable for rot on non-smooth
+    #      trajectories (curves, turns) — the assumption that neighboring
+    #      rot measurements are similar breaks on sequences with high
+    #      rotational dynamics, causing regressions up to -243%
+    #   3. Most gross outliers primarily corrupt translation; rot outliers
+    #      are adequately handled by Phase B's smoothness prior
     robust_sigma = np.array(
         noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
     sigma_trans = np.maximum(robust_sigma[:3], 1e-10)
-    sigma_rot = np.maximum(robust_sigma[3:], 1e-10)
     comp_chi_threshold_trans = 3.0
-    comp_chi_threshold_rot = 6.0  # conservative for rot (interpolation less reliable)
 
     rejected_mask = all_weights < args.reject_threshold
     n_rejected_total = int(np.sum(rejected_mask))
     n_replaced_trans = 0
-    n_replaced_rot = 0
-    n_replaced_both = 0
     n_replaced_tp = 0
     n_replaced_fp = 0
 
@@ -788,42 +788,30 @@ def evaluate_sequence(
                 d_right = right - i
                 w_left = d_right / (d_left + d_right)
                 w_right = d_left / (d_left + d_right)
-                interp = (w_left * denoised_measurements[left] +
-                          w_right * denoised_measurements[right])
+                interp_trans = (w_left * denoised_measurements[left, :3] +
+                                w_right * denoised_measurements[right, :3])
             elif left is not None:
-                interp = denoised_measurements[left].copy()
+                interp_trans = denoised_measurements[left, :3].copy()
             else:
-                interp = denoised_measurements[right].copy()
+                interp_trans = denoised_measurements[right, :3].copy()
 
-            # Check which components deviate significantly.
-            dev = denoised_measurements[i] - interp
-            chi_t = np.linalg.norm(dev[:3] / sigma_trans)
-            chi_r = np.linalg.norm(dev[3:] / sigma_rot)
+            # Only replace translation if it deviates significantly.
+            dev_t = denoised_measurements[i, :3] - interp_trans
+            chi_t = np.linalg.norm(dev_t / sigma_trans)
 
-            replace_t = chi_t > comp_chi_threshold_trans
-            replace_r = chi_r > comp_chi_threshold_rot
-
-            if replace_t:
-                denoised_measurements[i, :3] = interp[:3]
+            if chi_t > comp_chi_threshold_trans:
+                denoised_measurements[i, :3] = interp_trans
                 n_replaced_trans += 1
-            if replace_r:
-                denoised_measurements[i, 3:] = interp[3:]
-                n_replaced_rot += 1
-            if replace_t and replace_r:
-                n_replaced_both += 1
-
-            if replace_t or replace_r:
                 if outlier_mask_np[i]:
                     n_replaced_tp += 1
                 else:
                     n_replaced_fp += 1
 
         print(f"\n  Phase C: {n_rejected_total} rejected edges → "
-              f"trans replaced={n_replaced_trans}, rot replaced={n_replaced_rot}, "
-              f"both={n_replaced_both}")
+              f"trans replaced={n_replaced_trans}")
         print(f"  Phase C: TP={n_replaced_tp}, FP={n_replaced_fp}")
 
-    # --- Iterative refinement (component-wise) ---
+    # --- Iterative refinement (translation only) ---
     # After Phase C, missed outliers stand out against cleaned neighbors.
     for refine_iter in range(args.refine_iters):
         n_new_rejected = 0
@@ -849,32 +837,24 @@ def evaluate_sequence(
             if left is None and right is None:
                 continue
 
-            # Expected value from distance-weighted interpolation.
+            # Expected translation from distance-weighted interpolation.
             if left is not None and right is not None:
                 d_left = i - left
                 d_right = right - i
                 w_l = d_right / (d_left + d_right)
                 w_r = d_left / (d_left + d_right)
-                expected = (w_l * denoised_measurements[left] +
-                            w_r * denoised_measurements[right])
+                expected_t = (w_l * denoised_measurements[left, :3] +
+                              w_r * denoised_measurements[right, :3])
             elif left is not None:
-                expected = denoised_measurements[left]
+                expected_t = denoised_measurements[left, :3]
             else:
-                expected = denoised_measurements[right]
+                expected_t = denoised_measurements[right, :3]
 
-            # Component-wise check.
-            dev = denoised_measurements[i] - expected
-            chi_t = np.linalg.norm(dev[:3] / sigma_trans)
-            chi_r = np.linalg.norm(dev[3:] / sigma_rot)
+            dev_t = denoised_measurements[i, :3] - expected_t
+            chi_t = np.linalg.norm(dev_t / sigma_trans)
 
-            replace_t = chi_t > comp_chi_threshold_trans
-            replace_r = chi_r > comp_chi_threshold_rot
-
-            if replace_t or replace_r:
-                if replace_t:
-                    denoised_measurements[i, :3] = expected[:3]
-                if replace_r:
-                    denoised_measurements[i, 3:] = expected[3:]
+            if chi_t > comp_chi_threshold_trans:
+                denoised_measurements[i, :3] = expected_t
                 rejected_mask[i] = True
                 n_new_rejected += 1
                 if outlier_mask_np[i]:
