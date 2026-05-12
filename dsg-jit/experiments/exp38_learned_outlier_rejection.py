@@ -901,6 +901,91 @@ def evaluate_sequence(
         print(f"  Refine pass {refine_iter + 1}: replaced {n_new_rejected} "
               f"more edges (TP={n_refine_tp}, FP={n_refine_fp})")
 
+    # --- Optional pass 2+: re-denoise with corrected noise model ---
+    # After Phase C removes gross outliers, re-estimate the noise model from
+    # cleaned data.  The corrected sigma gives much higher sw_trans (stronger
+    # smoothing), matching exp36's behavior on clean data.  This costs ~2x
+    # processing time but can significantly improve denoising on sequences
+    # where outliers contaminated the initial noise estimate.
+    for pass_idx in range(2, args.n_passes + 1):
+        cleaned_np = denoised_measurements.copy()
+        noise_model_reest = estimate_noise_online(cleaned_np)
+        auto_w_reest = compute_auto_weights(
+            noise_model_reest, base_sw=args.base_sw, base_rw=args.base_rw,
+            sw_ratio=args.sw_ratio)
+
+        print(f"\n  Pass {pass_idx}: re-estimated noise model")
+        print(f"  σ_noise: trans={noise_model_reest['sigma_noise_trans']:.5f}, "
+              f"rot={noise_model_reest['sigma_noise_rot']:.5f}")
+        print(f"  σ_process: trans={noise_model_reest['sigma_process_trans']:.5f}, "
+              f"rot={noise_model_reest['sigma_process_rot']:.5f}")
+        print(f"  sw_trans={auto_w_reest['sw_trans']:.2f} "
+              f"(was {auto_w['sw_trans']:.2f}), "
+              f"rw_trans={auto_w_reest['rw_trans']:.2f} "
+              f"(was {auto_w['rw_trans']:.2f})")
+
+        # Rebuild denoiser with corrected weights (new JIT compilation).
+        t_jit2_start = time.perf_counter()
+        _, denoise_fn_reest = build_robust_denoiser(
+            actual_window, anchor_pos_in_window, inner_sigma,
+            gn_iters=args.gn_iters, gn_damping=5e-3,
+            kernel_scale=args.kernel_scale,
+            aw_trans=args.aw_trans, aw_rot=args.aw_rot,
+            rw_trans=auto_w_reest["rw_trans"], rw_rot=auto_w_reest["rw_rot"],
+            sw_trans=auto_w_reest["sw_trans"], sw_rot=auto_w_reest["sw_rot"],
+            inner_anchor_sigma=args.inner_anchor_sigma,
+            n_trans_iters=args.n_trans_iters,
+            n_rot_iters=args.n_rot_iters,
+            lr=args.lr,
+        )
+        # Warm up.
+        _t2 = denoise_fn_reest(dummy_meas, dummy_x, dummy_anchors)
+        jax.block_until_ready(_t2)
+        t_jit2 = time.perf_counter() - t_jit2_start
+        print(f"  Pass {pass_idx} JIT: {t_jit2:.1f}s")
+
+        # Re-run Phase B on cleaned measurements with corrected weights.
+        t_pass2_start = time.perf_counter()
+        for wi, (w_start, w_end) in enumerate(windows):
+            w_n_poses = w_end - w_start
+            w_n_meas = w_n_poses - 1
+            w_cleaned = jnp.array(cleaned_np[w_start:w_start + w_n_meas])
+
+            gt_first = gt_poses[w_start]
+            anchor_global = gt_poses[w_start + jnp.array(anchor_pos_in_window)]
+            w_anchor_targets = jax.vmap(relative_pose_se3, in_axes=(None, 0))(
+                gt_first, anchor_global)
+
+            origin = jnp.zeros(6, dtype=jnp.float32)
+            x_init = _forward_compose_jit(origin, w_cleaned).ravel()
+
+            theta_opt = denoise_fn_reest(w_cleaned, x_init, w_anchor_targets)
+            jax.block_until_ready(theta_opt)
+
+            theta_np = np.array(theta_opt)
+            commit_start, commit_end = commit_ranges[wi]
+            for gi in range(commit_start, commit_end + 1):
+                local_i = gi - w_start
+                if 0 <= local_i < w_n_meas and gi < n_meas_total:
+                    denoised_measurements[gi] = theta_np[local_i]
+
+        t_pass2 = time.perf_counter() - t_pass2_start
+        pass2_hz = n_poses_total / t_pass2
+        print(f"  Pass {pass_idx} denoise: {t_pass2:.1f}s ({pass2_hz:.1f} poses/sec)")
+
+        pass2_error = compute_per_edge_error(
+            jnp.array(denoised_measurements), gt_measurements)
+        pass2_t_imp = (1 - pass2_error['rmse_trans'] /
+                       compute_per_edge_error(
+                           jnp.array(corrupted_measurements),
+                           gt_measurements)['rmse_trans']) * 100
+        pass2_r_imp = (1 - pass2_error['rmse_rot'] /
+                       compute_per_edge_error(
+                           jnp.array(corrupted_measurements),
+                           gt_measurements)['rmse_rot']) * 100
+        print(f"  Pass {pass_idx} result: Trans {pass2_t_imp:+.1f}%, "
+              f"Rot {pass2_r_imp:+.1f}%")
+
     # --- Metrics ---
     baseline = compute_per_edge_error(
         jnp.array(corrupted_measurements), gt_measurements)
@@ -1038,6 +1123,13 @@ def main():
                         help="Number of iterative refinement passes after "
                              "Phase C. Each pass detects remaining outliers "
                              "via neighbor comparison and replaces them.")
+    parser.add_argument("--n-passes", type=int, default=1,
+                        help="Number of denoise passes. Pass 2+ re-estimates "
+                             "the noise model from cleaned data and re-runs "
+                             "Phase B with corrected weights. Costs ~2x time "
+                             "per additional pass but improves denoising on "
+                             "sequences where outliers contaminated the noise "
+                             "model.")
     parser.add_argument("--aw-trans", type=float, default=5.0)
     parser.add_argument("--aw-rot", type=float, default=5.0)
     parser.add_argument("--inner-anchor-sigma", type=float, default=0.01)
