@@ -756,49 +756,66 @@ def evaluate_sequence(
         noise_model_robust["sigma_noise_per_comp"], dtype=np.float64)
     sigma_trans = np.maximum(robust_sigma[:3], 1e-10)
 
-    # --- Adaptive reject threshold ---
-    # A fixed weight threshold fails when inlier weights are low (high-dynamics
-    # sequences compress the weight distribution).  Instead, set the threshold
-    # relative to the weight distribution: median - 2*MAD catches statistical
-    # outliers regardless of baseline weight level.
+    # --- Separation quality check ---
+    # Phase C relies on Phase A separating outliers from inliers.  When the
+    # weight distributions overlap (high-dynamics sequences compress chi
+    # scores), Phase C cannot avoid false positives → skip it entirely.
+    #
+    # Metric: Bimodal Separation Index (BSI).
+    # Split weights at the median; if the lower-half mean is close to the
+    # upper-half mean, the distribution is unimodal (poor separation).
+    # BSI = (upper_mean - lower_mean) / max(MAD, 0.01)
+    # BSI > 2.0 → clear bimodal gap, safe to proceed
+    # BSI ≤ 2.0 → overlapping distributions, skip Phase C
+    w_sorted = np.sort(all_weights)
     w_median = float(np.median(all_weights))
     w_mad = float(np.median(np.abs(all_weights - w_median)))
+    lower_half = w_sorted[:len(w_sorted) // 2]
+    upper_half = w_sorted[len(w_sorted) // 2:]
+    bsi = (float(np.mean(upper_half)) - float(np.mean(lower_half))) / max(w_mad, 0.01)
+
+    # Adaptive reject threshold: median - 2*MAD.
     adaptive_threshold = w_median - 2.0 * max(w_mad, 0.01)
     reject_threshold = max(min(args.reject_threshold, adaptive_threshold), 0.05)
 
-    rejected_mask = all_weights < reject_threshold
-    n_rejected_total = int(np.sum(rejected_mask))
-
-    print(f"\n  Phase C threshold: adaptive={adaptive_threshold:.3f}, "
-          f"used={reject_threshold:.3f} "
-          f"(w_median={w_median:.3f}, w_mad={w_mad:.3f})")
+    skip_phase_c = bsi < 2.0
+    if skip_phase_c:
+        rejected_mask = np.zeros(n_meas_total, dtype=bool)
+        n_rejected_total = 0
+        print(f"\n  Phase C SKIPPED: poor separation (BSI={bsi:.2f} < 2.0, "
+              f"w_median={w_median:.3f}, w_mad={w_mad:.3f})")
+    else:
+        rejected_mask = all_weights < reject_threshold
+        n_rejected_total = int(np.sum(rejected_mask))
+        print(f"\n  Phase C threshold: {reject_threshold:.3f} "
+              f"(BSI={bsi:.2f}, w_median={w_median:.3f}, w_mad={w_mad:.3f})")
 
     # --- Adaptive chi_t threshold ---
     # Compute how much non-rejected edges deviate from their neighbors.
     # Only replace if deviation exceeds the 95th percentile of this baseline
     # (or a floor of 3.0).  This prevents FPs on curvy sequences where
     # neighbors legitimately differ.
-    inlier_chi_list = []
-    for i in range(1, n_meas_total - 1):
-        if rejected_mask[i]:
-            continue
-        # Quick neighbor check (immediate neighbors only).
-        if rejected_mask[i - 1] or rejected_mask[i + 1]:
-            continue
-        interp_t = 0.5 * (denoised_measurements[i - 1, :3] +
-                          denoised_measurements[i + 1, :3])
-        dev_t = denoised_measurements[i, :3] - interp_t
-        inlier_chi_list.append(float(np.linalg.norm(dev_t / sigma_trans)))
+    comp_chi_threshold_trans = 3.0
+    if not skip_phase_c:
+        inlier_chi_list = []
+        for i in range(1, n_meas_total - 1):
+            if rejected_mask[i]:
+                continue
+            if rejected_mask[i - 1] or rejected_mask[i + 1]:
+                continue
+            interp_t = 0.5 * (denoised_measurements[i - 1, :3] +
+                              denoised_measurements[i + 1, :3])
+            dev_t = denoised_measurements[i, :3] - interp_t
+            inlier_chi_list.append(float(np.linalg.norm(dev_t / sigma_trans)))
 
-    if len(inlier_chi_list) > 20:
-        baseline_chi_95 = float(np.percentile(inlier_chi_list, 95))
-        comp_chi_threshold_trans = max(3.0, baseline_chi_95)
-        print(f"  Phase C chi_t threshold: {comp_chi_threshold_trans:.2f} "
-              f"(inlier 95th pct: {baseline_chi_95:.2f})")
-    else:
-        comp_chi_threshold_trans = 3.0
-        print(f"  Phase C chi_t threshold: {comp_chi_threshold_trans:.2f} "
-              f"(not enough inlier data, using default)")
+        if len(inlier_chi_list) > 20:
+            baseline_chi_95 = float(np.percentile(inlier_chi_list, 95))
+            comp_chi_threshold_trans = max(3.0, baseline_chi_95)
+            print(f"  Phase C chi_t threshold: {comp_chi_threshold_trans:.2f} "
+                  f"(inlier 95th pct: {baseline_chi_95:.2f})")
+        else:
+            print(f"  Phase C chi_t threshold: {comp_chi_threshold_trans:.2f} "
+                  f"(not enough inlier data, using default)")
 
     n_replaced_trans = 0
     n_replaced_tp = 0
