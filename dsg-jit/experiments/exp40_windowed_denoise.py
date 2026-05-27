@@ -472,25 +472,23 @@ def compute_per_pose_meas_error(
 def build_denoiser(
     n_poses: int,
     anchor_positions: list[int],
-    sigma: jnp.ndarray,
     *,
     gn_iters: int = 10,
     gn_damping: float = 5e-3,
     aw_trans: float = 5.0,
     aw_rot: float = 5.0,
-    rw_trans: float = 0.25,
-    rw_rot: float = 0.1,
-    sw_trans: float = 25.0,
-    sw_rot: float = 25.0,
     inner_anchor_sigma: float = 0.01,
     n_trans_iters: int = 50,
     n_rot_iters: int = 20,
     lr: float = 1e-3,
 ):
-    """Build a JIT-compiled denoiser with IFT backward pass and two-phase Adam."""
+    """Build a JIT-compiled denoiser with IFT backward pass and two-phase Adam.
+
+    Per-sequence weights (sqrt_odom_w, sw_vec, rw_vec) are passed as dynamic
+    arguments at call time rather than captured as closure constants.  This
+    allows JAX to compile once and reuse across all sequences / seeds.
+    """
     n_meas = n_poses - 1
-    odom_w = sigma_to_weight(sigma)
-    sqrt_odom_w = jnp.sqrt(odom_w)
     anchor_w = sigma_to_weight(jnp.full(6, inner_anchor_sigma))
     sqrt_anchor_w = jnp.sqrt(anchor_w)
     anchor_idx = jnp.array(anchor_positions, dtype=jnp.int32)
@@ -498,28 +496,22 @@ def build_denoiser(
     anchor_w_vec = jnp.array(
         [aw_trans] * 3 + [aw_rot] * 3, dtype=jnp.float32)
 
-    reg_w_vec = jnp.array(
-        [rw_trans] * 3 + [rw_rot] * 3, dtype=jnp.float32)
-
-    sw_vec = jnp.array(
-        [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
-
     _odom_res_batch = jax.vmap(
-        lambda a, b, m: (relative_pose_se3(a, b) - m) * sqrt_odom_w)
+        lambda a, b, m: relative_pose_se3(a, b) - m)
     _retract_batch = jax.vmap(se3_retract_left)
     max_step_per_pose = 0.5
 
     # --- Inner PGO residual and GN step ---
 
-    def residual_fn(x, theta, anchor_targets):
+    def residual_fn(x, theta, anchor_targets, sqrt_odom_w):
         poses = x.reshape(n_poses, 6)
-        r_odom = _odom_res_batch(poses[:-1], poses[1:], theta)
+        r_odom = _odom_res_batch(poses[:-1], poses[1:], theta) * sqrt_odom_w
         r_anch = (poses[anchor_idx] - anchor_targets) * sqrt_anchor_w
         return jnp.concatenate([r_odom.ravel(), r_anch.ravel()])
 
-    def gn_step(x, theta, anchor_targets):
+    def gn_step(x, theta, anchor_targets, sqrt_odom_w):
         def r_fn(x_):
-            return residual_fn(x_, theta, anchor_targets)
+            return residual_fn(x_, theta, anchor_targets, sqrt_odom_w)
         r = r_fn(x)
         J = jax.jacobian(r_fn)(x)
         n = x.shape[0]
@@ -535,20 +527,21 @@ def build_denoiser(
     # --- IFT inner solve via custom_vjp ---
 
     @jax.custom_vjp
-    def inner_solve(theta, x_init, anchor_targets):
+    def inner_solve(theta, x_init, anchor_targets, sqrt_odom_w):
         def scan_body(x, _):
-            return gn_step(x, theta, anchor_targets), None
+            return gn_step(x, theta, anchor_targets, sqrt_odom_w), None
         x_star, _ = jax.lax.scan(scan_body, x_init, None, length=gn_iters)
         return x_star
 
-    def inner_solve_fwd(theta, x_init, anchor_targets):
-        x_star = inner_solve(theta, x_init, anchor_targets)
-        return x_star, (x_star, theta, anchor_targets)
+    def inner_solve_fwd(theta, x_init, anchor_targets, sqrt_odom_w):
+        x_star = inner_solve(theta, x_init, anchor_targets, sqrt_odom_w)
+        return x_star, (x_star, theta, anchor_targets, sqrt_odom_w)
 
     def inner_solve_bwd(res, g):
-        x_star, theta, anchor_targets = res
+        x_star, theta, anchor_targets, sqrt_odom_w = res
 
-        r_fn_x = lambda x_: residual_fn(x_, theta, anchor_targets)
+        r_fn_x = lambda x_: residual_fn(x_, theta, anchor_targets,
+                                         sqrt_odom_w)
         J = jax.jacobian(r_fn_x)(x_star)
 
         n = x_star.shape[0]
@@ -556,25 +549,29 @@ def build_denoiser(
         u = jnp.linalg.solve(H, g)
 
         _, vjp_fn = jax.vjp(
-            lambda t: residual_fn(x_star, t, anchor_targets), theta)
+            lambda t: residual_fn(x_star, t, anchor_targets, sqrt_odom_w),
+            theta)
         v = J @ u
         dtheta = -vjp_fn(v)[0]
 
-        return (dtheta, jnp.zeros_like(x_star), jnp.zeros_like(anchor_targets))
+        return (dtheta, jnp.zeros_like(x_star),
+                jnp.zeros_like(anchor_targets),
+                jnp.zeros_like(sqrt_odom_w))
 
     inner_solve.defvjp(inner_solve_fwd, inner_solve_bwd)
 
     # --- Outer loss ---
 
-    def outer_loss(theta, x_init, anchor_targets, noisy_meas):
-        x_star = inner_solve(theta, x_init, anchor_targets)
+    def outer_loss(theta, x_init, anchor_targets, noisy_meas,
+                   sqrt_odom_w, sw_vec, rw_vec):
+        x_star = inner_solve(theta, x_init, anchor_targets, sqrt_odom_w)
         poses_opt = x_star.reshape(n_poses, 6)
 
         diffs = poses_opt[anchor_idx] - anchor_targets
         a_loss = jnp.sum(anchor_w_vec * diffs ** 2)
 
         dev = theta - noisy_meas
-        r_loss = jnp.sum(reg_w_vec * dev ** 2)
+        r_loss = jnp.sum(rw_vec * dev ** 2)
 
         s_diffs = theta[1:] - theta[:-1]
         s_loss = jnp.sum(sw_vec * s_diffs ** 2)
@@ -587,7 +584,8 @@ def build_denoiser(
     trans_mask = jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
-    def fused_optimize(theta_init, x_init, anchor_targets, noisy_meas):
+    def fused_optimize(theta_init, x_init, anchor_targets, noisy_meas,
+                       sqrt_odom_w, sw_vec, rw_vec):
         """Two-phase Adam: translation first, then rotation (fresh state)."""
 
         # Phase 1 — Translation only
@@ -596,7 +594,8 @@ def build_denoiser(
 
         def trans_adam_body(i, state):
             theta, m, v = state
-            g = grad_fn(theta, x_init, anchor_targets, noisy_meas)
+            g = grad_fn(theta, x_init, anchor_targets, noisy_meas,
+                        sqrt_odom_w, sw_vec, rw_vec)
             g = g * trans_mask
 
             t = (i + 1).astype(jnp.float32)
@@ -617,7 +616,8 @@ def build_denoiser(
 
         def rot_adam_body(i, state):
             theta, m, v = state
-            g = grad_fn(theta, x_init, anchor_targets, noisy_meas)
+            g = grad_fn(theta, x_init, anchor_targets, noisy_meas,
+                        sqrt_odom_w, sw_vec, rw_vec)
             g = g * rot_mask
 
             t = (i + 1).astype(jnp.float32)
@@ -647,10 +647,13 @@ def denoise_sequence(
     gt_poses: jnp.ndarray,
     args,
     sigma: jnp.ndarray,
+    denoiser_fns: tuple,
+    anchor_pos_in_window: list[int],
     seq_id: str = "??",
     seed: int = 42,
 ) -> dict:
     """Run the full denoising pipeline on a single sequence."""
+    fused_opt, grad_fn, loss_fn = denoiser_fns
     n_poses_total = gt_poses.shape[0]
     n_meas_total = n_poses_total - 1
     window_size = args.window_size
@@ -729,9 +732,14 @@ def denoise_sequence(
     print(f"  rw_trans={rw_trans:.2f}, rw_rot={rw_rot:.2f}")
     print(f"  lr={args.lr}")
 
-    # Use estimated sigma for the inner solver information matrix.
+    # Build per-sequence dynamic weight arrays.
     inner_sigma = jnp.array(
         noise_model["sigma_noise_per_comp"], dtype=jnp.float32)
+    sqrt_odom_w = jnp.sqrt(sigma_to_weight(inner_sigma))
+    sw_vec = jnp.array(
+        [sw_trans] * 3 + [sw_rot] * 3, dtype=jnp.float32)
+    rw_vec = jnp.array(
+        [rw_trans] * 3 + [rw_rot] * 3, dtype=jnp.float32)
 
     # Plan windows.
     actual_window = min(window_size, n_poses_total)
@@ -743,11 +751,6 @@ def denoise_sequence(
             windows.append((start, start + actual_window))
         if windows[-1][1] < n_poses_total:
             windows.append((n_poses_total - actual_window, n_poses_total))
-
-    # Anchor positions.
-    anchor_pos_in_window = list(range(0, actual_window, args.anchor_spacing))
-    if anchor_pos_in_window[-1] != actual_window - 1:
-        anchor_pos_in_window.append(actual_window - 1)
 
     anchor_density = len(anchor_pos_in_window) / actual_window * 100
 
@@ -767,30 +770,6 @@ def denoise_sequence(
 
     # Baseline error.
     baseline = compute_per_pose_meas_error(noisy_measurements, gt_measurements)
-
-    # Build denoiser.
-    t_jit_start = time.perf_counter()
-    fused_opt, grad_fn, loss_fn = build_denoiser(
-        actual_window, anchor_pos_in_window, inner_sigma,
-        gn_iters=args.gn_iters, gn_damping=5e-3,
-        aw_trans=args.aw_trans, aw_rot=args.aw_rot,
-        rw_trans=rw_trans, rw_rot=rw_rot,
-        sw_trans=sw_trans, sw_rot=sw_rot,
-        inner_anchor_sigma=args.inner_anchor_sigma,
-        n_trans_iters=args.n_trans_iters,
-        n_rot_iters=args.n_rot_iters,
-        lr=args.lr)
-
-    # Warm-up the fused optimizer.
-    n_meas_window = actual_window - 1
-    dummy_theta = jnp.zeros((n_meas_window, 6), dtype=jnp.float32)
-    dummy_x = jnp.zeros(actual_window * 6, dtype=jnp.float32)
-    dummy_anchors = jnp.zeros((len(anchor_pos_in_window), 6),
-                               dtype=jnp.float32)
-    _ = fused_opt(dummy_theta, dummy_x, dummy_anchors,
-                  dummy_theta).block_until_ready()
-    t_jit = time.perf_counter() - t_jit_start
-    print(f"  JIT: {t_jit:.1f}s")
 
     # Commit ranges (midpoint-of-overlap).
     commit_ranges = []
@@ -836,7 +815,8 @@ def denoise_sequence(
         x_init = _forward_compose_jit(origin, w_noisy).ravel()
 
         # Run fused two-phase optimization (single compiled kernel).
-        theta_opt = fused_opt(w_noisy, x_init, w_anchor_targets, w_noisy)
+        theta_opt = fused_opt(w_noisy, x_init, w_anchor_targets, w_noisy,
+                              sqrt_odom_w, sw_vec, rw_vec)
         theta_opt.block_until_ready()
 
         # Commit.
@@ -943,7 +923,6 @@ def denoise_sequence(
             "poses_per_sec": round(poses_per_sec, 1),
             "avg_window_time_s": round(avg_window_time, 4),
             "p95_window_time_s": round(p95_window_time, 4),
-            "jit_s": round(t_jit, 2),
             "denoise_s": round(t_denoise, 2),
             "realtime_factor_10hz": round(poses_per_sec / 10, 2),
             "realtime_factor_100hz": round(poses_per_sec / 100, 2),
@@ -1082,6 +1061,38 @@ def main():
             continue
         seq_data.append((seq_id, gt_poses))
 
+    # Build denoiser ONCE — structural params only (weights passed at call
+    # time).  This avoids per-sequence JIT recompilation.
+    anchor_pos_in_window = list(
+        range(0, args.window_size, args.anchor_spacing))
+    if anchor_pos_in_window[-1] != args.window_size - 1:
+        anchor_pos_in_window.append(args.window_size - 1)
+
+    print(f"\n  Building denoiser (one-time JIT compile) ...")
+    t_jit_start = time.perf_counter()
+    denoiser_fns = build_denoiser(
+        args.window_size, anchor_pos_in_window,
+        gn_iters=args.gn_iters, gn_damping=5e-3,
+        aw_trans=args.aw_trans, aw_rot=args.aw_rot,
+        inner_anchor_sigma=args.inner_anchor_sigma,
+        n_trans_iters=args.n_trans_iters,
+        n_rot_iters=args.n_rot_iters,
+        lr=args.lr)
+    fused_opt_warmup = denoiser_fns[0]
+
+    # Warm-up JIT with dummy data (triggers compilation).
+    n_meas_w = args.window_size - 1
+    n_anch = len(anchor_pos_in_window)
+    dummy_theta = jnp.zeros((n_meas_w, 6), dtype=jnp.float32)
+    dummy_x = jnp.zeros(args.window_size * 6, dtype=jnp.float32)
+    dummy_anchors = jnp.zeros((n_anch, 6), dtype=jnp.float32)
+    dummy_w6 = jnp.ones(6, dtype=jnp.float32)
+    _ = fused_opt_warmup(
+        dummy_theta, dummy_x, dummy_anchors, dummy_theta,
+        dummy_w6, dummy_w6, dummy_w6).block_until_ready()
+    t_jit = time.perf_counter() - t_jit_start
+    print(f"  JIT compile: {t_jit:.1f}s (one-time)")
+
     # Output directory for this run.
     os.makedirs(args.output_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -1113,6 +1124,7 @@ def main():
         "allan_cluster_sizes": args.allan_cluster_sizes if args.noise_method == "allan" else None,
         "n_seeds": n_seeds,
         "seeds": seeds,
+        "jit_compile_s": round(t_jit, 2),
     }
 
     # Run all seeds, saving each independently.
@@ -1129,7 +1141,8 @@ def main():
         seed_results = []
         for seq_id, gt_poses in seq_data:
             result = denoise_sequence(
-                gt_poses, args, sigma, seq_id=seq_id, seed=seed)
+                gt_poses, args, sigma, denoiser_fns,
+                anchor_pos_in_window, seq_id=seq_id, seed=seed)
             result["seed"] = seed
             if si > 0 and "trajectories" in result:
                 del result["trajectories"]
