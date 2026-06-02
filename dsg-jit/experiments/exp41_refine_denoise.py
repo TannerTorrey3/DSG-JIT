@@ -614,27 +614,13 @@ def build_denoiser(
         theta_after_rot = state[0]
 
         # Phase 3 — Translation refinement (fresh Adam state)
-        # Allows translation to readjust after rotation changes shifted
-        # the inner PGO solution.
+        # Reuses trans_adam_body so XLA shares the compiled gradient code
+        # with phase 1 instead of compiling a third copy.
         m0_ref = jnp.zeros_like(theta_after_rot)
         v0_ref = jnp.zeros_like(theta_after_rot)
 
-        def refine_adam_body(i, state):
-            theta, m, v = state
-            g = grad_fn(theta, x_init, anchor_targets, noisy_meas,
-                        sqrt_odom_w, sw_vec, rw_vec)
-            g = g * trans_mask
-
-            t = (i + 1).astype(jnp.float32)
-            m_new = 0.9 * m + 0.1 * g
-            v_new = 0.999 * v + 0.001 * g ** 2
-            m_hat = m_new / (1.0 - 0.9 ** t)
-            v_hat = v_new / (1.0 - 0.999 ** t)
-            update = lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
-            return (theta - update, m_new, v_new)
-
         state = jax.lax.fori_loop(
-            0, n_refine_iters, refine_adam_body,
+            0, n_refine_iters, trans_adam_body,
             (theta_after_rot, m0_ref, v0_ref))
         return state[0]
 
