@@ -701,13 +701,28 @@ def denoise_sequence(
         rw_rot = auto_w["rw_rot"]
         snr_trans = auto_w["snr_trans"]
         snr_rot = auto_w["snr_rot"]
+
+        # Clamp sw/rw ratio to prevent σ_process collapse from making
+        # smoothness dominate by orders of magnitude.
+        max_ratio = args.max_sw_rw_ratio
         sw_rw_ratio_t = sw_trans / max(rw_trans, 1e-12)
         sw_rw_ratio_r = sw_rot / max(rw_rot, 1e-12)
+        clamped = False
+        if sw_rw_ratio_t > max_ratio:
+            sw_trans = max_ratio * rw_trans
+            clamped = True
+        if sw_rw_ratio_r > max_ratio:
+            sw_rot = max_ratio * rw_rot
+            clamped = True
+        sw_rw_ratio_t = sw_trans / max(rw_trans, 1e-12)
+        sw_rw_ratio_r = sw_rot / max(rw_rot, 1e-12)
+
         print(f"  --- Auto weights (base_sw={args.base_sw}, "
               f"base_rw={args.base_rw}) ---")
         print(f"  SNR: trans={snr_trans:.4f}, rot={snr_rot:.4f}")
         print(f"  sw/rw ratio: trans={sw_rw_ratio_t:.2f}, "
-              f"rot={sw_rw_ratio_r:.2f}")
+              f"rot={sw_rw_ratio_r:.2f}"
+              f"{' [CLAMPED]' if clamped else ''}")
     else:
         sw_trans = args.sw_trans
         sw_rot = args.sw_rot
@@ -989,6 +1004,9 @@ def main():
                         help="Base smoothness scale for auto weights")
     parser.add_argument("--base-rw", type=float, default=1.0,
                         help="Base regularization scale for auto weights")
+    parser.add_argument("--max-sw-rw-ratio", type=float, default=500.0,
+                        help="Clamp sw/rw ratio to prevent σ_process "
+                             "collapse (default: 500)")
 
     # Online noise estimation controls (for ema/allan/windowed)
     parser.add_argument("--noise-ema-alpha", type=float, default=0.05,
@@ -1110,6 +1128,7 @@ def main():
         "auto_weights": args.auto_weights,
         "base_sw": args.base_sw,
         "base_rw": args.base_rw,
+        "max_sw_rw_ratio": args.max_sw_rw_ratio,
         "aw_trans": args.aw_trans,
         "aw_rot": args.aw_rot,
         "inner_anchor_sigma": args.inner_anchor_sigma,
