@@ -565,21 +565,53 @@ def build_denoiser(
     trans_mask = jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
     rot_mask = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
 
+    # Phase boundaries (static constants baked into the compiled kernel).
+    phase2_start = n_trans_iters
+    phase3_start = n_trans_iters + n_rot_iters
+    n_total = n_trans_iters + n_rot_iters + n_refine_iters
+
     def fused_optimize(theta_init, x_init, anchor_targets, noisy_meas,
                        sqrt_odom_w, sw_vec, rw_vec):
-        """Three-phase Adam: trans → rot → trans refinement (fresh state each)."""
+        """Three-phase Adam in a single fori_loop.
 
-        # Phase 1 — Translation only
+        Fusing all phases into one loop gives XLA a single copy of the
+        gradient code, keeping the compiled kernel the same size as
+        the two-phase version and avoiding GPU cache pressure.
+
+        Phase schedule (controlled by iteration index):
+          [0, n_trans)                        → translation (trans_mask)
+          [n_trans, n_trans+n_rot)            → rotation    (rot_mask)
+          [n_trans+n_rot, n_trans+n_rot+n_ref)→ translation refinement (trans_mask)
+
+        Adam state (m, v) is reset to zero at each phase boundary.
+        Bias correction uses phase-local iteration count.
+        """
+
         m0 = jnp.zeros_like(theta_init)
         v0 = jnp.zeros_like(theta_init)
 
-        def trans_adam_body(i, state):
+        def unified_adam_body(i, state):
             theta, m, v = state
             g = grad_fn(theta, x_init, anchor_targets, noisy_meas,
                         sqrt_odom_w, sw_vec, rw_vec)
-            g = g * trans_mask
 
-            t = (i + 1).astype(jnp.float32)
+            # Select mask: rot_mask during phase 2, trans_mask otherwise.
+            in_phase2 = jnp.logical_and(i >= phase2_start, i < phase3_start)
+            mask = jnp.where(in_phase2, rot_mask, trans_mask)
+            g = g * mask
+
+            # Reset Adam state at phase boundaries.
+            at_boundary = jnp.logical_or(i == phase2_start, i == phase3_start)
+            m = jnp.where(at_boundary, jnp.zeros_like(m), m)
+            v = jnp.where(at_boundary, jnp.zeros_like(v), v)
+
+            # Phase-local iteration for bias correction.
+            phase_i = jnp.where(
+                i < phase2_start, i,
+                jnp.where(i < phase3_start,
+                          i - phase2_start, i - phase3_start))
+            t = (phase_i + 1).astype(jnp.float32)
+
             m_new = 0.9 * m + 0.1 * g
             v_new = 0.999 * v + 0.001 * g ** 2
             m_hat = m_new / (1.0 - 0.9 ** t)
@@ -588,40 +620,7 @@ def build_denoiser(
             return (theta - update, m_new, v_new)
 
         state = jax.lax.fori_loop(
-            0, n_trans_iters, trans_adam_body, (theta_init, m0, v0))
-        theta_after_trans = state[0]
-
-        # Phase 2 — Rotation only (fresh Adam state)
-        m0_rot = jnp.zeros_like(theta_after_trans)
-        v0_rot = jnp.zeros_like(theta_after_trans)
-
-        def rot_adam_body(i, state):
-            theta, m, v = state
-            g = grad_fn(theta, x_init, anchor_targets, noisy_meas,
-                        sqrt_odom_w, sw_vec, rw_vec)
-            g = g * rot_mask
-
-            t = (i + 1).astype(jnp.float32)
-            m_new = 0.9 * m + 0.1 * g
-            v_new = 0.999 * v + 0.001 * g ** 2
-            m_hat = m_new / (1.0 - 0.9 ** t)
-            v_hat = v_new / (1.0 - 0.999 ** t)
-            update = lr * m_hat / (jnp.sqrt(v_hat) + 1e-8)
-            return (theta - update, m_new, v_new)
-
-        state = jax.lax.fori_loop(
-            0, n_rot_iters, rot_adam_body, (theta_after_trans, m0_rot, v0_rot))
-        theta_after_rot = state[0]
-
-        # Phase 3 — Translation refinement (fresh Adam state)
-        # Reuses trans_adam_body so XLA shares the compiled gradient code
-        # with phase 1 instead of compiling a third copy.
-        m0_ref = jnp.zeros_like(theta_after_rot)
-        v0_ref = jnp.zeros_like(theta_after_rot)
-
-        state = jax.lax.fori_loop(
-            0, n_refine_iters, trans_adam_body,
-            (theta_after_rot, m0_ref, v0_ref))
+            0, n_total, unified_adam_body, (theta_init, m0, v0))
         return state[0]
 
     fused_optimize_jit = jax.jit(fused_optimize)
