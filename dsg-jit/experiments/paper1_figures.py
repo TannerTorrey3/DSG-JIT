@@ -461,7 +461,7 @@ def plot_component_trend(runs: list[dict], output_path: str,
 
 def plot_per_sequence_bars(runs: list[dict], output_path: str,
                            target_sigma: float = 0.03,
-                           figsize: tuple = (7.16, 2.5)):
+                           figsize: tuple = (7.16, 3.5)):
     """Grouped horizontal bar chart: ΔT, ΔR, ΔC per sequence at one σ_t."""
     run = None
     for r in runs:
@@ -480,12 +480,17 @@ def plot_per_sequence_bars(runs: list[dict], output_path: str,
     c_means = [np.mean(get_seq_values(run, s, "combined")) for s in seq_ids]
 
     y = np.arange(n_seqs)
-    h = 0.25
+    h = 0.28
 
     fig, ax = plt.subplots(figsize=figsize)
-    ax.barh(y + h, t_means, h, label=r"$\Delta T$", color="#E24A33", alpha=0.8)
-    ax.barh(y, r_means, h, label=r"$\Delta R$", color="#348ABD", alpha=0.8)
-    ax.barh(y - h, c_means, h, label=r"$\Delta C$", color="#2CA02C", alpha=0.8)
+    ax.barh(y + h, t_means, h, label=r"$\Delta T$", color="#E24A33", alpha=0.85)
+    ax.barh(y, r_means, h, label=r"$\Delta R$", color="#348ABD", alpha=0.85)
+    ax.barh(y - h, c_means, h, label=r"$\Delta C$", color="#2CA02C", alpha=0.85)
+
+    for i, (t, r, c) in enumerate(zip(t_means, r_means, c_means)):
+        max_val = max(t, r, c)
+        ax.text(max_val + 0.8, i, f"{c:.0f}%", va="center", fontsize=5.5,
+                color="#2CA02C", fontweight="bold")
 
     ax.axvline(x=0, color="gray", linestyle="--", linewidth=0.6)
     ax.set_yticks(y)
@@ -494,9 +499,11 @@ def plot_per_sequence_bars(runs: list[dict], output_path: str,
     ax.set_ylabel("KITTI Sequence", fontsize=8)
     ax.set_title(rf"Per-Sequence Breakdown at $\sigma_t = {target_sigma}$",
                  fontsize=9)
-    ax.legend(fontsize=7, loc="lower right", framealpha=0.9)
+    ax.legend(fontsize=7, loc="lower right", framealpha=0.9,
+              ncol=3, bbox_to_anchor=(1.0, -0.02))
     ax.tick_params(labelsize=7)
     ax.grid(axis="x", alpha=0.3)
+    ax.set_xlim(left=-5)
     ax.invert_yaxis()
 
     fig.tight_layout()
@@ -515,22 +522,26 @@ def plot_variance_by_noise(runs: list[dict], output_path: str,
     fig, ax = plt.subplots(figsize=figsize)
     colors = plt.cm.plasma(np.linspace(0.15, 0.85, len(runs)))
 
+    seq_ids = sorted(runs[0]["sequences"].keys())
+    n_seqs = len(seq_ids)
+    x = np.arange(n_seqs)
+    width = 0.8 / len(runs)
+    offsets = np.linspace(-0.4 + width / 2, 0.4 - width / 2, len(runs))
+
     for ri, run in enumerate(runs):
         sigma_t = run["sigma_trans"]
-        seq_ids = sorted(run["sequences"].keys())
         stds = [np.std(get_seq_values(run, s, "combined")) for s in seq_ids]
-        ax.scatter(range(len(seq_ids)), stds, s=20, color=colors[ri],
-                   alpha=0.7, label=rf"$\sigma_t = {sigma_t}$",
-                   edgecolors="white", linewidths=0.3)
+        ax.bar(x + offsets[ri], stds, width, label=rf"$\sigma_t = {sigma_t}$",
+               color=colors[ri], alpha=0.85, edgecolor="white", linewidth=0.3)
 
-    ax.set_xticks(range(len(seq_ids)))
-    ax.set_xticklabels(sorted(runs[0]["sequences"].keys()), fontsize=6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(seq_ids, fontsize=5, rotation=45, ha="right")
     ax.set_xlabel("KITTI Sequence", fontsize=8)
     ax.set_ylabel(r"Std of $\Delta C$ across seeds (%)", fontsize=8)
     ax.set_title("Result Variance by Noise Level", fontsize=9)
-    ax.legend(fontsize=7, framealpha=0.9)
-    ax.tick_params(labelsize=7)
-    ax.grid(alpha=0.3)
+    ax.legend(fontsize=6, framealpha=0.9, ncol=2, loc="upper right")
+    ax.tick_params(axis="y", labelsize=7)
+    ax.grid(axis="y", alpha=0.3)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
