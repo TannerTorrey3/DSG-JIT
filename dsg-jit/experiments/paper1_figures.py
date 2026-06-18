@@ -323,6 +323,222 @@ def plot_noise_level_trend(runs: list[dict], output_path: str,
 
 
 # ---------------------------------------------------------------------------
+# Figure 4: Heatmap — sequences × noise levels
+# ---------------------------------------------------------------------------
+
+def plot_heatmap(runs: list[dict], output_path: str,
+                 metric: str = "combined",
+                 metric_label: str = r"$\Delta C$ (%)",
+                 figsize: tuple = (7.16, 3.0)):
+    """Heatmap of mean improvement: rows = sequences, columns = noise levels."""
+    seq_ids = sorted(runs[0]["sequences"].keys())
+    sigmas = [run["sigma_trans"] for run in runs]
+    n_seqs = len(seq_ids)
+    n_levels = len(runs)
+
+    matrix = np.zeros((n_seqs, n_levels))
+    for ri, run in enumerate(runs):
+        for si, seq_id in enumerate(seq_ids):
+            matrix[si, ri] = np.mean(get_seq_values(run, seq_id, metric))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    vmax = np.max(np.abs(matrix))
+    im = ax.imshow(matrix.T, aspect="auto", cmap="RdYlGn",
+                   vmin=-vmax, vmax=vmax, interpolation="nearest")
+
+    ax.set_xticks(range(n_seqs))
+    ax.set_xticklabels(seq_ids, fontsize=7)
+    ax.set_yticks(range(n_levels))
+    ax.set_yticklabels([rf"$\sigma_t={s}$" for s in sigmas], fontsize=8)
+    ax.set_xlabel("KITTI Sequence", fontsize=8)
+
+    for ri in range(n_levels):
+        for si in range(n_seqs):
+            val = matrix[si, ri]
+            color = "white" if abs(val) > vmax * 0.6 else "black"
+            ax.text(si, ri, f"{val:.0f}", ha="center", va="center",
+                    fontsize=5, color=color)
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+    cbar.set_label(metric_label, fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+
+    ax.set_title(f"Per-Sequence Improvement Across Noise Levels",
+                 fontsize=9)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 5: CDF — cumulative distribution of improvements
+# ---------------------------------------------------------------------------
+
+def plot_cdf(runs: list[dict], output_path: str,
+             metric: str = "combined",
+             metric_label: str = r"$\Delta C$ (%)",
+             figsize: tuple = (3.5, 2.5)):
+    """Empirical CDF of improvement across all seq×seed pairs per noise level."""
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = plt.cm.plasma(np.linspace(0.15, 0.85, len(runs)))
+
+    for ri, run in enumerate(runs):
+        sigma_t = run["sigma_trans"]
+        all_vals = np.sort(get_all_values(run, metric))
+        cdf = np.arange(1, len(all_vals) + 1) / len(all_vals)
+        ax.plot(all_vals, cdf, color=colors[ri], linewidth=1.2,
+                label=rf"$\sigma_t = {sigma_t}$")
+
+    ax.axvline(x=0, color="red", linestyle="--", linewidth=0.8, alpha=0.5)
+    ax.set_xlabel(metric_label, fontsize=8)
+    ax.set_ylabel("Cumulative Proportion", fontsize=8)
+    ax.set_title("Empirical CDF of Improvement", fontsize=9)
+    ax.legend(fontsize=7, framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 6: Component trend — ΔT and ΔR vs noise level
+# ---------------------------------------------------------------------------
+
+def plot_component_trend(runs: list[dict], output_path: str,
+                         figsize: tuple = (3.5, 2.5)):
+    """Line plot of ΔT, ΔR, ΔC vs σ_t showing component divergence."""
+    fig, ax = plt.subplots(figsize=figsize)
+
+    sigmas = []
+    t_means, t_stds = [], []
+    r_means, r_stds = [], []
+    c_means, c_stds = [], []
+
+    for run in runs:
+        sigmas.append(run["sigma_trans"])
+        seq_ids = sorted(run["sequences"].keys())
+        t_seq = np.array([np.mean(get_seq_values(run, s, "trans"))
+                          for s in seq_ids])
+        r_seq = np.array([np.mean(get_seq_values(run, s, "rot"))
+                          for s in seq_ids])
+        c_seq = np.array([np.mean(get_seq_values(run, s, "combined"))
+                          for s in seq_ids])
+        t_means.append(np.mean(t_seq)); t_stds.append(np.std(t_seq))
+        r_means.append(np.mean(r_seq)); r_stds.append(np.std(r_seq))
+        c_means.append(np.mean(c_seq)); c_stds.append(np.std(c_seq))
+
+    x = np.arange(len(sigmas))
+    ax.errorbar(x, t_means, yerr=t_stds, marker="s", markersize=4,
+                capsize=3, linewidth=1.2, label=r"$\Delta T$", color="#E24A33")
+    ax.errorbar(x, r_means, yerr=r_stds, marker="^", markersize=4,
+                capsize=3, linewidth=1.2, label=r"$\Delta R$", color="#348ABD")
+    ax.errorbar(x, c_means, yerr=c_stds, marker="o", markersize=4,
+                capsize=3, linewidth=1.2, label=r"$\Delta C$", color="#2CA02C")
+
+    ax.axhline(y=0, color="gray", linestyle="--", linewidth=0.6, alpha=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels([rf"$\sigma_t={s}$" for s in sigmas], fontsize=7)
+    ax.set_ylabel("Improvement (%)", fontsize=8)
+    ax.set_title("Translation, Rotation, and Combined vs Noise Level",
+                 fontsize=9)
+    ax.legend(fontsize=7, framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 7: Per-sequence grouped bars at one noise level
+# ---------------------------------------------------------------------------
+
+def plot_per_sequence_bars(runs: list[dict], output_path: str,
+                           target_sigma: float = 0.03,
+                           figsize: tuple = (7.16, 2.5)):
+    """Grouped horizontal bar chart: ΔT, ΔR, ΔC per sequence at one σ_t."""
+    run = None
+    for r in runs:
+        if abs(r["sigma_trans"] - target_sigma) < 1e-6:
+            run = r
+            break
+    if run is None:
+        print(f"  Skipped per-sequence bars: no run at σ_t={target_sigma}")
+        return
+
+    seq_ids = sorted(run["sequences"].keys())
+    n_seqs = len(seq_ids)
+
+    t_means = [np.mean(get_seq_values(run, s, "trans")) for s in seq_ids]
+    r_means = [np.mean(get_seq_values(run, s, "rot")) for s in seq_ids]
+    c_means = [np.mean(get_seq_values(run, s, "combined")) for s in seq_ids]
+
+    y = np.arange(n_seqs)
+    h = 0.25
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(y + h, t_means, h, label=r"$\Delta T$", color="#E24A33", alpha=0.8)
+    ax.barh(y, r_means, h, label=r"$\Delta R$", color="#348ABD", alpha=0.8)
+    ax.barh(y - h, c_means, h, label=r"$\Delta C$", color="#2CA02C", alpha=0.8)
+
+    ax.axvline(x=0, color="gray", linestyle="--", linewidth=0.6)
+    ax.set_yticks(y)
+    ax.set_yticklabels(seq_ids, fontsize=7)
+    ax.set_xlabel("Improvement (%)", fontsize=8)
+    ax.set_ylabel("KITTI Sequence", fontsize=8)
+    ax.set_title(rf"Per-Sequence Breakdown at $\sigma_t = {target_sigma}$",
+                 fontsize=9)
+    ax.legend(fontsize=7, loc="lower right", framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(axis="x", alpha=0.3)
+    ax.invert_yaxis()
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 8: Variance reduction — std across seeds per sequence
+# ---------------------------------------------------------------------------
+
+def plot_variance_by_noise(runs: list[dict], output_path: str,
+                           figsize: tuple = (3.5, 2.5)):
+    """Show how result variance (std across seeds) changes with noise level."""
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = plt.cm.plasma(np.linspace(0.15, 0.85, len(runs)))
+
+    for ri, run in enumerate(runs):
+        sigma_t = run["sigma_trans"]
+        seq_ids = sorted(run["sequences"].keys())
+        stds = [np.std(get_seq_values(run, s, "combined")) for s in seq_ids]
+        ax.scatter(range(len(seq_ids)), stds, s=20, color=colors[ri],
+                   alpha=0.7, label=rf"$\sigma_t = {sigma_t}$",
+                   edgecolors="white", linewidths=0.3)
+
+    ax.set_xticks(range(len(seq_ids)))
+    ax.set_xticklabels(sorted(runs[0]["sequences"].keys()), fontsize=6)
+    ax.set_xlabel("KITTI Sequence", fontsize=8)
+    ax.set_ylabel(r"Std of $\Delta C$ across seeds (%)", fontsize=8)
+    ax.set_title("Result Variance by Noise Level", fontsize=9)
+    ax.legend(fontsize=7, framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Hypothesis testing
 # ---------------------------------------------------------------------------
 
@@ -700,6 +916,36 @@ def main():
     plot_noise_level_trend(
         runs,
         os.path.join(args.output_dir, f"fig_noise_trend.{ext}"))
+
+    # Figure 4: Heatmap (sequences × noise levels).
+    print("Generating heatmap...")
+    plot_heatmap(
+        runs,
+        os.path.join(args.output_dir, f"fig_heatmap.{ext}"))
+
+    # Figure 5: CDF of combined improvement.
+    print("Generating CDF...")
+    plot_cdf(
+        runs,
+        os.path.join(args.output_dir, f"fig_cdf.{ext}"))
+
+    # Figure 6: Component trend (ΔT, ΔR, ΔC vs σ_t).
+    print("Generating component trend...")
+    plot_component_trend(
+        runs,
+        os.path.join(args.output_dir, f"fig_component_trend.{ext}"))
+
+    # Figure 7: Per-sequence bars at primary noise level.
+    print("Generating per-sequence bars...")
+    plot_per_sequence_bars(
+        runs,
+        os.path.join(args.output_dir, f"fig_per_sequence_bars.{ext}"))
+
+    # Figure 8: Variance by noise level.
+    print("Generating variance by noise...")
+    plot_variance_by_noise(
+        runs,
+        os.path.join(args.output_dir, f"fig_variance_by_noise.{ext}"))
 
     # Hypothesis tests.
     print("\nRunning hypothesis tests...")
