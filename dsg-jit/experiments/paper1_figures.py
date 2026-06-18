@@ -135,7 +135,7 @@ def get_seq_means(run: dict, metric: str = "combined") -> dict:
 def plot_violin_strip(runs: list[dict], output_path: str,
                       metric: str = "combined",
                       metric_label: str = r"$\Delta C$ (%)",
-                      figsize: tuple = (14, 4)):
+                      figsize: tuple = (7.16, 2.0)):
     """Create violin + strip plots faceted by noise level."""
     n_levels = len(runs)
     seq_ids = sorted(runs[0]["sequences"].keys())
@@ -194,26 +194,28 @@ def plot_violin_strip(runs: list[dict], output_path: str,
         ax.axhline(y=np.mean(all_vals), color="blue", linestyle=":",
                    linewidth=0.8, alpha=0.6)
 
-        ax.set_ylabel(metric_label, fontsize=11)
+        ax.set_ylabel(metric_label, fontsize=8)
         ax.set_title(
             rf"$\sigma_t = {sigma_t}$, $\sigma_r = {sigma_r}$"
             f"  (mean = {np.mean(all_vals):+.1f}%)",
-            fontsize=11, loc="left")
+            fontsize=8, loc="left")
+        ax.tick_params(labelsize=7)
         ax.grid(axis="y", alpha=0.3)
 
     # X-axis labels on bottom panel only.
     axes[-1].set_xticks(range(n_seqs))
-    axes[-1].set_xticklabels(seq_ids, fontsize=9)
-    axes[-1].set_xlabel("KITTI Sequence", fontsize=11)
+    axes[-1].set_xticklabels(seq_ids, fontsize=7)
+    axes[-1].set_xlabel("KITTI Sequence", fontsize=8)
 
     # Colorbar for sequence length.
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=axes, shrink=0.6, pad=0.02, aspect=30)
-    cbar.set_label("Sequence length (poses)", fontsize=10)
+    cbar.set_label("Sequence length (poses)", fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
 
     fig.suptitle("Per-Sequence Improvement Distributions Across Noise Seeds",
-                 fontsize=13, y=1.01)
+                 fontsize=9, y=1.01)
     fig.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
     print(f"  Saved: {output_path}")
@@ -225,7 +227,7 @@ def plot_violin_strip(runs: list[dict], output_path: str,
 # ---------------------------------------------------------------------------
 
 def plot_trans_vs_rot(runs: list[dict], output_path: str,
-                     figsize: tuple = (7, 6)):
+                     figsize: tuple = (3.5, 2.8)):
     """Scatter of mean ΔT% vs mean ΔR% per sequence, colored by noise level."""
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -246,11 +248,12 @@ def plot_trans_vs_rot(runs: list[dict], output_path: str,
     hi = max(lims[0][1], lims[1][1])
     ax.plot([lo, hi], [lo, hi], "k--", alpha=0.3, linewidth=0.8)
 
-    ax.set_xlabel(r"$\Delta T$ (%) — Translation RMSE Improvement", fontsize=11)
-    ax.set_ylabel(r"$\Delta R$ (%) — Rotation RMSE Improvement", fontsize=11)
+    ax.set_xlabel(r"$\Delta T$ (%) — Translation RMSE Improvement", fontsize=8)
+    ax.set_ylabel(r"$\Delta R$ (%) — Rotation RMSE Improvement", fontsize=8)
     ax.set_title("Translation vs Rotation Improvement per Sequence",
-                 fontsize=12)
-    ax.legend(fontsize=9, framealpha=0.9)
+                 fontsize=9)
+    ax.legend(fontsize=7, framealpha=0.9)
+    ax.tick_params(labelsize=7)
     ax.grid(alpha=0.3)
 
     fig.tight_layout()
@@ -264,7 +267,7 @@ def plot_trans_vs_rot(runs: list[dict], output_path: str,
 # ---------------------------------------------------------------------------
 
 def plot_noise_level_trend(runs: list[dict], output_path: str,
-                           figsize: tuple = (7, 5)):
+                           figsize: tuple = (3.5, 2.5)):
     """Bar chart: ΔC% (pose-weighted and unweighted) vs noise level."""
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -299,17 +302,18 @@ def plot_noise_level_trend(runs: list[dict], output_path: str,
     # Value labels on bars.
     for bar, val in zip(bars1, uw_means):
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                f"{val:+.1f}", ha="center", va="bottom", fontsize=8)
+                f"{val:+.1f}", ha="center", va="bottom", fontsize=7)
     for bar, val in zip(bars2, pw_means):
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                f"{val:+.1f}", ha="center", va="bottom", fontsize=8)
+                f"{val:+.1f}", ha="center", va="bottom", fontsize=7)
 
     ax.axhline(y=0, color="red", linestyle="--", linewidth=0.8, alpha=0.5)
     ax.set_xticks(x)
-    ax.set_xticklabels([rf"$\sigma_t = {s}$" for s in sigmas], fontsize=10)
-    ax.set_ylabel(r"$\Delta C$ (%)", fontsize=11)
-    ax.set_title("Aggregate Improvement Across Noise Levels", fontsize=12)
-    ax.legend(fontsize=9)
+    ax.set_xticklabels([rf"$\sigma_t = {s}$" for s in sigmas], fontsize=8)
+    ax.set_ylabel(r"$\Delta C$ (%)", fontsize=8)
+    ax.set_title("Aggregate Improvement Across Noise Levels", fontsize=9)
+    ax.legend(fontsize=7)
+    ax.tick_params(labelsize=7)
     ax.grid(axis="y", alpha=0.3)
 
     fig.tight_layout()

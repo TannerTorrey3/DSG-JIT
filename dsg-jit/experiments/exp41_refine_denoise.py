@@ -648,7 +648,7 @@ def denoise_sequence(
     n_poses_total = gt_poses.shape[0]
     n_meas_total = n_poses_total - 1
     window_size = args.window_size
-    overlap = min(10, window_size // 5)
+    overlap = min(args.overlap, window_size - 1)
     stride = window_size - overlap
 
     # Compute GT measurements (vectorised, single dispatch).
@@ -958,6 +958,8 @@ def main():
     parser.add_argument("--n-poses", type=int, default=None,
                         help="Limit poses per sequence (default: all)")
     parser.add_argument("--window-size", type=int, default=100)
+    parser.add_argument("--overlap", type=int, default=10,
+                        help="Window overlap in poses (0 = no overlap)")
     parser.add_argument("--anchor-spacing", type=int, default=100)
     parser.add_argument("--sigma-trans", type=float, default=0.03)
     parser.add_argument("--sigma-rot", type=float, default=0.01)
