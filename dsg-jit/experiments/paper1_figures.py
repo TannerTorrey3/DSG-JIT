@@ -461,52 +461,79 @@ def plot_component_trend(runs: list[dict], output_path: str,
 
 def plot_per_sequence_bars(runs: list[dict], output_path: str,
                            target_sigma: float = 0.03,
-                           figsize: tuple = (7.16, 3.5)):
-    """Grouped horizontal bar chart: ΔT, ΔR, ΔC per sequence at one σ_t."""
+                           figsize: tuple = (7.16, 4.5)):
+    """Two-panel horizontal bar chart with error bars: Trans+Rot (left), Combined (right)."""
     run = None
     for r in runs:
         if abs(r["sigma_trans"] - target_sigma) < 1e-6:
             run = r
             break
     if run is None:
-        print(f"  Skipped per-sequence bars: no run at σ_t={target_sigma}")
+        print(f"  Skipped per-sequence bars: no run at sigma_t={target_sigma}")
         return
 
     seq_ids = sorted(run["sequences"].keys())
     n_seqs = len(seq_ids)
+    n_poses = []
+    for s in seq_ids:
+        seed_data = list(run["sequences"][s]["seeds"].values())
+        n_poses.append(seed_data[0].get("n_poses", 0) if seed_data else 0)
 
     t_means = [np.mean(get_seq_values(run, s, "trans")) for s in seq_ids]
     r_means = [np.mean(get_seq_values(run, s, "rot")) for s in seq_ids]
     c_means = [np.mean(get_seq_values(run, s, "combined")) for s in seq_ids]
+    t_stds = [np.std(get_seq_values(run, s, "trans")) for s in seq_ids]
+    r_stds = [np.std(get_seq_values(run, s, "rot")) for s in seq_ids]
+    c_stds = [np.std(get_seq_values(run, s, "combined")) for s in seq_ids]
 
     y = np.arange(n_seqs)
-    h = 0.28
+    h = 0.35
 
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.barh(y + h, t_means, h, label=r"$\Delta T$", color="#E24A33", alpha=0.85)
-    ax.barh(y, r_means, h, label=r"$\Delta R$", color="#348ABD", alpha=0.85)
-    ax.barh(y - h, c_means, h, label=r"$\Delta C$", color="#2CA02C", alpha=0.85)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize, sharey=True,
+                                    gridspec_kw={"width_ratios": [1.2, 1],
+                                                 "wspace": 0.08})
 
-    for i, (t, r, c) in enumerate(zip(t_means, r_means, c_means)):
-        max_val = max(t, r, c)
-        ax.text(max_val + 0.8, i, f"{c:.0f}%", va="center", fontsize=5.5,
-                color="#2CA02C", fontweight="bold")
+    ax1.barh(y + h / 2, t_means, h, xerr=t_stds, capsize=1.5,
+             label=r"$\Delta T$", color="#E24A33", alpha=0.85,
+             error_kw={"linewidth": 0.6, "ecolor": "#888"})
+    ax1.barh(y - h / 2, r_means, h, xerr=r_stds, capsize=1.5,
+             label=r"$\Delta R$", color="#348ABD", alpha=0.85,
+             error_kw={"linewidth": 0.6, "ecolor": "#888"})
+    ax1.axvline(x=0, color="gray", linestyle="--", linewidth=0.6)
+    ax1.set_yticks(y)
+    labels = [f"{s}  ({n_poses[i]})" for i, s in enumerate(seq_ids)]
+    ax1.set_yticklabels(labels, fontsize=6.5, family="monospace")
+    ax1.set_xlabel("Improvement (%)", fontsize=8)
+    ax1.set_ylabel("Sequence (poses)", fontsize=8)
+    ax1.set_title("Translation and Rotation", fontsize=9)
+    ax1.legend(fontsize=7, loc="lower right", framealpha=0.9)
+    ax1.tick_params(labelsize=7)
+    ax1.grid(axis="x", alpha=0.3)
+    ax1.invert_yaxis()
 
-    ax.axvline(x=0, color="gray", linestyle="--", linewidth=0.6)
-    ax.set_yticks(y)
-    ax.set_yticklabels(seq_ids, fontsize=7)
-    ax.set_xlabel("Improvement (%)", fontsize=8)
-    ax.set_ylabel("KITTI Sequence", fontsize=8)
-    ax.set_title(rf"Per-Sequence Breakdown at $\sigma_t = {target_sigma}$",
-                 fontsize=9)
-    ax.legend(fontsize=7, loc="lower right", framealpha=0.9,
-              ncol=3, bbox_to_anchor=(1.0, -0.02))
-    ax.tick_params(labelsize=7)
-    ax.grid(axis="x", alpha=0.3)
-    ax.set_xlim(left=-5)
-    ax.invert_yaxis()
+    ax2.barh(y, c_means, h * 1.4, xerr=c_stds, capsize=1.5,
+             color="#2CA02C", alpha=0.85,
+             error_kw={"linewidth": 0.6, "ecolor": "#888"})
+    for i, (m, s) in enumerate(zip(c_means, c_stds)):
+        ax2.text(m + s + 0.8, i, f"{m:.1f}", va="center", fontsize=5.5,
+                 color="#333", fontweight="bold")
+    ax2.axvline(x=0, color="gray", linestyle="--", linewidth=0.6)
+    ax2.set_xlabel("Improvement (%)", fontsize=8)
+    ax2.set_title(r"Combined ($\Delta C$)", fontsize=9)
+    ax2.tick_params(labelsize=7)
+    ax2.grid(axis="x", alpha=0.3)
 
-    fig.tight_layout()
+    pw_mean = np.average(c_means, weights=n_poses)
+    ax2.axvline(x=pw_mean, color="#2CA02C", linestyle=":", linewidth=1.0, alpha=0.7)
+    ax2.text(pw_mean + 0.5, n_seqs - 0.5,
+             rf"$\bar{{\mu}}_w$={pw_mean:.1f}%", fontsize=6.5,
+             color="#2CA02C", fontweight="bold")
+
+    fig.suptitle(rf"Per-Sequence RMSE Improvement at $\sigma_t = {target_sigma}$"
+                 rf", $\sigma_r = {run['sigma_rot']}$"
+                 f"  (mean $\\pm$ std over 20 seeds)",
+                 fontsize=9, y=0.98)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
     print(f"  Saved: {output_path}")
     plt.close(fig)
