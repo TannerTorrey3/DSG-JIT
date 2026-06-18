@@ -474,10 +474,7 @@ def plot_per_sequence_bars(runs: list[dict], output_path: str,
 
     seq_ids = sorted(run["sequences"].keys())
     n_seqs = len(seq_ids)
-    n_poses = []
-    for s in seq_ids:
-        seed_data = list(run["sequences"][s]["seeds"].values())
-        n_poses.append(seed_data[0].get("n_poses", 0) if seed_data else 0)
+    n_poses = [run["sequences"][s]["n_poses"] for s in seq_ids]
 
     t_means = [np.mean(get_seq_values(run, s, "trans")) for s in seq_ids]
     r_means = [np.mean(get_seq_values(run, s, "rot")) for s in seq_ids]
