@@ -713,6 +713,173 @@ def plot_pose_latency(runs: list[dict], output_path: str,
 
 
 # ---------------------------------------------------------------------------
+# Figure 11: Ablation -- two-phase vs three-phase (Claim 2)
+# ---------------------------------------------------------------------------
+
+def plot_phase_ablation(run_a: dict, run_b: dict, output_path: str,
+                        label_a: str = "Two-phase (T+R)",
+                        label_b: str = "Three-phase (T+R+T)",
+                        figsize: tuple = (3.5, 2.8)):
+    """Side-by-side comparison of two experiment configs at the same noise level."""
+    seq_ids = sorted(set(run_a["sequences"].keys()) &
+                     set(run_b["sequences"].keys()))
+
+    metrics = ["trans", "rot", "combined"]
+    labels = [r"$\Delta T$", r"$\Delta R$", r"$\Delta C$"]
+
+    a_means = [np.mean([np.mean(get_seq_values(run_a, s, m)) for s in seq_ids])
+               for m in metrics]
+    b_means = [np.mean([np.mean(get_seq_values(run_b, s, m)) for s in seq_ids])
+               for m in metrics]
+    a_stds = [np.std([np.mean(get_seq_values(run_a, s, m)) for s in seq_ids])
+              for m in metrics]
+    b_stds = [np.std([np.mean(get_seq_values(run_b, s, m)) for s in seq_ids])
+              for m in metrics]
+
+    x = np.arange(len(metrics))
+    w = 0.35
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.bar(x - w / 2, a_means, w, yerr=a_stds, capsize=3,
+           label=label_a, color="#348ABD", alpha=0.85,
+           error_kw={"linewidth": 0.8, "ecolor": "#555"})
+    ax.bar(x + w / 2, b_means, w, yerr=b_stds, capsize=3,
+           label=label_b, color="#2CA02C", alpha=0.85,
+           error_kw={"linewidth": 0.8, "ecolor": "#555"})
+
+    for i, (a, b) in enumerate(zip(a_means, b_means)):
+        diff = b - a
+        sign = "+" if diff >= 0 else ""
+        ax.text(i, max(a, b) + max(a_stds[i], b_stds[i]) + 1.5,
+                f"{sign}{diff:.1f}pp", ha="center", fontsize=6.5,
+                fontweight="bold", color="#333")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Improvement (%)", fontsize=8)
+    ax.set_title("Phase-Decoupled Optimization Ablation", fontsize=9)
+    ax.legend(fontsize=7, loc="upper right", framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(axis="y", alpha=0.3)
+    ax.axhline(y=0, color="gray", linewidth=0.5)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Figure 12: Ablation -- auto vs manual weights (Claim 3)
+# ---------------------------------------------------------------------------
+
+def plot_weight_ablation(run_auto: dict, run_manual: dict, output_path: str,
+                         figsize: tuple = (7.16, 2.8)):
+    """Compare auto-tuned vs manual weights per sequence at one noise level."""
+    seq_ids = sorted(set(run_auto["sequences"].keys()) &
+                     set(run_manual["sequences"].keys()))
+
+    auto_means = [np.mean(get_seq_values(run_auto, s, "combined"))
+                  for s in seq_ids]
+    manual_means = [np.mean(get_seq_values(run_manual, s, "combined"))
+                    for s in seq_ids]
+    auto_stds = [np.std(get_seq_values(run_auto, s, "combined"))
+                 for s in seq_ids]
+    manual_stds = [np.std(get_seq_values(run_manual, s, "combined"))
+                   for s in seq_ids]
+
+    x = np.arange(len(seq_ids))
+    w = 0.38
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.bar(x - w / 2, auto_means, w, yerr=auto_stds, capsize=2,
+           label="Auto (MAP-derived)", color="#2CA02C", alpha=0.85,
+           error_kw={"linewidth": 0.5, "ecolor": "#888"})
+    ax.bar(x + w / 2, manual_means, w, yerr=manual_stds, capsize=2,
+           label="Manual (fixed)", color="#E24A33", alpha=0.85,
+           error_kw={"linewidth": 0.5, "ecolor": "#888"})
+
+    ax.axhline(y=0, color="gray", linewidth=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels(seq_ids, fontsize=7)
+    ax.set_xlabel("KITTI Sequence", fontsize=8)
+    ax.set_ylabel(r"$\Delta C$ (%)", fontsize=8)
+    sigma_t = run_auto["sigma_trans"]
+    ax.set_title(rf"Auto vs Manual Weights at $\sigma_t = {sigma_t}$",
+                 fontsize=9)
+    ax.legend(fontsize=7, loc="lower right", framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(axis="y", alpha=0.3)
+
+    auto_pw = np.mean(auto_means)
+    manual_pw = np.mean(manual_means)
+    ax.text(0.02, 0.95,
+            f"Auto mean: {auto_pw:.1f}%  |  Manual mean: {manual_pw:.1f}%",
+            transform=ax.transAxes, fontsize=6.5, va="top",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                      alpha=0.8, edgecolor="#ccc"))
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_weight_ablation_multi_noise(runs_auto: list, runs_manual: list,
+                                      output_path: str,
+                                      figsize: tuple = (3.5, 2.8)):
+    """Aggregate auto vs manual comparison across noise levels."""
+    auto_by_sigma = {}
+    for run in runs_auto:
+        st = run["sigma_trans"]
+        seq_ids = sorted(run["sequences"].keys())
+        vals = [np.mean(get_seq_values(run, s, "combined")) for s in seq_ids]
+        auto_by_sigma[st] = (np.mean(vals), np.std(vals))
+
+    manual_by_sigma = {}
+    for run in runs_manual:
+        st = run["sigma_trans"]
+        seq_ids = sorted(run["sequences"].keys())
+        vals = [np.mean(get_seq_values(run, s, "combined")) for s in seq_ids]
+        manual_by_sigma[st] = (np.mean(vals), np.std(vals))
+
+    sigmas = sorted(set(auto_by_sigma.keys()) & set(manual_by_sigma.keys()))
+    if not sigmas:
+        print("  Skipped multi-noise weight ablation: no matching noise levels")
+        return
+
+    x = np.arange(len(sigmas))
+    w = 0.35
+
+    fig, ax = plt.subplots(figsize=figsize)
+    auto_m = [auto_by_sigma[s][0] for s in sigmas]
+    auto_s = [auto_by_sigma[s][1] for s in sigmas]
+    manual_m = [manual_by_sigma[s][0] for s in sigmas]
+    manual_s = [manual_by_sigma[s][1] for s in sigmas]
+
+    ax.bar(x - w / 2, auto_m, w, yerr=auto_s, capsize=3,
+           label="Auto (MAP)", color="#2CA02C", alpha=0.85,
+           error_kw={"linewidth": 0.6, "ecolor": "#888"})
+    ax.bar(x + w / 2, manual_m, w, yerr=manual_s, capsize=3,
+           label="Manual", color="#E24A33", alpha=0.85,
+           error_kw={"linewidth": 0.6, "ecolor": "#888"})
+
+    ax.axhline(y=0, color="gray", linewidth=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels([rf"$\sigma_t={s}$" for s in sigmas], fontsize=8)
+    ax.set_ylabel(r"$\Delta C$ (%)", fontsize=8)
+    ax.set_title("Auto vs Manual Weights Across Noise Levels", fontsize=9)
+    ax.legend(fontsize=7, framealpha=0.9)
+    ax.tick_params(labelsize=7)
+    ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Hypothesis testing
 # ---------------------------------------------------------------------------
 
@@ -1042,6 +1209,10 @@ def main():
     parser.add_argument("--format", type=str, default="pdf",
                         choices=["pdf", "png", "svg"],
                         help="Figure output format")
+    parser.add_argument("--phase-baseline-dirs", nargs="+", default=None,
+                        help="Two-phase (exp40) run dirs for phase ablation")
+    parser.add_argument("--manual-weight-dirs", nargs="+", default=None,
+                        help="Manual-weight run dirs for weight ablation")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -1132,6 +1303,39 @@ def main():
     plot_pose_latency(
         runs,
         os.path.join(args.output_dir, f"fig_latency.{ext}"))
+
+    # Ablation: phase-decoupled (Claim 2).
+    if args.phase_baseline_dirs:
+        print("\nGenerating phase ablation figure...")
+        baseline_runs = load_all_runs(args.phase_baseline_dirs)
+        for bl_run in baseline_runs:
+            match = [r for r in runs
+                     if abs(r["sigma_trans"] - bl_run["sigma_trans"]) < 1e-6]
+            if match:
+                sigma_t = bl_run["sigma_trans"]
+                plot_phase_ablation(
+                    bl_run, match[0],
+                    os.path.join(args.output_dir,
+                                 f"fig_phase_ablation_{sigma_t}.{ext}"))
+
+    # Ablation: auto vs manual weights (Claim 3).
+    if args.manual_weight_dirs:
+        print("\nGenerating weight ablation figures...")
+        manual_runs = load_all_runs(args.manual_weight_dirs)
+        for man_run in manual_runs:
+            match = [r for r in runs
+                     if abs(r["sigma_trans"] - man_run["sigma_trans"]) < 1e-6]
+            if match:
+                sigma_t = man_run["sigma_trans"]
+                plot_weight_ablation(
+                    match[0], man_run,
+                    os.path.join(args.output_dir,
+                                 f"fig_weight_ablation_{sigma_t}.{ext}"))
+        if len(manual_runs) > 1 and len(runs) > 1:
+            plot_weight_ablation_multi_noise(
+                runs, manual_runs,
+                os.path.join(args.output_dir,
+                             f"fig_weight_ablation_aggregate.{ext}"))
 
     # Hypothesis tests.
     print("\nRunning hypothesis tests...")
