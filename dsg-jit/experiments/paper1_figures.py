@@ -650,55 +650,61 @@ def plot_throughput_by_sequence(runs: list[dict], output_path: str,
     plt.close(fig)
 
 
-def plot_latency_distribution(runs: list[dict], output_path: str,
-                               target_sigma: float = 0.03,
-                               figsize: tuple = (3.5, 2.5)):
-    """Box plot of per-window latency across all sequences."""
+def plot_pose_latency(runs: list[dict], output_path: str,
+                      target_sigma: float = 0.03,
+                      figsize: tuple = (3.5, 2.5)):
+    """Per-pose latency (ms) = 1000 / poses_per_sec, with real-time budget line."""
     run = None
     for r in runs:
         if abs(r["sigma_trans"] - target_sigma) < 1e-6:
             run = r
             break
     if run is None:
-        print(f"  Skipped latency plot: no run at sigma_t={target_sigma}")
+        print(f"  Skipped pose latency plot: no run at sigma_t={target_sigma}")
         return
 
     seq_ids = sorted(run["sequences"].keys())
-    avg_times = []
-    p95_times = []
+    latency_means = []
+    latency_stds = []
     for s in seq_ids:
-        avg_vals = _get_throughput_values(run, s, "avg_window_time_s")
-        p95_vals = _get_throughput_values(run, s, "p95_window_time_s")
-        if len(avg_vals) == 0:
-            print(f"  Skipped latency plot: no throughput data")
+        pps = _get_throughput_values(run, s, "poses_per_sec")
+        if len(pps) == 0:
+            print(f"  Skipped pose latency plot: no throughput data")
             return
-        avg_times.append(np.mean(avg_vals))
-        p95_times.append(np.mean(p95_vals))
-
-    avg_times = np.array(avg_times) * 1000  # to ms
-    p95_times = np.array(p95_times) * 1000
+        per_pose_ms = 1000.0 / pps
+        latency_means.append(np.mean(per_pose_ms))
+        latency_stds.append(np.std(per_pose_ms))
 
     x = np.arange(len(seq_ids))
-    h = 0.35
     fig, ax = plt.subplots(figsize=figsize)
-    ax.barh(x + h / 2, avg_times, h, label="Mean", color="#348ABD", alpha=0.85)
-    ax.barh(x - h / 2, p95_times, h, label="P95", color="#E24A33", alpha=0.85)
+    ax.bar(x, latency_means, yerr=latency_stds, capsize=2,
+           color="#348ABD", alpha=0.85,
+           error_kw={"linewidth": 0.6, "ecolor": "#888"},
+           edgecolor="white", linewidth=0.3)
 
     budget_10hz = 100.0
-    ax.axvline(x=budget_10hz, color="gray", linestyle="--", linewidth=1.0)
-    ax.text(budget_10hz + 1, len(seq_ids) - 0.5, "100ms\n(10 Hz budget)",
-            fontsize=5.5, color="gray", va="top")
+    ax.axhline(y=budget_10hz, color="#E24A33", linestyle="--", linewidth=1.0,
+               alpha=0.8)
+    ax.text(len(seq_ids) - 0.5, budget_10hz + 2,
+            "100 ms (10 Hz budget)", fontsize=6.5,
+            color="#E24A33", ha="right", fontweight="bold")
 
-    ax.set_yticks(x)
-    ax.set_yticklabels(seq_ids, fontsize=6.5)
-    ax.set_xlabel("Window latency (ms)", fontsize=8)
-    ax.set_ylabel("Sequence", fontsize=8)
-    ax.set_title(rf"Per-Window Latency at $\sigma_t = {target_sigma}$",
+    overall_mean = np.mean(latency_means)
+    ax.axhline(y=overall_mean, color="#2CA02C", linestyle="-", linewidth=0.8,
+               alpha=0.6)
+    ax.text(0.5, overall_mean + 1,
+            f"Mean: {overall_mean:.1f} ms/pose",
+            fontsize=6.5, color="#2CA02C", fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(seq_ids, fontsize=7)
+    ax.set_xlabel("KITTI Sequence", fontsize=8)
+    ax.set_ylabel("Latency per pose (ms)", fontsize=8)
+    ax.set_title(rf"Per-Pose Denoising Latency at $\sigma_t = {target_sigma}$",
                  fontsize=9)
-    ax.legend(fontsize=7, loc="lower right")
     ax.tick_params(labelsize=7)
-    ax.grid(axis="x", alpha=0.3)
-    ax.invert_yaxis()
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_ylim(bottom=0)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -1121,9 +1127,9 @@ def main():
         runs,
         os.path.join(args.output_dir, f"fig_throughput.{ext}"))
 
-    # Figure 10: Latency distribution.
-    print("Generating latency plot...")
-    plot_latency_distribution(
+    # Figure 10: Per-pose latency.
+    print("Generating per-pose latency plot...")
+    plot_pose_latency(
         runs,
         os.path.join(args.output_dir, f"fig_latency.{ext}"))
 
