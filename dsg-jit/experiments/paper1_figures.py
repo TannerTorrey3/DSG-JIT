@@ -76,11 +76,14 @@ def load_run(run_dir: str) -> dict:
                     "n_poses": seq_result["n_poses"],
                     "seeds": {},
                 }
-            sequences[seq_id]["seeds"][seed] = {
+            seed_entry = {
                 "trans": seq_result["improvement_pct"]["trans_rmse"],
                 "rot": seq_result["improvement_pct"]["rot_rmse"],
                 "combined": seq_result["improvement_pct"]["combined"],
             }
+            if "throughput" in seq_result:
+                seed_entry["throughput"] = seq_result["throughput"]
+            sequences[seq_id]["seeds"][seed] = seed_entry
 
     sigma_trans = config.get("sigma_trans", None)
     sigma_rot = config.get("sigma_rot", None)
@@ -574,6 +577,136 @@ def plot_variance_by_noise(runs: list[dict], output_path: str,
 
 
 # ---------------------------------------------------------------------------
+# Figure 9: Throughput — poses/sec per sequence
+# ---------------------------------------------------------------------------
+
+def _get_throughput_values(run: dict, seq_id: str, key: str) -> np.ndarray:
+    """Extract throughput values across seeds for one sequence."""
+    seeds = run["sequences"][seq_id]["seeds"]
+    vals = []
+    for s in sorted(seeds):
+        tp = seeds[s].get("throughput")
+        if tp and key in tp:
+            vals.append(tp[key])
+    return np.array(vals) if vals else np.array([])
+
+
+def plot_throughput_by_sequence(runs: list[dict], output_path: str,
+                                target_sigma: float = 0.03,
+                                figsize: tuple = (7.16, 2.8)):
+    """Bar chart of poses/sec per sequence with real-time reference lines."""
+    run = None
+    for r in runs:
+        if abs(r["sigma_trans"] - target_sigma) < 1e-6:
+            run = r
+            break
+    if run is None:
+        print(f"  Skipped throughput plot: no run at sigma_t={target_sigma}")
+        return
+
+    seq_ids = sorted(run["sequences"].keys())
+    means = []
+    stds = []
+    for s in seq_ids:
+        vals = _get_throughput_values(run, s, "poses_per_sec")
+        if len(vals) == 0:
+            print(f"  Skipped throughput plot: no throughput data")
+            return
+        means.append(np.mean(vals))
+        stds.append(np.std(vals))
+
+    x = np.arange(len(seq_ids))
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.bar(x, means, yerr=stds, capsize=2, color="#348ABD", alpha=0.85,
+           error_kw={"linewidth": 0.6, "ecolor": "#888"}, edgecolor="white",
+           linewidth=0.3)
+
+    ax.axhline(y=10, color="#E24A33", linestyle="--", linewidth=1.0, alpha=0.8)
+    ax.text(len(seq_ids) - 0.5, 10 + 1, "10 Hz real-time", fontsize=6.5,
+            color="#E24A33", ha="right", fontweight="bold")
+    ax.axhline(y=100, color="#E24A33", linestyle=":", linewidth=0.8, alpha=0.5)
+    ax.text(len(seq_ids) - 0.5, 100 + 2, "100 Hz", fontsize=6, color="#E24A33",
+            ha="right", alpha=0.7)
+
+    overall_mean = np.mean(means)
+    ax.axhline(y=overall_mean, color="#2CA02C", linestyle="-", linewidth=0.8,
+               alpha=0.6)
+    ax.text(0.5, overall_mean + 1,
+            f"Mean: {overall_mean:.0f} poses/s ({overall_mean/10:.1f}x real-time)",
+            fontsize=6.5, color="#2CA02C", fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(seq_ids, fontsize=7)
+    ax.set_xlabel("KITTI Sequence", fontsize=8)
+    ax.set_ylabel("Poses / sec", fontsize=8)
+    ax.set_title(rf"Throughput at $\sigma_t = {target_sigma}$", fontsize=9)
+    ax.tick_params(labelsize=7)
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_ylim(bottom=0)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+def plot_latency_distribution(runs: list[dict], output_path: str,
+                               target_sigma: float = 0.03,
+                               figsize: tuple = (3.5, 2.5)):
+    """Box plot of per-window latency across all sequences."""
+    run = None
+    for r in runs:
+        if abs(r["sigma_trans"] - target_sigma) < 1e-6:
+            run = r
+            break
+    if run is None:
+        print(f"  Skipped latency plot: no run at sigma_t={target_sigma}")
+        return
+
+    seq_ids = sorted(run["sequences"].keys())
+    avg_times = []
+    p95_times = []
+    for s in seq_ids:
+        avg_vals = _get_throughput_values(run, s, "avg_window_time_s")
+        p95_vals = _get_throughput_values(run, s, "p95_window_time_s")
+        if len(avg_vals) == 0:
+            print(f"  Skipped latency plot: no throughput data")
+            return
+        avg_times.append(np.mean(avg_vals))
+        p95_times.append(np.mean(p95_vals))
+
+    avg_times = np.array(avg_times) * 1000  # to ms
+    p95_times = np.array(p95_times) * 1000
+
+    x = np.arange(len(seq_ids))
+    h = 0.35
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(x + h / 2, avg_times, h, label="Mean", color="#348ABD", alpha=0.85)
+    ax.barh(x - h / 2, p95_times, h, label="P95", color="#E24A33", alpha=0.85)
+
+    budget_10hz = 100.0
+    ax.axvline(x=budget_10hz, color="gray", linestyle="--", linewidth=1.0)
+    ax.text(budget_10hz + 1, len(seq_ids) - 0.5, "100ms\n(10 Hz budget)",
+            fontsize=5.5, color="gray", va="top")
+
+    ax.set_yticks(x)
+    ax.set_yticklabels(seq_ids, fontsize=6.5)
+    ax.set_xlabel("Window latency (ms)", fontsize=8)
+    ax.set_ylabel("Sequence", fontsize=8)
+    ax.set_title(rf"Per-Window Latency at $\sigma_t = {target_sigma}$",
+                 fontsize=9)
+    ax.legend(fontsize=7, loc="lower right")
+    ax.tick_params(labelsize=7)
+    ax.grid(axis="x", alpha=0.3)
+    ax.invert_yaxis()
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    print(f"  Saved: {output_path}")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Hypothesis testing
 # ---------------------------------------------------------------------------
 
@@ -981,6 +1114,18 @@ def main():
     plot_variance_by_noise(
         runs,
         os.path.join(args.output_dir, f"fig_variance_by_noise.{ext}"))
+
+    # Figure 9: Throughput by sequence.
+    print("Generating throughput plot...")
+    plot_throughput_by_sequence(
+        runs,
+        os.path.join(args.output_dir, f"fig_throughput.{ext}"))
+
+    # Figure 10: Latency distribution.
+    print("Generating latency plot...")
+    plot_latency_distribution(
+        runs,
+        os.path.join(args.output_dir, f"fig_latency.{ext}"))
 
     # Hypothesis tests.
     print("\nRunning hypothesis tests...")
