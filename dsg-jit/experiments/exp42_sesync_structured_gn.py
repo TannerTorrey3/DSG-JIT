@@ -735,8 +735,9 @@ def main():
                 root_p  = Path(args.kitti_root)
                 seq_str = f"{int(seq_id):02d}"
                 candidates = [
-                    root_p / "sequences" / seq_str / "poses.txt",
-                    root_p / "poses" / f"{seq_str}.txt",
+                    root_p / seq_str / "poses.txt",                 # --kitti-root .../sequences/
+                    root_p / "sequences" / seq_str / "poses.txt",   # --kitti-root .../dataset/
+                    root_p / "poses" / f"{seq_str}.txt",            # standard KITTI layout
                 ]
                 poses_path = next((p for p in candidates if p.exists()), None)
                 if poses_path is None:
