@@ -728,20 +728,37 @@ def main():
                     n_synth, args.sigma_t, args.sigma_r, rng
                 )
             else:
-                # KITTI: load GT poses, compute relative, add noise
-                from dsg_jit.datasets.kitti_odometry import load_kitti_odometry_sequence
-                frames = load_kitti_odometry_sequence(
-                    args.kitti_root, seq_id, with_poses=True, load_right=False
-                )
-                if not frames or frames[0].T_w_cam0 is None:
-                    print(f"  [{seq_id}] No GT poses found, skipping.")
+                # Load GT poses directly from poses.txt — no images needed.
+                # Tries SemanticKITTI layout first ({root}/sequences/{seq}/poses.txt)
+                # then standard KITTI layout ({root}/poses/{seq}.txt).
+                from pathlib import Path
+                root_p  = Path(args.kitti_root)
+                seq_str = f"{int(seq_id):02d}"
+                candidates = [
+                    root_p / "sequences" / seq_str / "poses.txt",
+                    root_p / "poses" / f"{seq_str}.txt",
+                ]
+                poses_path = next((p for p in candidates if p.exists()), None)
+                if poses_path is None:
+                    print(f"  [{seq_id}] poses.txt not found (tried {candidates}), skipping.")
                     break
 
-                # Extract GT global poses as 6-vectors
-                gt_mats = np.array([f.T_w_cam0 for f in frames],
-                                   dtype=np.float32).reshape(-1, 4, 4)
+                raw_mats = []
+                with poses_path.open() as f:
+                    for line in f:
+                        vals = [float(x) for x in line.split()]
+                        if len(vals) != 12:
+                            continue
+                        T = np.eye(4, dtype=np.float32)
+                        T[:3, :] = np.array(vals, dtype=np.float32).reshape(3, 4)
+                        raw_mats.append(T)
+                if not raw_mats:
+                    print(f"  [{seq_id}] Empty poses.txt, skipping.")
+                    break
+
+                gt_mats = np.stack(raw_mats, axis=0)   # (N, 4, 4)
                 from dsg_jit.core.math3d import so3_log as so3l
-                gt_global = np.zeros((len(frames), 6), dtype=np.float32)
+                gt_global = np.zeros((len(gt_mats), 6), dtype=np.float32)
                 for i, T in enumerate(gt_mats):
                     gt_global[i, :3] = T[:3, 3]
                     gt_global[i, 3:] = np.array(so3l(jnp.array(T[:3, :3])))
