@@ -537,6 +537,29 @@ def relative_poses_from_global(global_poses: np.ndarray) -> np.ndarray:
     return np.stack(rel)                                     # (n-1, 6)
 
 
+def relative_poses_from_mats(gt_mats: np.ndarray) -> np.ndarray:
+    """Compute (n-1, 6) relative poses from (n, 4, 4) SE(3) matrices.
+
+    Uses raw rotation matrices directly — avoids so3_log on absolute world-frame
+    rotations, which is numerically unstable when any pose has θ near π (e.g.
+    U-turns in urban sequences). Consecutive-frame relative rotations are always
+    small (< 0.15 rad at 10 Hz), so so3_log on dR is safe.
+    """
+    from dsg_jit.core.math3d import so3_log as so3_log_np
+    n = gt_mats.shape[0]
+    rel = []
+    for i in range(n - 1):
+        Ri = gt_mats[i,   :3, :3]
+        Rj = gt_mats[i+1, :3, :3]
+        ti = gt_mats[i,   :3,  3]
+        tj = gt_mats[i+1, :3,  3]
+        dt = Ri.T @ (tj - ti)
+        dR = Ri.T @ Rj
+        dw = np.array(so3_log_np(jnp.array(dR)))
+        rel.append(np.concatenate([dt, dw]))
+    return np.stack(rel)                                     # (n-1, 6)
+
+
 def integrate_poses(rel_poses: np.ndarray) -> np.ndarray:
     """Integrate (n-1, 6) relative poses to (n, 6) global poses."""
     from dsg_jit.core.math3d import so3_exp as so3_exp_np, so3_log as so3_log_np
@@ -791,11 +814,14 @@ def main():
                 for i, T in enumerate(gt_mats):
                     gt_global[i, :3] = T[:3, 3]
                     gt_global[i, 3:] = np.array(so3l(jnp.array(T[:3, :3])))
-                # Raw rotation matrices — used directly in outer_adam_loop to avoid
-                # so3_log singularity at θ→π (e.g. U-turns in urban sequences).
+                # Raw rotation matrices — no so3_log on absolute world-frame rotations,
+                # which is unstable when any pose has θ near π (U-turns in urban seqs).
                 gt_R_mats = gt_mats[:, :3, :3]          # (N, 3, 3)
 
-                gt_rel    = relative_poses_from_global(gt_global)
+                # Use raw matrices for gt_rel too: relative_poses_from_global goes
+                # through so3_exp(so3_log(R)) which corrupts Ri for near-180° poses,
+                # giving wrong dt = Ri.T @ (tj-ti) and hence wrong noisy_odom.
+                gt_rel    = relative_poses_from_mats(gt_mats)
                 noisy_rel = gt_rel.copy()
                 noisy_rel[:, :3] += args.sigma_t * rng.standard_normal(gt_rel[:, :3].shape).astype(np.float32)
                 noisy_rel[:, 3:] += args.sigma_r * rng.standard_normal(gt_rel[:, 3:].shape).astype(np.float32)
