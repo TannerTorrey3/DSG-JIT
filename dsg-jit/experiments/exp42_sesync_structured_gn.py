@@ -72,32 +72,32 @@ class ExpCfg:
 def build_connection_laplacian(R_meas: jnp.ndarray,
                                 kappa: jnp.ndarray,
                                 n: int) -> jnp.ndarray:
-    """Build dense (3n x 3n) rotation connection Laplacian.
+    """Build dense (3n x 3n) rotation Laplacian for GN with left retraction.
 
-    R_meas: (n-1, 3, 3)  per-edge rotation measurements
+    R_meas: (n-1, 3, 3)  per-edge rotation measurements (unused — kept for API)
     kappa:  (n-1,)       per-edge rotation precision
 
-    Off-diagonal blocks: L[i, i+1] = -kappa[i] * R_meas[i]
+    For left retraction R[i] <- so3_exp(u_i) @ R[i], the linearized residual is
+    r_j ≈ R_meas_j.T @ R_init_j.T @ (u_{j+1} - u_j), so the GN Hessian has
+    off-diagonal blocks -kappa_j * I_3 (standard graph Laplacian, NOT connection
+    Laplacian with -kappa_j * R_meas_j). Using the wrong matrix in the IFT
+    backward corrupts the gradient when R_meas is far from identity (KITTI turns).
+
+    Off-diagonal blocks: L[i, i+1] = -kappa[i] * I_3
     Diagonal blocks:     L[i, i]   =  sum of incident kappa * I3
-
-    Built via vectorized scatter — zero Python loops compiled into JIT.
-    Dense (3n x 3n) for GPU: cuBLAS handles (150 x 150) solves in microseconds.
     """
-    # --- diagonal: kappa_per_pose[j] = sum of kappa for edges incident to pose j
-    kappa_left  = jnp.concatenate([jnp.zeros(1), kappa])   # (n,) edge from left
-    kappa_right = jnp.concatenate([kappa, jnp.zeros(1)])    # (n,) edge to right
-    kappa_diag  = kappa_left + kappa_right                   # (n,)
-    L_diag = jnp.diag(jnp.repeat(kappa_diag, 3))            # (3n, 3n)
+    kappa_left  = jnp.concatenate([jnp.zeros(1), kappa])
+    kappa_right = jnp.concatenate([kappa, jnp.zeros(1)])
+    kappa_diag  = kappa_left + kappa_right
+    L_diag = jnp.diag(jnp.repeat(kappa_diag, 3))
 
-    # --- upper off-diagonal: block (i, i+1) = -kappa[i] * R_meas[i]
-    # Build (n, n, 3, 3) block matrix via integer-index scatter (no loop).
     i_idx = jnp.arange(n - 1)
     j_idx = jnp.arange(1, n)
-    scaled_R = kappa[:, None, None] * R_meas                # (n-1, 3, 3)
+    # Standard graph Laplacian: off-diagonal = -kappa * I_3 (not -kappa * R_meas)
+    scaled_I = kappa[:, None, None] * jnp.eye(3)[None]      # (n-1, 3, 3)
     upper_blocks = jnp.zeros((n, n, 3, 3))
-    upper_blocks = upper_blocks.at[i_idx, j_idx].set(scaled_R)
+    upper_blocks = upper_blocks.at[i_idx, j_idx].set(scaled_I)
 
-    # Reshape block matrix to dense: [i, r, j, c] -> [(i*3+r), (j*3+c)]
     L_upper = upper_blocks.transpose(0, 2, 1, 3).reshape(3 * n, 3 * n)
 
     return L_diag - L_upper - L_upper.T
