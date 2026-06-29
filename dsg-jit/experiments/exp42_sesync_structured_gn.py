@@ -409,21 +409,22 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     )                                                          # (n-1, 3, 3)
     R_init = jnp.concatenate([jnp.eye(3)[None], R_traj_init], axis=0)  # (n, 3, 3)
 
-    # Loss: ATE on translations + rotation error
+    # GT poses in window-relative frame (anchor = first pose of window).
+    # t_star is anchored at origin with identity first rotation, so gt must match.
+    gt_R_world = jax.vmap(so3_exp)(gt_poses[:, 3:])           # (n, 3, 3) world frame
+    gt_R0      = gt_R_world[0]                                  # first pose rotation
+    gt_t0      = gt_poses[0, :3]                                # first pose translation
+    # Rotate and translate GT into window-local frame
+    gt_t_rel   = jax.vmap(lambda t: gt_R0.T @ (t - gt_t0))(gt_poses[:, :3])   # (n, 3)
+    gt_R_rel   = jax.vmap(lambda R: gt_R0.T @ R)(gt_R_world)                   # (n, 3, 3)
+
+    # Loss: ATE on translations + Frobenius rotation error (no so3_log singularity)
     def loss_fn(theta):
         R_star, t_star = sesync_inner_solve(
             theta, noisy_odom, R_init, kappa, omega, n, inner_cfg
         )
-        # GT poses: (n, 6) [tx,ty,tz, wx,wy,wz]
-        gt_t = gt_poses[:, :3]
-        gt_w = gt_poses[:, 3:]
-        gt_R = jax.vmap(so3_exp)(gt_w)
-
-        loss_t = jnp.mean(jnp.sum((t_star - gt_t) ** 2, axis=-1))
-        rot_err = jax.vmap(lambda Ra, Rb: jnp.sum(so3_log(Ra.T @ Rb) ** 2))(
-            R_star, gt_R
-        )
-        loss_r = jnp.mean(rot_err)
+        loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
+        loss_r = jnp.mean(jax.vmap(lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2))(R_star, gt_R_rel))
         return loss_t + loss_r
 
     grad_fn = jax.grad(loss_fn)
