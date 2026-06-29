@@ -682,6 +682,8 @@ def main():
     parser.add_argument("--synthetic",  action="store_true",
                         help="Run on synthetic data (no KITTI needed)")
     parser.add_argument("--n-poses-synth", type=int, default=200)
+    parser.add_argument("--max-poses",  type=int, default=None,
+                        help="Truncate each sequence to this many poses (for quick local tests)")
     args = parser.parse_args()
 
     inner_cfg = InnerCfg(n_iters_rot=10, damping=1e-4)
@@ -758,6 +760,8 @@ def main():
                     break
 
                 gt_mats = np.stack(raw_mats, axis=0)   # (N, 4, 4)
+                if args.max_poses is not None:
+                    gt_mats = gt_mats[:args.max_poses]
                 from dsg_jit.core.math3d import so3_log as so3l
                 gt_global = np.zeros((len(gt_mats), 6), dtype=np.float32)
                 for i, T in enumerate(gt_mats):
