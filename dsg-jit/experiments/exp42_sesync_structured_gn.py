@@ -46,9 +46,9 @@ class InnerCfg:
 
 @dataclass(frozen=True)
 class OuterCfg:
-    n_trans1:  int   = 50    # Phase 1: translation
+    n_trans1:  int   = 30    # Phase 1: translation
     n_rot:     int   = 20    # Phase 2: rotation
-    n_trans2:  int   = 0     # Phase 3: translation refinement (50+20+0=70, matches exp41)
+    n_trans2:  int   = 20    # Phase 3: translation refinement (30+20+20=70, matches exp41)
     lr_trans:  float = 1e-3  # exp41 used a single lr=1e-3 for all phases
     lr_rot:    float = 1e-3
     beta1:     float = 0.9
@@ -689,9 +689,9 @@ def main():
     parser.add_argument("--n-poses-synth", type=int, default=200)
     parser.add_argument("--max-poses",  type=int, default=None,
                         help="Truncate each sequence to this many poses (for quick local tests)")
-    parser.add_argument("--n-trans1",  type=int,   default=50)
+    parser.add_argument("--n-trans1",  type=int,   default=30)
     parser.add_argument("--n-rot",     type=int,   default=20)
-    parser.add_argument("--n-trans2",  type=int,   default=0)
+    parser.add_argument("--n-trans2",  type=int,   default=20)
     parser.add_argument("--lr-trans",  type=float, default=1e-3)
     parser.add_argument("--lr-rot",    type=float, default=1e-3)
     args = parser.parse_args()
