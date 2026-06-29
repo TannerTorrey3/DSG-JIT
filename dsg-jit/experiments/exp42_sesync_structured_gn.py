@@ -418,13 +418,17 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     gt_t_rel   = jax.vmap(lambda t: gt_R0.T @ (t - gt_t0))(gt_poses[:, :3])   # (n, 3)
     gt_R_rel   = jax.vmap(lambda R: gt_R0.T @ R)(gt_R_world)                   # (n, 3, 3)
 
-    # Loss: ATE on translations + Frobenius rotation error (no so3_log singularity)
+    # Loss: ATE on translations + geodesic rotation error.
+    # so3_log(Ra.T @ Rb) is safe: the relative rotation stays near identity
+    # (small angle) as long as denoising corrections are in range.
     def loss_fn(theta):
         R_star, t_star = sesync_inner_solve(
             theta, noisy_odom, R_init, kappa, omega, n, inner_cfg
         )
         loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
-        loss_r = jnp.mean(jax.vmap(lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2))(R_star, gt_R_rel))
+        loss_r = jnp.mean(jax.vmap(
+            lambda Ra, Rb: jnp.sum(so3_log(Ra.T @ Rb) ** 2)
+        )(R_star, gt_R_rel))
         return loss_t + loss_r
 
     grad_fn = jax.grad(loss_fn)
