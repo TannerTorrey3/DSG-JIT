@@ -69,19 +69,27 @@ class ExpCfg:
 # Dense Laplacian builders  (no Python loops inside JIT)
 # ---------------------------------------------------------------------------
 
-def build_connection_laplacian(R_meas: jnp.ndarray,
-                                kappa: jnp.ndarray,
-                                n: int) -> jnp.ndarray:
-    """Build dense (3n x 3n) rotation Laplacian for GN with left retraction.
+def build_rotation_laplacian(R_meas: jnp.ndarray,
+                              kappa: jnp.ndarray,
+                              n: int) -> jnp.ndarray:
+    """Build dense (3n x 3n) GN Hessian for the rotation synchronization subproblem.
 
     R_meas: (n-1, 3, 3)  per-edge rotation measurements (unused — kept for API)
     kappa:  (n-1,)       per-edge rotation precision
 
-    For left retraction R[i] <- so3_exp(u_i) @ R[i], the linearized residual is
-    r_j ≈ R_meas_j.T @ R_init_j.T @ (u_{j+1} - u_j), so the GN Hessian has
-    off-diagonal blocks -kappa_j * I_3 (standard graph Laplacian, NOT connection
-    Laplacian with -kappa_j * R_meas_j). Using the wrong matrix in the IFT
-    backward corrupts the gradient when R_meas is far from identity (KITTI turns).
+    SE-Sync (IJRR §4.1, Eq. 14) derives the connection Laplacian L(G̃ρ) with
+    off-diagonal blocks −κᵢⱼ R̃ᵢⱼ from the Frobenius cost ‖Rⱼ − Rᵢ R̃ᵢⱼ‖²_F
+    with RIGHT retraction.  This implementation uses the geodesic cost
+    ‖so3_log(R̃ᵢⱼᵀ Rᵢᵀ Rⱼ)‖² with LEFT retraction R ← so3_exp(u) @ R.
+    Under left retraction the GN Hessian approximation has off-diagonal blocks
+    −κᵢⱼ I₃ (standard graph Laplacian).  Both formulations are self-consistent
+    GN variants that converge to the same rotation MLE fixed point; for KITTI's
+    small per-frame rotations (< 0.1 rad) R̃ᵢⱼ ≈ I₃ so the two Hessians are
+    numerically near-identical.
+
+    NOTE: for an anchored chain graph the Schur complement Q̃τ (SE-Sync Eq. 24c)
+    is zero because the anchored translation Laplacian has no null space, so
+    Problem 4 reduces to pure rotation synchronization — exactly what this solves.
 
     Off-diagonal blocks: L[i, i+1] = -kappa[i] * I_3
     Diagonal blocks:     L[i, i]   =  sum of incident kappa * I3
@@ -93,7 +101,6 @@ def build_connection_laplacian(R_meas: jnp.ndarray,
 
     i_idx = jnp.arange(n - 1)
     j_idx = jnp.arange(1, n)
-    # Standard graph Laplacian: off-diagonal = -kappa * I_3 (not -kappa * R_meas)
     scaled_I = kappa[:, None, None] * jnp.eye(3)[None]      # (n-1, 3, 3)
     upper_blocks = jnp.zeros((n, n, 3, 3))
     upper_blocks = upper_blocks.at[i_idx, j_idx].set(scaled_I)
@@ -156,8 +163,8 @@ def _rotation_gn_step(R: jnp.ndarray,
 
     g_free = g_all[1:].reshape(-1)                          # (3(n-1),)
 
-    # Connection Laplacian (dense) — built without Python loops
-    L = build_connection_laplacian(R_meas, kappa, n)
+    # Rotation GN Hessian (dense) — standard graph Laplacian for left-retraction GN
+    L = build_rotation_laplacian(R_meas, kappa, n)
     L_free = L[3:, 3:] + damping * jnp.eye(3 * (n - 1))   # (3(n-1), 3(n-1))
 
     # Dense solve — cuBLAS LU on GPU
@@ -221,8 +228,8 @@ def _rotation_gn_ift_bwd(res, g_R_star):
     g_tangent = jax.vmap(project_grad)(R_star, g_R_star)    # (n, 3)
     g_free = g_tangent[1:].reshape(-1)                       # (3(n-1),) — drop anchor
 
-    # IFT: solve L_free @ v = g_free
-    L = build_connection_laplacian(R_meas, kappa, n)
+    # IFT: solve L_free @ v = g_free  (same Hessian as forward GN)
+    L = build_rotation_laplacian(R_meas, kappa, n)
     L_free = L[3:, 3:] + damping * jnp.eye(3 * (n - 1))
     v_free = jnp.linalg.solve(L_free, g_free)               # (3(n-1),)
     v_all = jnp.concatenate([jnp.zeros(3), v_free]).reshape(n, 3)  # (n, 3)
