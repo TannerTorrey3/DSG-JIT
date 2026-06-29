@@ -382,6 +382,7 @@ def compute_per_edge_precision(diffs: jnp.ndarray,
 def outer_adam_loop(theta_init: jnp.ndarray,
                     noisy_odom: jnp.ndarray,
                     gt_poses: jnp.ndarray,
+                    gt_R_direct: jnp.ndarray,
                     kappa: jnp.ndarray,
                     omega: jnp.ndarray,
                     n: int,
@@ -411,7 +412,7 @@ def outer_adam_loop(theta_init: jnp.ndarray,
 
     # GT poses in window-relative frame (anchor = first pose of window).
     # t_star is anchored at origin with identity first rotation, so gt must match.
-    gt_R_world = jax.vmap(so3_exp)(gt_poses[:, 3:])           # (n, 3, 3) world frame
+    gt_R_world = gt_R_direct                                    # (n, 3, 3) world frame — raw, bypasses so3_log singularity at θ→π
     gt_R0      = gt_R_world[0]                                  # first pose rotation
     gt_t0      = gt_poses[0, :3]                                # first pose translation
     # Rotate and translate GT into window-local frame
@@ -498,10 +499,10 @@ def build_denoiser(n: int,
     Dynamic arguments (noisy_odom, gt_poses, kappa, omega) passed at call time.
     Static arguments (n, cfgs) closed over — no retrace across sequences.
     """
-    def denoise(noisy_odom, gt_poses, kappa, omega):
+    def denoise(noisy_odom, gt_poses, gt_R_world, kappa, omega):
         theta_init = jnp.zeros_like(noisy_odom)
         theta_opt = outer_adam_loop(
-            theta_init, noisy_odom, gt_poses,
+            theta_init, noisy_odom, gt_poses, gt_R_world,
             kappa, omega, n, inner_cfg, outer_cfg
         )
         return theta_opt
@@ -615,6 +616,7 @@ def make_synthetic_sequence(n_poses: int, sigma_t: float, sigma_r: float,
 
 def denoise_sequence(noisy_rel: np.ndarray,
                       gt_global: np.ndarray,
+                      gt_R_mats: np.ndarray,
                       denoiser_fn,
                       exp_cfg: ExpCfg) -> np.ndarray:
     """Slide a window over the sequence, denoise each window, stitch output.
@@ -631,6 +633,7 @@ def denoise_sequence(noisy_rel: np.ndarray,
         lo, hi = pos, pos + exp_cfg.window
         win_odom = jnp.array(noisy_rel[lo:hi - 1])          # (W-1, 6)
         win_gt   = jnp.array(gt_global[lo:hi])               # (W, 6)
+        win_gt_R = jnp.array(gt_R_mats[lo:hi])              # (W, 3, 3) raw rotations
 
         n_edges = win_odom.shape[0]
 
@@ -654,6 +657,7 @@ def denoise_sequence(noisy_rel: np.ndarray,
         theta_opt = denoiser_fn(
             win_odom,
             win_gt,
+            win_gt_R,
             jnp.array(kappa),
             jnp.array(omega)
         )
@@ -720,9 +724,10 @@ def main():
     # Warm up with dummy data to trigger XLA compilation
     dummy_odom = jnp.zeros((args.window - 1, 6))
     dummy_gt   = jnp.zeros((args.window, 6))
+    dummy_gR   = jnp.zeros((args.window, 3, 3))
     dummy_k    = jnp.ones(args.window - 1)
     dummy_w    = jnp.ones(args.window - 1)
-    _ = denoiser_fn(dummy_odom, dummy_gt, dummy_k, dummy_w).block_until_ready()
+    _ = denoiser_fn(dummy_odom, dummy_gt, dummy_gR, dummy_k, dummy_w).block_until_ready()
     print(f"  Compiled in {time.time() - t0:.1f}s  (no retrace after this)")
 
     # Collect results
@@ -746,6 +751,8 @@ def main():
                 gt_rel, noisy_rel, gt_global, noisy_global = make_synthetic_sequence(
                     n_synth, args.sigma_t, args.sigma_r, rng
                 )
+                # Build raw rotation matrices for synthetic (θ < π always, so3_exp safe)
+                gt_R_mats = np.array(jax.vmap(so3_exp)(jnp.array(gt_global[:, 3:])))  # (N, 3, 3)
             else:
                 # Load GT poses directly from poses.txt — no images needed.
                 # Tries SemanticKITTI layout first ({root}/sequences/{seq}/poses.txt)
@@ -784,6 +791,9 @@ def main():
                 for i, T in enumerate(gt_mats):
                     gt_global[i, :3] = T[:3, 3]
                     gt_global[i, 3:] = np.array(so3l(jnp.array(T[:3, :3])))
+                # Raw rotation matrices — used directly in outer_adam_loop to avoid
+                # so3_log singularity at θ→π (e.g. U-turns in urban sequences).
+                gt_R_mats = gt_mats[:, :3, :3]          # (N, 3, 3)
 
                 gt_rel    = relative_poses_from_global(gt_global)
                 noisy_rel = gt_rel.copy()
@@ -794,7 +804,7 @@ def main():
             # Denoise
             t_start = time.time()
             denoised_global = denoise_sequence(
-                noisy_rel, gt_global, denoiser_fn, exp_cfg
+                noisy_rel, gt_global, gt_R_mats, denoiser_fn, exp_cfg
             )
             elapsed = time.time() - t_start
             poses_per_sec = len(gt_global) / (elapsed + 1e-9)
