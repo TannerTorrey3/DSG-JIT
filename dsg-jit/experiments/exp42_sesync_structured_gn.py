@@ -728,7 +728,8 @@ def main():
         seq_dT, seq_dR, seq_dC = [], [], []
 
         for seed in range(args.seeds):
-            rng = np.random.default_rng(seed * 1000 + hash(seq_id) % 1000)
+            seq_hash = int(seq_id) if seq_id.isdigit() else 0
+            rng = np.random.default_rng(seed * 1000 + seq_hash)
 
             if seq_id == "synth":
                 gt_rel, noisy_rel, gt_global, noisy_global = make_synthetic_sequence(
