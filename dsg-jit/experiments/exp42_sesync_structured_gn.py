@@ -419,16 +419,20 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     gt_t_rel   = jax.vmap(lambda t: gt_R0.T @ (t - gt_t0))(gt_poses[:, :3])   # (n, 3)
     gt_R_rel   = jax.vmap(lambda R: gt_R0.T @ R)(gt_R_world)                   # (n, 3, 3)
 
-    # Loss: ATE on translations + geodesic rotation error.
-    # so3_log(Ra.T @ Rb) is safe: the relative rotation stays near identity
-    # (small angle) as long as denoising corrections are in range.
+    # Loss: ATE on translations + Frobenius rotation error.
+    # Frobenius ||Ra - Rb||_F^2 has no singularity at any rotation angle — safe
+    # for urban sequences where the window-accumulated rotation can exceed π/2,
+    # where so3_log(Ra.T @ Rb) would become ill-conditioned if Adam drifts Ra
+    # away from Rb. Both Ra (R_star) and Rb (gt_R_rel) are in window-relative
+    # frame, so the Frobenius gradient 2*(Ra - Rb) gives the correct denoising
+    # direction when Ra ≈ Rb (within noise level).
     def loss_fn(theta):
         R_star, t_star = sesync_inner_solve(
             theta, noisy_odom, R_init, kappa, omega, n, inner_cfg
         )
         loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
         loss_r = jnp.mean(jax.vmap(
-            lambda Ra, Rb: jnp.sum(so3_log(Ra.T @ Rb) ** 2)
+            lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2)
         )(R_star, gt_R_rel))
         return loss_t + loss_r
 
