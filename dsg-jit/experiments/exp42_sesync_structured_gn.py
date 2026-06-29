@@ -46,10 +46,10 @@ class InnerCfg:
 
 @dataclass(frozen=True)
 class OuterCfg:
-    n_trans1:  int   = 30    # Phase 1: translation
+    n_trans1:  int   = 50    # Phase 1: translation       (matches exp41)
     n_rot:     int   = 20    # Phase 2: rotation
-    n_trans2:  int   = 20    # Phase 3: translation refinement
-    lr_trans:  float = 3e-3
+    n_trans2:  int   = 15    # Phase 3: translation refinement (matches exp41)
+    lr_trans:  float = 1e-3  # exp41 used a single lr=1e-3 for all phases
     lr_rot:    float = 1e-3
     beta1:     float = 0.9
     beta2:     float = 0.999
@@ -57,7 +57,7 @@ class OuterCfg:
 
 @dataclass(frozen=True)
 class ExpCfg:
-    window:         int   = 50
+    window:         int   = 100  # matches exp41 default
     overlap:        int   = 10
     sigma_t:        float = 0.03
     sigma_r:        float = 0.01
@@ -689,10 +689,21 @@ def main():
     parser.add_argument("--n-poses-synth", type=int, default=200)
     parser.add_argument("--max-poses",  type=int, default=None,
                         help="Truncate each sequence to this many poses (for quick local tests)")
+    parser.add_argument("--n-trans1",  type=int,   default=50)
+    parser.add_argument("--n-rot",     type=int,   default=20)
+    parser.add_argument("--n-trans2",  type=int,   default=15)
+    parser.add_argument("--lr-trans",  type=float, default=1e-3)
+    parser.add_argument("--lr-rot",    type=float, default=1e-3)
     args = parser.parse_args()
 
     inner_cfg = InnerCfg(n_iters_rot=10, damping=1e-4)
-    outer_cfg = OuterCfg()
+    outer_cfg = OuterCfg(
+        n_trans1=args.n_trans1,
+        n_rot=args.n_rot,
+        n_trans2=args.n_trans2,
+        lr_trans=args.lr_trans,
+        lr_rot=args.lr_rot,
+    )
     exp_cfg   = ExpCfg(
         window=args.window,
         overlap=args.overlap,
