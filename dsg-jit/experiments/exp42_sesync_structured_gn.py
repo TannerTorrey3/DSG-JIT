@@ -219,11 +219,12 @@ def _rotation_gn_ift_bwd(res, g_R_star):
     R_star, R_meas, kappa, n_iters, damping = res
     n = R_star.shape[0]
 
-    # Project upstream gradient to axis-angle increments on SO(3)
-    # vee(R_star[i]^T @ g_R_star[i] - g_R_star[i]^T @ R_star[i]) / 2
+    # Project upstream gradient to axis-angle increments on SO(3).
+    # Under left retraction R ← exp(u) @ R, the tangent component is:
+    #   g_u = vee( (R^T g - g^T R) / 2 )  =  vee(skew_part(R^T g))
     def project_grad(Ri, gi):
-        skew = Ri.T @ gi - gi.T @ Ri
-        return jnp.array([skew[2, 1], skew[0, 2], skew[1, 0]])  # vee(skew/2)
+        skew = Ri.T @ gi - gi.T @ Ri          # = 2 * skew_part(R^T g)
+        return jnp.array([skew[2, 1], skew[0, 2], skew[1, 0]]) / 2.0
 
     g_tangent = jax.vmap(project_grad)(R_star, g_R_star)    # (n, 3)
     g_free = g_tangent[1:].reshape(-1)                       # (3(n-1),) — drop anchor
@@ -309,7 +310,6 @@ def recover_translations(R_star: jnp.ndarray,
 
 def sesync_inner_solve(theta: jnp.ndarray,
                         noisy_odom: jnp.ndarray,
-                        R_init: jnp.ndarray,
                         kappa: jnp.ndarray,
                         omega: jnp.ndarray,
                         n: int,
@@ -318,7 +318,6 @@ def sesync_inner_solve(theta: jnp.ndarray,
 
     theta:      (n-1, 6) learned corrections to odometry
     noisy_odom: (n-1, 6) noisy odometry measurements [t(3) | w(3)]
-    R_init:     (n, 3, 3) initial rotation matrices
     kappa:      (n-1,) per-edge rotation precision
     omega:      (n-1,) per-edge translation precision
     Returns: (R_star (n,3,3), t_star (n,3))
@@ -330,7 +329,17 @@ def sesync_inner_solve(theta: jnp.ndarray,
     # Rotation measurements: so3_exp of corrected rotation part
     R_meas = jax.vmap(so3_exp)(w_meas)                      # (n-1, 3, 3)
 
-    # Rotation GN with IFT backward (3n x 3n system)
+    # Build R_init by integrating the current corrected rotation chain.
+    # Recomputing at every outer step keeps R_init consistent with R_meas —
+    # critical for n=100 where 10 GN iterations are insufficient to recover
+    # from a stale initialization built from the original noisy odometry.
+    # The custom_vjp zeros g_R_init, so this scan is never differentiated.
+    _, R_traj = jax.lax.scan(
+        lambda R, Rm: (R @ Rm, R @ Rm), jnp.eye(3), R_meas
+    )                                                        # (n-1, 3, 3)
+    R_init = jnp.concatenate([jnp.eye(3)[None], R_traj], axis=0)  # (n, 3, 3)
+
+    # Rotation GN with IFT backward (3(n-1) x 3(n-1) system)
     R_star = rotation_gn_ift(R_init, R_meas, kappa,
                               cfg.n_iters_rot, cfg.damping)
 
@@ -409,14 +418,6 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     N_R   = outer_cfg.n_rot
     total = N_T1 + N_R + outer_cfg.n_trans2
 
-    # Initial rotation matrices from noisy odometry (integrate chain forward)
-    w_meas_init = noisy_odom[:, 3:]
-    R_meas_init = jax.vmap(so3_exp)(w_meas_init)             # (n-1, 3, 3)
-    _, R_traj_init = jax.lax.scan(
-        lambda R, Rm: (R @ Rm, R @ Rm), jnp.eye(3), R_meas_init
-    )                                                          # (n-1, 3, 3)
-    R_init = jnp.concatenate([jnp.eye(3)[None], R_traj_init], axis=0)  # (n, 3, 3)
-
     # GT poses in window-relative frame (anchor = first pose of window).
     # t_star is anchored at origin with identity first rotation, so gt must match.
     gt_R_world = gt_R_direct                                    # (n, 3, 3) world frame — raw, bypasses so3_log singularity at θ→π
@@ -435,7 +436,7 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     # direction when Ra ≈ Rb (within noise level).
     def loss_fn(theta):
         R_star, t_star = sesync_inner_solve(
-            theta, noisy_odom, R_init, kappa, omega, n, inner_cfg
+            theta, noisy_odom, kappa, omega, n, inner_cfg
         )
         loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
         loss_r = jnp.mean(jax.vmap(
