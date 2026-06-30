@@ -25,6 +25,8 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Tuple
@@ -818,12 +820,20 @@ def main():
     parser.add_argument("--n-poses-synth", type=int, default=200)
     parser.add_argument("--max-poses",  type=int, default=None,
                         help="Truncate each sequence to this many poses (for quick local tests)")
-    parser.add_argument("--n-trans1",  type=int,   default=30)
-    parser.add_argument("--n-rot",     type=int,   default=20)
-    parser.add_argument("--n-trans2",  type=int,   default=20)
-    parser.add_argument("--lr-trans",  type=float, default=1e-3)
-    parser.add_argument("--lr-rot",    type=float, default=1e-3)
+    parser.add_argument("--n-trans1",   type=int,   default=30)
+    parser.add_argument("--n-rot",      type=int,   default=20)
+    parser.add_argument("--n-trans2",   type=int,   default=20)
+    parser.add_argument("--lr-trans",   type=float, default=1e-3)
+    parser.add_argument("--lr-rot",     type=float, default=1e-3)
+    parser.add_argument("--output-dir", type=str,   default=os.path.expanduser("~/exp_res"),
+                        help="Directory to write run results (timestamped sub-dir created automatically)")
     args = parser.parse_args()
+
+    # Create timestamped output directory
+    run_ts  = time.strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(args.output_dir, f"exp42_{run_ts}")
+    os.makedirs(run_dir, exist_ok=True)
+    print(f"Results will be saved to: {run_dir}")
 
     inner_cfg = InnerCfg(n_iters_rot=10, damping=1e-4)
     outer_cfg = OuterCfg(
@@ -863,6 +873,7 @@ def main():
 
     # Collect results
     all_dT, all_dR, all_dC = [], [], []
+    all_seq_results = {}  # seq_id -> list of per-seed dicts
 
     if args.synthetic:
         sequences = [("synth", args.n_poses_synth)]
@@ -875,6 +886,7 @@ def main():
         seq_dT, seq_dR, seq_dC = [], [], []
         seq_hash = int(seq_id) if seq_id.isdigit() else 0
 
+        seq_seed_results = []
         if seq_id == "synth":
             # Synthetic: GT differs per seed (random lateral/yaw), so run sequentially.
             for seed in range(args.seeds):
@@ -893,6 +905,12 @@ def main():
                 seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
                 print(f"  [{seq_id}|seed={seed}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
                       f"({poses_per_sec:.0f} poses/s)")
+                seed_out = {"seq": seq_id, "seed": seed, "n_poses": int(len(gt_global)),
+                            "dT": float(dT), "dR": float(dR), "dC": float(dC),
+                            "elapsed_s": float(elapsed), "poses_per_s": float(poses_per_sec)}
+                seq_seed_results.append(seed_out)
+                with open(os.path.join(run_dir, f"{seq_id}_seed_{seed:04d}.json"), "w") as fp:
+                    json.dump(seed_out, fp, indent=2)
         else:
             # KITTI: GT is fixed per sequence — load once, batch all seeds.
             from pathlib import Path
@@ -954,6 +972,12 @@ def main():
                 seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
                 print(f"  [{seq_id}|seed={s}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
                       f"({pps:.0f} poses/s·seed)")
+                seed_out = {"seq": seq_id, "seed": s, "n_poses": int(len(gt_global)),
+                            "dT": float(dT), "dR": float(dR), "dC": float(dC),
+                            "elapsed_s": float(per_seed_sec), "poses_per_s": float(pps)}
+                seq_seed_results.append(seed_out)
+                with open(os.path.join(run_dir, f"{seq_id}_seed_{s:04d}.json"), "w") as fp:
+                    json.dump(seed_out, fp, indent=2)
             print(f"  [{seq_id}] {args.seeds} seeds batched  total {poses_per_sec:.0f} poses/s·seed")
 
         if seq_dT:
@@ -963,6 +987,10 @@ def main():
             all_dT.append(m_dT)
             all_dR.append(m_dR)
             all_dC.append(m_dC)
+            all_seq_results[seq_id] = {
+                "seeds": seq_seed_results,
+                "mean_dT": m_dT, "mean_dR": m_dR, "mean_dC": m_dC,
+            }
             print(f"  [{seq_id}] mean  ΔT={m_dT:+.1f}%  ΔR={m_dR:+.1f}%  ΔC={m_dC:+.1f}%")
 
     if all_dC:
@@ -970,6 +998,60 @@ def main():
         print(f"  σ_t={args.sigma_t}  window={args.window}  overlap={args.overlap}")
         print(f"  Mean across seqs:  ΔT={np.mean(all_dT):+.1f}%  "
               f"ΔR={np.mean(all_dR):+.1f}%  ΔC={np.mean(all_dC):+.1f}%")
+
+        config = {
+            "exp": "exp42",
+            "kitti_root": args.kitti_root,
+            "seqs": args.seqs,
+            "sigma_t": args.sigma_t,
+            "sigma_r": args.sigma_r,
+            "window": args.window,
+            "overlap": args.overlap,
+            "seeds": args.seeds,
+            "n_trans1": args.n_trans1,
+            "n_rot": args.n_rot,
+            "n_trans2": args.n_trans2,
+            "lr_trans": args.lr_trans,
+            "lr_rot": args.lr_rot,
+            "synthetic": args.synthetic,
+            "run_ts": run_ts,
+        }
+        aggregate = {
+            "config": config,
+            "sequences": all_seq_results,
+            "overall_mean_dT": float(np.mean(all_dT)),
+            "overall_mean_dR": float(np.mean(all_dR)),
+            "overall_mean_dC": float(np.mean(all_dC)),
+        }
+        agg_path = os.path.join(run_dir, "aggregate.json")
+        with open(agg_path, "w") as fp:
+            json.dump(aggregate, fp, indent=2)
+
+        txt_lines = [
+            f"Exp42 Run  {run_ts}",
+            f"  kitti_root={args.kitti_root}  seqs={args.seqs}",
+            f"  sigma_t={args.sigma_t}  sigma_r={args.sigma_r}",
+            f"  window={args.window}  overlap={args.overlap}  seeds={args.seeds}",
+            "",
+        ]
+        for sid, sr in all_seq_results.items():
+            txt_lines.append(f"[{sid}]  mean  ΔT={sr['mean_dT']:+.1f}%  "
+                             f"ΔR={sr['mean_dR']:+.1f}%  ΔC={sr['mean_dC']:+.1f}%")
+            for sd in sr["seeds"]:
+                txt_lines.append(f"  seed={sd['seed']:04d}  ΔT={sd['dT']:+.1f}%  "
+                                 f"ΔR={sd['dR']:+.1f}%  ΔC={sd['dC']:+.1f}%  "
+                                 f"({sd['poses_per_s']:.0f} poses/s)")
+        txt_lines += [
+            "",
+            f"Overall mean:  ΔT={np.mean(all_dT):+.1f}%  "
+            f"ΔR={np.mean(all_dR):+.1f}%  ΔC={np.mean(all_dC):+.1f}%",
+        ]
+        res_path = os.path.join(run_dir, "results.txt")
+        with open(res_path, "w") as fp:
+            fp.write("\n".join(txt_lines) + "\n")
+
+        print(f"\nSaved: {agg_path}")
+        print(f"Saved: {res_path}")
 
 
 if __name__ == "__main__":
