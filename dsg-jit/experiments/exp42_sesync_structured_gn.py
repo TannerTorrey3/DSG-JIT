@@ -946,12 +946,15 @@ def main():
             elapsed = time.time() - t_start
             poses_per_sec = len(gt_global) * args.seeds / (elapsed + 1e-9)
 
+            per_seed_sec = elapsed / args.seeds
+            pps = len(gt_global) / (per_seed_sec + 1e-9)
             for s in range(args.seeds):
                 noisy_global_s = integrate_poses(noisy_rels[s])
                 dT, dR, dC = delta_metric(noisy_global_s, denoised_globals[s], gt_global)
                 seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
-                print(f"  [{seq_id}|seed={s}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%")
-            print(f"  [{seq_id}] {args.seeds} seeds batched  ({poses_per_sec:.0f} poses/s·seed)")
+                print(f"  [{seq_id}|seed={s}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
+                      f"({pps:.0f} poses/s·seed)")
+            print(f"  [{seq_id}] {args.seeds} seeds batched  total {poses_per_sec:.0f} poses/s·seed")
 
         if seq_dT:
             m_dT = float(np.mean(seq_dT))
