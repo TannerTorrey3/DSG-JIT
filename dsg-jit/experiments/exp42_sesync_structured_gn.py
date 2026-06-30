@@ -522,6 +522,28 @@ def build_denoiser(n: int,
     return jax.jit(denoise)
 
 
+def build_batched_denoiser(n: int,
+                            inner_cfg: InnerCfg,
+                            outer_cfg: OuterCfg,
+                            exp_cfg: ExpCfg):
+    """Build a seed-batched denoiser via vmap.
+
+    Processes S seeds in a single GPU dispatch per window instead of S
+    sequential dispatches. win_odom/kappa/omega vary per seed (in_axes=0);
+    gt_poses/gt_R_world are shared across seeds (in_axes=None).
+    """
+    def denoise(noisy_odom, gt_poses, gt_R_world, kappa, omega):
+        theta_init = jnp.zeros_like(noisy_odom)
+        theta_opt = outer_adam_loop(
+            theta_init, noisy_odom, gt_poses, gt_R_world,
+            kappa, omega, n, inner_cfg, outer_cfg
+        )
+        return theta_opt
+
+    batched = jax.vmap(denoise, in_axes=(0, None, None, 0, 0))
+    return jax.jit(batched)
+
+
 # ---------------------------------------------------------------------------
 # Noise estimation utilities  (NumPy, called outside JIT)
 # ---------------------------------------------------------------------------
@@ -708,6 +730,74 @@ def denoise_sequence(noisy_rel: np.ndarray,
     return integrate_poses(denoised_rel)
 
 
+def _add_kitti_noise(gt_rel: np.ndarray, seed: int, seq_hash: int,
+                     sigma_t: float, sigma_r: float) -> np.ndarray:
+    """Return a noisy copy of gt_rel using the standard seed scheme."""
+    rng = np.random.default_rng(seed * 1000 + seq_hash)
+    noisy = gt_rel.copy()
+    noisy[:, :3] += sigma_t * rng.standard_normal(gt_rel[:, :3].shape).astype(np.float32)
+    noisy[:, 3:] += sigma_r * rng.standard_normal(gt_rel[:, 3:].shape).astype(np.float32)
+    return noisy
+
+
+def denoise_sequence_batched(noisy_rels: np.ndarray,
+                              gt_global: np.ndarray,
+                              gt_R_mats: np.ndarray,
+                              batched_denoiser_fn,
+                              exp_cfg: ExpCfg) -> list:
+    """Slide a window over the sequence, denoising all S seeds simultaneously.
+
+    noisy_rels: (S, N-1, 6) — one noisy trajectory per seed
+    gt_global:  (N, 6)      — shared GT global poses
+    gt_R_mats:  (N, 3, 3)   — shared GT rotation matrices
+
+    Returns list of S denoised global trajectories, each (N, 6).
+
+    Per window: one vmap'd GPU call over S seeds instead of S sequential calls.
+    The GPU sees a batched (S, n-1, 6) solve rather than S × (n-1, 6) solves,
+    improving utilisation for small n where dispatch overhead dominates.
+    """
+    S = noisy_rels.shape[0]
+    n_poses = gt_global.shape[0]
+    stride = exp_cfg.window - exp_cfg.overlap
+    denoised_rels = noisy_rels.copy()   # (S, N-1, 6)
+
+    pos = 0
+    while pos + exp_cfg.window <= n_poses - 1:
+        lo, hi = pos, pos + exp_cfg.window
+        n_edges = hi - 1 - lo
+
+        win_omds = jnp.array(noisy_rels[:, lo:hi - 1, :])   # (S, n-1, 6)
+        win_gt   = jnp.array(gt_global[lo:hi])                # (n, 6)  shared
+        win_gt_R = jnp.array(gt_R_mats[lo:hi])               # (n, 3, 3) shared
+
+        # Per-seed sigma estimates (cheap — 49 edges each)
+        sigma_r = [estimate_noise_mad(np.array(win_omds[s, :, 3:])) for s in range(S)]
+        sigma_t = [estimate_noise_mad(np.array(win_omds[s, :, :3])) for s in range(S)]
+
+        kappas = jnp.stack([
+            compute_per_edge_precision(win_omds[s, :, 3:], sigma_r[s],
+                                       exp_cfg.local_k, exp_cfg.max_kappa_ratio)
+            for s in range(S)])   # (S, n-1)
+        omegas = jnp.stack([
+            compute_per_edge_precision(win_omds[s, :, :3], sigma_t[s],
+                                       exp_cfg.local_k, exp_cfg.max_kappa_ratio)
+            for s in range(S)])   # (S, n-1)
+
+        # One batched GPU call
+        theta_opts = batched_denoiser_fn(win_omds, win_gt, win_gt_R,
+                                         kappas, omegas)      # (S, n-1, 6)
+
+        corrected = np.array(win_omds) + np.array(theta_opts)  # (S, n-1, 6)
+        write_lo = exp_cfg.overlap // 2 if pos > 0 else 0
+        write_hi = n_edges - exp_cfg.overlap // 2 if hi < n_poses - 1 else n_edges
+        denoised_rels[:, lo + write_lo:lo + write_hi, :] = corrected[:, write_lo:write_hi, :]
+
+        pos += stride
+
+    return [integrate_poses(denoised_rels[s]) for s in range(S)]
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -751,18 +841,24 @@ def main():
         seeds=args.seeds,
     )
 
-    # Build JIT-compiled denoiser once for this window size
-    print(f"Compiling denoiser (window={args.window})...")
+    # Build JIT-compiled denoisers once for this window size
+    print(f"Compiling denoisers (window={args.window}, seeds={args.seeds})...")
     t0 = time.time()
-    denoiser_fn = build_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
+    denoiser_fn         = build_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
+    batched_denoiser_fn = build_batched_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
 
-    # Warm up with dummy data to trigger XLA compilation
     dummy_odom = jnp.zeros((args.window - 1, 6))
     dummy_gt   = jnp.zeros((args.window, 6))
     dummy_gR   = jnp.zeros((args.window, 3, 3))
     dummy_k    = jnp.ones(args.window - 1)
     dummy_w    = jnp.ones(args.window - 1)
+    # Warm up single denoiser (used for synthetic)
     _ = denoiser_fn(dummy_odom, dummy_gt, dummy_gR, dummy_k, dummy_w).block_until_ready()
+    # Warm up batched denoiser (used for KITTI)
+    dummy_omds = jnp.zeros((args.seeds, args.window - 1, 6))
+    dummy_ks   = jnp.ones((args.seeds, args.window - 1))
+    dummy_ws   = jnp.ones((args.seeds, args.window - 1))
+    _ = batched_denoiser_fn(dummy_omds, dummy_gt, dummy_gR, dummy_ks, dummy_ws).block_until_ready()
     print(f"  Compiled in {time.time() - t0:.1f}s  (no retrace after this)")
 
     # Collect results
@@ -777,82 +873,85 @@ def main():
 
     for seq_id, n_synth in sequences:
         seq_dT, seq_dR, seq_dC = [], [], []
+        seq_hash = int(seq_id) if seq_id.isdigit() else 0
 
-        for seed in range(args.seeds):
-            seq_hash = int(seq_id) if seq_id.isdigit() else 0
-            rng = np.random.default_rng(seed * 1000 + seq_hash)
-
-            if seq_id == "synth":
+        if seq_id == "synth":
+            # Synthetic: GT differs per seed (random lateral/yaw), so run sequentially.
+            for seed in range(args.seeds):
+                rng = np.random.default_rng(seed * 1000 + seq_hash)
                 gt_rel, noisy_rel, gt_global, noisy_global = make_synthetic_sequence(
                     n_synth, args.sigma_t, args.sigma_r, rng
                 )
-                # Build raw rotation matrices for synthetic (θ < π always, so3_exp safe)
-                gt_R_mats = np.array(jax.vmap(so3_exp)(jnp.array(gt_global[:, 3:])))  # (N, 3, 3)
-            else:
-                # Load GT poses directly from poses.txt — no images needed.
-                # Tries SemanticKITTI layout first ({root}/sequences/{seq}/poses.txt)
-                # then standard KITTI layout ({root}/poses/{seq}.txt).
-                from pathlib import Path
-                root_p  = Path(args.kitti_root)
-                seq_str = f"{int(seq_id):02d}"
-                candidates = [
-                    root_p / seq_str / "poses.txt",                 # --kitti-root .../sequences/
-                    root_p / "sequences" / seq_str / "poses.txt",   # --kitti-root .../dataset/
-                    root_p / "poses" / f"{seq_str}.txt",            # standard KITTI layout
-                ]
-                poses_path = next((p for p in candidates if p.exists()), None)
-                if poses_path is None:
-                    print(f"  [{seq_id}] poses.txt not found (tried {candidates}), skipping.")
-                    break
+                gt_R_mats = np.array(jax.vmap(so3_exp)(jnp.array(gt_global[:, 3:])))
+                t_start = time.time()
+                denoised_global = denoise_sequence(
+                    noisy_rel, gt_global, gt_R_mats, denoiser_fn, exp_cfg
+                )
+                elapsed = time.time() - t_start
+                poses_per_sec = len(gt_global) / (elapsed + 1e-9)
+                dT, dR, dC = delta_metric(noisy_global, denoised_global, gt_global)
+                seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
+                print(f"  [{seq_id}|seed={seed}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
+                      f"({poses_per_sec:.0f} poses/s)")
+        else:
+            # KITTI: GT is fixed per sequence — load once, batch all seeds.
+            from pathlib import Path
+            root_p  = Path(args.kitti_root)
+            seq_str = f"{int(seq_id):02d}"
+            candidates = [
+                root_p / seq_str / "poses.txt",
+                root_p / "sequences" / seq_str / "poses.txt",
+                root_p / "poses" / f"{seq_str}.txt",
+            ]
+            poses_path = next((p for p in candidates if p.exists()), None)
+            if poses_path is None:
+                print(f"  [{seq_id}] poses.txt not found (tried {candidates}), skipping.")
+                continue
 
-                raw_mats = []
-                with poses_path.open() as f:
-                    for line in f:
-                        vals = [float(x) for x in line.split()]
-                        if len(vals) != 12:
-                            continue
-                        T = np.eye(4, dtype=np.float32)
-                        T[:3, :] = np.array(vals, dtype=np.float32).reshape(3, 4)
-                        raw_mats.append(T)
-                if not raw_mats:
-                    print(f"  [{seq_id}] Empty poses.txt, skipping.")
-                    break
+            raw_mats = []
+            with poses_path.open() as f:
+                for line in f:
+                    vals = [float(x) for x in line.split()]
+                    if len(vals) != 12:
+                        continue
+                    T = np.eye(4, dtype=np.float32)
+                    T[:3, :] = np.array(vals, dtype=np.float32).reshape(3, 4)
+                    raw_mats.append(T)
+            if not raw_mats:
+                print(f"  [{seq_id}] Empty poses.txt, skipping.")
+                continue
 
-                gt_mats = np.stack(raw_mats, axis=0)   # (N, 4, 4)
-                if args.max_poses is not None:
-                    gt_mats = gt_mats[:args.max_poses]
-                from dsg_jit.core.math3d import so3_log as so3l
-                gt_global = np.zeros((len(gt_mats), 6), dtype=np.float32)
-                for i, T in enumerate(gt_mats):
-                    gt_global[i, :3] = T[:3, 3]
-                    gt_global[i, 3:] = np.array(so3l(jnp.array(T[:3, :3])))
-                # Raw rotation matrices — no so3_log on absolute world-frame rotations,
-                # which is unstable when any pose has θ near π (U-turns in urban seqs).
-                gt_R_mats = gt_mats[:, :3, :3]          # (N, 3, 3)
+            gt_mats = np.stack(raw_mats, axis=0)
+            if args.max_poses is not None:
+                gt_mats = gt_mats[:args.max_poses]
+            from dsg_jit.core.math3d import so3_log as so3l
+            gt_global = np.zeros((len(gt_mats), 6), dtype=np.float32)
+            for i, T in enumerate(gt_mats):
+                gt_global[i, :3] = T[:3, 3]
+                gt_global[i, 3:] = np.array(so3l(jnp.array(T[:3, :3])))
+            gt_R_mats = gt_mats[:, :3, :3]
+            gt_rel    = relative_poses_from_mats(gt_mats)
 
-                # Use raw matrices for gt_rel too: relative_poses_from_global goes
-                # through so3_exp(so3_log(R)) which corrupts Ri for near-180° poses,
-                # giving wrong dt = Ri.T @ (tj-ti) and hence wrong noisy_odom.
-                gt_rel    = relative_poses_from_mats(gt_mats)
-                noisy_rel = gt_rel.copy()
-                noisy_rel[:, :3] += args.sigma_t * rng.standard_normal(gt_rel[:, :3].shape).astype(np.float32)
-                noisy_rel[:, 3:] += args.sigma_r * rng.standard_normal(gt_rel[:, 3:].shape).astype(np.float32)
-                noisy_global = integrate_poses(noisy_rel)
+            # Generate all S noisy trajectories upfront
+            noisy_rels = np.stack([
+                _add_kitti_noise(gt_rel, seed, seq_hash, args.sigma_t, args.sigma_r)
+                for seed in range(args.seeds)
+            ])   # (S, N-1, 6)
 
-            # Denoise
+            # Denoise all seeds in one batched pass
             t_start = time.time()
-            denoised_global = denoise_sequence(
-                noisy_rel, gt_global, gt_R_mats, denoiser_fn, exp_cfg
+            denoised_globals = denoise_sequence_batched(
+                noisy_rels, gt_global, gt_R_mats, batched_denoiser_fn, exp_cfg
             )
             elapsed = time.time() - t_start
-            poses_per_sec = len(gt_global) / (elapsed + 1e-9)
+            poses_per_sec = len(gt_global) * args.seeds / (elapsed + 1e-9)
 
-            dT, dR, dC = delta_metric(noisy_global, denoised_global, gt_global)
-            seq_dT.append(dT)
-            seq_dR.append(dR)
-            seq_dC.append(dC)
-            print(f"  [{seq_id}|seed={seed}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
-                  f"({poses_per_sec:.0f} poses/s)")
+            for s in range(args.seeds):
+                noisy_global_s = integrate_poses(noisy_rels[s])
+                dT, dR, dC = delta_metric(noisy_global_s, denoised_globals[s], gt_global)
+                seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
+                print(f"  [{seq_id}|seed={s}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%")
+            print(f"  [{seq_id}] {args.seeds} seeds batched  ({poses_per_sec:.0f} poses/s·seed)")
 
         if seq_dT:
             m_dT = float(np.mean(seq_dT))
