@@ -393,6 +393,31 @@ def compute_per_edge_precision(diffs: jnp.ndarray,
     return precision
 
 
+# Pure-JAX combined sigma+precision — no numpy, no D2H copy.
+# Replaces: estimate_noise_mad(np.array(...)) + compute_per_edge_precision(...)
+# Called via vmap over seeds so the whole batch stays on GPU.
+def _sigma_and_precision(diffs, local_k, max_kappa_ratio):
+    """(n_edges, d) -> (n_edges,) precision. Entirely in JAX, JIT-safe."""
+    med = jnp.median(diffs, axis=0)
+    sigma_noise = jnp.median(jnp.abs(diffs - med)) * 1.4826 + 1e-8
+
+    n_edges = diffs.shape[0]
+    diffs_sq = jnp.sum(diffs ** 2, axis=-1)
+    indices  = jnp.arange(n_edges)
+
+    def local_var_at(i):
+        mask  = (indices >= i - local_k) & (indices <= i + local_k)
+        count = jnp.sum(mask).astype(jnp.float32) + 1e-8
+        mean  = jnp.sum(jnp.where(mask, diffs_sq, 0.0)) / count
+        return jnp.sum(jnp.where(mask, (diffs_sq - mean) ** 2, 0.0)) / count
+
+    local_vars       = jax.vmap(local_var_at)(indices)
+    sigma_process_sq = jnp.maximum(0.0, local_vars - 2.0 * sigma_noise ** 2)
+    precision        = 1.0 / (sigma_noise ** 2 + sigma_process_sq + 1e-8)
+    min_prec         = jnp.min(precision)
+    return jnp.minimum(precision, min_prec * max_kappa_ratio)
+
+
 # ---------------------------------------------------------------------------
 # Outer 3-phase Adam loop  (fused single fori_loop with phase masks)
 # ---------------------------------------------------------------------------
@@ -764,6 +789,11 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
     stride = exp_cfg.window - exp_cfg.overlap
     denoised_rels = noisy_rels.copy()   # (S, N-1, 6)
 
+    # JIT-compiled vmapped precision: (S, n-1, d) -> (S, n-1), all on GPU.
+    # Built once per sequence; JAX caches the compiled kernel after the first window.
+    lk, mr = exp_cfg.local_k, exp_cfg.max_kappa_ratio
+    _prec_batched = jax.jit(jax.vmap(lambda d: _sigma_and_precision(d, lk, mr)))
+
     pos = 0
     while pos + exp_cfg.window <= n_poses - 1:
         lo, hi = pos, pos + exp_cfg.window
@@ -773,18 +803,9 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
         win_gt   = jnp.array(gt_global[lo:hi])                # (n, 6)  shared
         win_gt_R = jnp.array(gt_R_mats[lo:hi])               # (n, 3, 3) shared
 
-        # Per-seed sigma estimates (cheap — 49 edges each)
-        sigma_r = [estimate_noise_mad(np.array(win_omds[s, :, 3:])) for s in range(S)]
-        sigma_t = [estimate_noise_mad(np.array(win_omds[s, :, :3])) for s in range(S)]
-
-        kappas = jnp.stack([
-            compute_per_edge_precision(win_omds[s, :, 3:], sigma_r[s],
-                                       exp_cfg.local_k, exp_cfg.max_kappa_ratio)
-            for s in range(S)])   # (S, n-1)
-        omegas = jnp.stack([
-            compute_per_edge_precision(win_omds[s, :, :3], sigma_t[s],
-                                       exp_cfg.local_k, exp_cfg.max_kappa_ratio)
-            for s in range(S)])   # (S, n-1)
+        # Two GPU calls instead of 4×S Python-loop dispatches + D2H copies
+        kappas = _prec_batched(win_omds[:, :, 3:])   # (S, n-1)
+        omegas = _prec_batched(win_omds[:, :, :3])    # (S, n-1)
 
         # One batched GPU call
         theta_opts = batched_denoiser_fn(win_omds, win_gt, win_gt_R,
