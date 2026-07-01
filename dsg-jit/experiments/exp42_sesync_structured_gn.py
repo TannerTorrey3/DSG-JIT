@@ -25,6 +25,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import time
@@ -771,6 +772,7 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
                               gt_global: np.ndarray,
                               gt_R_mats: np.ndarray,
                               batched_denoiser_fn,
+                              prec_batched_fn,
                               exp_cfg: ExpCfg) -> list:
     """Slide a window over the sequence, denoising all S seeds simultaneously.
 
@@ -789,23 +791,23 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
     stride = exp_cfg.window - exp_cfg.overlap
     denoised_rels = noisy_rels.copy()   # (S, N-1, 6)
 
-    # JIT-compiled vmapped precision: (S, n-1, d) -> (S, n-1), all on GPU.
-    # Built once per sequence; JAX caches the compiled kernel after the first window.
-    lk, mr = exp_cfg.local_k, exp_cfg.max_kappa_ratio
-    _prec_batched = jax.jit(jax.vmap(lambda d: _sigma_and_precision(d, lk, mr)))
+    # Convert entire arrays to JAX once — avoids per-window numpy→JAX copies
+    noisy_rels_j = jnp.array(noisy_rels)
+    gt_global_j  = jnp.array(gt_global)
+    gt_R_mats_j  = jnp.array(gt_R_mats)
 
     pos = 0
     while pos + exp_cfg.window <= n_poses - 1:
         lo, hi = pos, pos + exp_cfg.window
         n_edges = hi - 1 - lo
 
-        win_omds = jnp.array(noisy_rels[:, lo:hi - 1, :])   # (S, n-1, 6)
-        win_gt   = jnp.array(gt_global[lo:hi])                # (n, 6)  shared
-        win_gt_R = jnp.array(gt_R_mats[lo:hi])               # (n, 3, 3) shared
+        win_omds = noisy_rels_j[:, lo:hi - 1, :]   # (S, n-1, 6) — JAX slice, no copy
+        win_gt   = gt_global_j[lo:hi]               # (n, 6)
+        win_gt_R = gt_R_mats_j[lo:hi]               # (n, 3, 3)
 
-        # Two GPU calls instead of 4×S Python-loop dispatches + D2H copies
-        kappas = _prec_batched(win_omds[:, :, 3:])   # (S, n-1)
-        omegas = _prec_batched(win_omds[:, :, :3])    # (S, n-1)
+        # Two batched GPU calls — prec_batched_fn compiled once in main(), stable reference
+        kappas = prec_batched_fn(win_omds[:, :, 3:])   # (S, n-1)
+        omegas = prec_batched_fn(win_omds[:, :, :3])    # (S, n-1)
 
         # One batched GPU call
         theta_opts = batched_denoiser_fn(win_omds, win_gt, win_gt_R,
@@ -878,6 +880,12 @@ def main():
     denoiser_fn         = build_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
     batched_denoiser_fn = build_batched_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
 
+    # Build prec_batched_fn once using functools.partial — stable reference, no recompile per sequence
+    lk, mr = exp_cfg.local_k, exp_cfg.max_kappa_ratio
+    prec_batched_fn = jax.jit(jax.vmap(functools.partial(_sigma_and_precision,
+                                                          local_k=lk,
+                                                          max_kappa_ratio=mr)))
+
     dummy_odom = jnp.zeros((args.window - 1, 6))
     dummy_gt   = jnp.zeros((args.window, 6))
     dummy_gR   = jnp.zeros((args.window, 3, 3))
@@ -885,11 +893,12 @@ def main():
     dummy_w    = jnp.ones(args.window - 1)
     # Warm up single denoiser (used for synthetic)
     _ = denoiser_fn(dummy_odom, dummy_gt, dummy_gR, dummy_k, dummy_w).block_until_ready()
-    # Warm up batched denoiser (used for KITTI)
+    # Warm up batched denoiser and precision function (used for KITTI)
     dummy_omds = jnp.zeros((args.seeds, args.window - 1, 6))
     dummy_ks   = jnp.ones((args.seeds, args.window - 1))
     dummy_ws   = jnp.ones((args.seeds, args.window - 1))
     _ = batched_denoiser_fn(dummy_omds, dummy_gt, dummy_gR, dummy_ks, dummy_ws).block_until_ready()
+    _ = prec_batched_fn(dummy_omds[:, :, :3]).block_until_ready()
     print(f"  Compiled in {time.time() - t0:.1f}s  (no retrace after this)")
 
     # Collect results
@@ -980,7 +989,7 @@ def main():
             # Denoise all seeds in one batched pass
             t_start = time.time()
             denoised_globals = denoise_sequence_batched(
-                noisy_rels, gt_global, gt_R_mats, batched_denoiser_fn, exp_cfg
+                noisy_rels, gt_global, gt_R_mats, batched_denoiser_fn, prec_batched_fn, exp_cfg
             )
             elapsed = time.time() - t_start
             poses_per_sec = len(gt_global) * args.seeds / (elapsed + 1e-9)
