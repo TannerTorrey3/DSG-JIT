@@ -607,36 +607,31 @@ def relative_poses_from_mats(gt_mats: np.ndarray) -> np.ndarray:
     U-turns in urban sequences). Consecutive-frame relative rotations are always
     small (< 0.15 rad at 10 Hz), so so3_log on dR is safe.
     """
-    from dsg_jit.core.math3d import so3_log as so3_log_np
-    n = gt_mats.shape[0]
-    rel = []
-    for i in range(n - 1):
-        Ri = gt_mats[i,   :3, :3]
-        Rj = gt_mats[i+1, :3, :3]
-        ti = gt_mats[i,   :3,  3]
-        tj = gt_mats[i+1, :3,  3]
-        dt = Ri.T @ (tj - ti)
-        dR = Ri.T @ Rj
-        dw = np.array(so3_log_np(jnp.array(dR)))
-        rel.append(np.concatenate([dt, dw]))
-    return np.stack(rel)                                     # (n-1, 6)
+    Ri   = jnp.array(gt_mats[:-1, :3, :3], dtype=jnp.float32)
+    Rj   = jnp.array(gt_mats[1:,  :3, :3], dtype=jnp.float32)
+    diff = jnp.array(gt_mats[1:, :3, 3] - gt_mats[:-1, :3, 3], dtype=jnp.float32)
+    dt   = jnp.einsum('nji,nj->ni', Ri, diff)
+    dR   = jnp.einsum('nji,njk->nik', Ri, Rj)
+    dw   = jax.vmap(so3_log)(dR)
+    return np.concatenate([np.array(dt), np.array(dw)], axis=-1)  # (n-1, 6)
 
 
 def integrate_poses(rel_poses: np.ndarray) -> np.ndarray:
     """Integrate (n-1, 6) relative poses to (n, 6) global poses."""
-    from dsg_jit.core.math3d import so3_exp as so3_exp_np, so3_log as so3_log_np
-    n = rel_poses.shape[0] + 1
-    poses = np.zeros((n, 6), dtype=np.float32)
-    R = np.eye(3)
-    t = np.zeros(3)
-    for i, rel in enumerate(rel_poses):
+    rel_j = jnp.array(rel_poses, dtype=jnp.float32)
+
+    def step(carry, rel):
+        R, t = carry
         dt, dw = rel[:3], rel[3:]
-        dR = np.array(so3_exp_np(jnp.array(dw)))
-        t = t + R @ dt
-        R = R @ dR
-        w = np.array(so3_log_np(jnp.array(R)))
-        poses[i + 1] = np.concatenate([t, w])
-    return poses
+        dR    = so3_exp(dw)
+        t_new = t + R @ dt
+        R_new = R @ dR
+        return (R_new, t_new), jnp.concatenate([t_new, so3_log(R_new)])
+
+    init = (jnp.eye(3, dtype=jnp.float32), jnp.zeros(3, dtype=jnp.float32))
+    _, poses_1_to_n = jax.lax.scan(step, init, rel_j)
+    pose0 = jnp.zeros((1, 6), dtype=jnp.float32)
+    return np.array(jnp.concatenate([pose0, poses_1_to_n], axis=0))
 
 
 # ---------------------------------------------------------------------------
@@ -650,15 +645,13 @@ def compute_ate(poses_est: np.ndarray, poses_gt: np.ndarray) -> float:
 
 def compute_are(poses_est: np.ndarray, poses_gt: np.ndarray) -> float:
     """Absolute rotation error (mean geodesic, degrees)."""
-    from dsg_jit.core.math3d import so3_exp as so3e, so3_log as so3l
-    errs = []
-    for i in range(len(poses_est)):
-        Re = np.array(so3e(jnp.array(poses_est[i, 3:])))
-        Rg = np.array(so3e(jnp.array(poses_gt[i, 3:])))
-        dR = Re.T @ Rg
-        angle = float(np.linalg.norm(np.array(so3l(jnp.array(dR)))))
-        errs.append(np.degrees(angle))
-    return float(np.mean(errs))
+    ws_e = jnp.array(poses_est[:, 3:], dtype=jnp.float32)
+    ws_g = jnp.array(poses_gt[:, 3:],  dtype=jnp.float32)
+    Rs_e = jax.vmap(so3_exp)(ws_e)
+    Rs_g = jax.vmap(so3_exp)(ws_g)
+    dRs  = jnp.einsum('nij,nik->njk', Rs_e, Rs_g)
+    angles_rad = jnp.linalg.norm(jax.vmap(so3_log)(dRs), axis=-1)
+    return float(jnp.mean(jnp.degrees(angles_rad)))
 
 
 def delta_metric(noisy_poses, denoised_poses, gt_poses):
@@ -813,7 +806,7 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
         theta_opts = batched_denoiser_fn(win_omds, win_gt, win_gt_R,
                                          kappas, omegas)      # (S, n-1, 6)
 
-        corrected = np.array(win_omds) + np.array(theta_opts)  # (S, n-1, 6)
+        corrected = np.array(win_omds + theta_opts)  # (S, n-1, 6)
         write_lo = exp_cfg.overlap // 2 if pos > 0 else 0
         write_hi = n_edges - exp_cfg.overlap // 2 if hi < n_poses - 1 else n_edges
         denoised_rels[:, lo + write_lo:lo + write_hi, :] = corrected[:, write_lo:write_hi, :]
@@ -972,11 +965,11 @@ def main():
             gt_mats = np.stack(raw_mats, axis=0)
             if args.max_poses is not None:
                 gt_mats = gt_mats[:args.max_poses]
-            from dsg_jit.core.math3d import so3_log as so3l
             gt_global = np.zeros((len(gt_mats), 6), dtype=np.float32)
-            for i, T in enumerate(gt_mats):
-                gt_global[i, :3] = T[:3, 3]
-                gt_global[i, 3:] = np.array(so3l(jnp.array(T[:3, :3])))
+            gt_global[:, :3] = gt_mats[:, :3, 3]
+            gt_global[:, 3:] = np.array(
+                jax.vmap(so3_log)(jnp.array(gt_mats[:, :3, :3], dtype=jnp.float32))
+            )
             gt_R_mats = gt_mats[:, :3, :3]
             gt_rel    = relative_poses_from_mats(gt_mats)
 
