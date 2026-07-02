@@ -825,7 +825,8 @@ def main():
         description="Exp42: SE-Sync Structured GN Inner Solver for Odometry Denoising"
     )
     parser.add_argument("--kitti-root", type=str, default=None)
-    parser.add_argument("--seqs",       type=str, default="00,01,02,05,06,07,08,09,10")
+    parser.add_argument("--seqs",       type=str, default=None,
+                        help="Comma-separated sequence IDs (default: all sequences found in kitti-root)")
     parser.add_argument("--sigma-t",    type=float, default=0.03)
     parser.add_argument("--sigma-r",    type=float, default=0.01)
     parser.add_argument("--window",     type=int,   default=50)
@@ -903,7 +904,14 @@ def main():
     else:
         if args.kitti_root is None:
             raise ValueError("Provide --kitti-root or use --synthetic")
-        sequences = [(s.strip(), None) for s in args.seqs.split(",")]
+        if args.seqs is not None:
+            seq_ids = [s.strip() for s in args.seqs.split(",")]
+        else:
+            seq_ids = sorted(
+                d for d in os.listdir(args.kitti_root)
+                if os.path.isfile(os.path.join(args.kitti_root, d, "poses.txt"))
+            )
+        sequences = [(s, None) for s in seq_ids]
 
     for seq_id, n_synth in sequences:
         seq_dT, seq_dR, seq_dC = [], [], []
