@@ -44,12 +44,8 @@ from dsg_jit.core.math3d import so3_exp, so3_log
 
 @dataclass(frozen=True)
 class InnerCfg:
-    n_iters_rot:  int   = 15     # bumped from 10 — rejected LM steps spend a scan slot without progress
-    damping_init: float = 1e-4
-    damping_min:  float = 1e-6
-    damping_max:  float = 1e2
-    damping_down: float = 0.5    # relax factor on accept
-    damping_up:   float = 4.0    # tighten factor on reject
+    n_iters_rot: int = 10
+    damping:     float = 1e-4
 
 @dataclass(frozen=True)
 class OuterCfg:
@@ -61,11 +57,6 @@ class OuterCfg:
     beta1:     float = 0.9
     beta2:     float = 0.999
     eps:       float = 1e-8
-    warmup_steps: int = 5    # ramp lr up over this many steps after each phase-boundary
-                              # reset — at local_t=1, Adam's bias correction makes
-                              # m_hat/sqrt(v_hat) collapse to exactly sign(gradient),
-                              # i.e. a maximum-magnitude step regardless of gradient
-                              # trustworthiness; this softens that blind first step
 
 @dataclass(frozen=True)
 class ExpCfg:
@@ -147,24 +138,12 @@ def build_translation_laplacian(omega: jnp.ndarray, n: int) -> jnp.ndarray:
 # Rotation GN with IFT custom_vjp
 # ---------------------------------------------------------------------------
 
-def _rotation_cost(R: jnp.ndarray, R_meas: jnp.ndarray, kappa: jnp.ndarray) -> jnp.ndarray:
-    """Scalar GN objective: sum_i kappa_i * ||so3_log(R_meas_i^T R_i^T R_{i+1})||^2.
-
-    Used by the accept/reject logic in _rotation_gn_raw — a candidate step is
-    only accepted if it actually reduces this cost (Levenberg-Marquardt style).
-    """
-    r = jax.vmap(
-        lambda Ri, Rj, Rij: so3_log(Rij.T @ Ri.T @ Rj)
-    )(R[:-1], R[1:], R_meas)
-    return jnp.sum(kappa * jnp.sum(r ** 2, axis=-1))
-
-
-def _rotation_gn_candidate_step(R: jnp.ndarray,
-                                 R_meas: jnp.ndarray,
-                                 kappa: jnp.ndarray,
-                                 n: int,
-                                 damping: float) -> jnp.ndarray:
-    """One candidate GN step on SO(3)^n for rotation synchronization.
+def _rotation_gn_step(R: jnp.ndarray,
+                       R_meas: jnp.ndarray,
+                       kappa: jnp.ndarray,
+                       n: int,
+                       damping: float) -> jnp.ndarray:
+    """One GN step on SO(3)^n for rotation synchronization.
 
     Solves: (L_free + damping*I) delta = -g_free
     then retracts: R[j] <- so3_exp(delta[j]) @ R[j]
@@ -172,10 +151,6 @@ def _rotation_gn_candidate_step(R: jnp.ndarray,
     All edge residuals computed in parallel via vmap.
     Gradient accumulated via vectorized scatter (.at[].add).
     System solved via jnp.linalg.solve on the dense (3(n-1) x 3(n-1)) matrix.
-
-    Called "candidate" because _rotation_gn_raw accepts/rejects the result
-    based on whether it actually reduces _rotation_cost (see below) — this
-    function itself is unconditional, matching the pre-accept/reject behavior.
     """
     # Rotation residuals for all edges simultaneously — vmap, no loop
     r = jax.vmap(
@@ -208,57 +183,13 @@ def _rotation_gn_raw(R_init: jnp.ndarray,
                       R_meas: jnp.ndarray,
                       kappa: jnp.ndarray,
                       n_iters: int,
-                      damping_init: float,
-                      damping_min: float,
-                      damping_max: float,
-                      damping_down: float,
-                      damping_up: float):
-    """Self-checking (Levenberg-Marquardt style) GN via jax.lax.scan.
-
-    Fixed iteration count — JIT-compilable, no true early exit. Instead, each
-    candidate step is accepted only if it reduces the GN cost; on accept,
-    damping relaxes (bigger, more confident steps next time); on reject, the
-    pose stays put and damping tightens (smaller, more cautious steps).
-
-    Returns (R_star, damping_used) where damping_used is the damping value
-    that actually produced R_star (i.e. the damping active at the LAST
-    ACCEPTED step), NOT whatever damping the scan's running trust-region
-    state ends up at. These differ whenever R_star converges before n_iters
-    is exhausted: subsequent steps keep getting rejected (no more room to
-    improve) and ratchet the running damping up every remaining iteration,
-    with no bound tied to what actually shaped R_star. Using that inflated,
-    post-convergence value in the IFT backward pass over-regularizes the
-    backward solve and silently corrupts the gradient — confirmed via a
-    finite-difference check (cosine similarity vs analytic dropped to ~0.55
-    when using the raw scan-final damping, vs ~0.94 for the original
-    fixed-damping code). damping_used tracks the damping at the moment of
-    the last accept, which is the value IFT actually needs.
-    """
+                      damping: float) -> jnp.ndarray:
+    """Fixed-count GN via jax.lax.scan — JIT-compilable, no early exit."""
     n = R_init.shape[0]
-    cost_init = _rotation_cost(R_init, R_meas, kappa)
-
-    def step(carry, _):
-        R, damping, cost, damping_used = carry
-        R_cand = _rotation_gn_candidate_step(R, R_meas, kappa, n, damping)
-        cost_cand = _rotation_cost(R_cand, R_meas, kappa)
-        accept = cost_cand < cost
-
-        R_new = jnp.where(accept, R_cand, R)
-        # Record the damping that produced R_new whenever a step is accepted —
-        # this is what the backward pass must use, not the post-update damping.
-        damping_used_new = jnp.where(accept, damping, damping_used)
-        damping_new = jnp.where(
-            accept,
-            jnp.maximum(damping * damping_down, damping_min),
-            jnp.minimum(damping * damping_up, damping_max),
-        )
-        cost_new = jnp.where(accept, cost_cand, cost)
-        return (R_new, damping_new, cost_new, damping_used_new), None
-
-    (R_star, _, _, damping_used), _ = jax.lax.scan(
-        step, (R_init, damping_init, cost_init, damping_init), None, length=n_iters
-    )
-    return R_star, damping_used
+    def step(R, _):
+        return _rotation_gn_step(R, R_meas, kappa, n, damping), None
+    R_star, _ = jax.lax.scan(step, R_init, None, length=n_iters)
+    return R_star
 
 
 @jax.custom_vjp
@@ -266,32 +197,18 @@ def rotation_gn_ift(R_init: jnp.ndarray,
                     R_meas: jnp.ndarray,
                     kappa: jnp.ndarray,
                     n_iters: int,
-                    damping_init: float,
-                    damping_min: float,
-                    damping_max: float,
-                    damping_down: float,
-                    damping_up: float) -> jnp.ndarray:
+                    damping: float) -> jnp.ndarray:
     """Rotation GN with IFT shortcut backward.
 
-    Forward: run fixed-count self-checking GN, return R_star.
+    Forward: run fixed-count GN, return R_star.
     Backward: IFT — one 3(n-1) x 3(n-1) solve instead of unrolling N iters.
     """
-    R_star, _ = _rotation_gn_raw(R_init, R_meas, kappa, n_iters,
-                                  damping_init, damping_min, damping_max,
-                                  damping_down, damping_up)
-    return R_star
+    return _rotation_gn_raw(R_init, R_meas, kappa, n_iters, damping)
 
 
-def _rotation_gn_ift_fwd(R_init, R_meas, kappa, n_iters,
-                          damping_init, damping_min, damping_max, damping_down, damping_up):
-    R_star, damping_used = _rotation_gn_raw(R_init, R_meas, kappa, n_iters,
-                                             damping_init, damping_min, damping_max,
-                                             damping_down, damping_up)
-    # NOTE: pack damping_used (the damping active at the LAST ACCEPTED step),
-    # not damping_init and not whatever the scan's running trust-region state
-    # ends at — see _rotation_gn_raw's docstring for why these three differ
-    # and why using the wrong one silently corrupts the backward gradient.
-    return R_star, (R_star, R_meas, kappa, damping_used)
+def _rotation_gn_ift_fwd(R_init, R_meas, kappa, n_iters, damping):
+    R_star = _rotation_gn_raw(R_init, R_meas, kappa, n_iters, damping)
+    return R_star, (R_star, R_meas, kappa, n_iters, damping)
 
 
 def _rotation_gn_ift_bwd(res, g_R_star):
@@ -301,19 +218,8 @@ def _rotation_gn_ift_bwd(res, g_R_star):
     1. Project to tangent space: g_free (3(n-1),) — skip anchor
     2. IFT: solve L_free @ v = g_free  (one dense solve, not N unrolled steps)
     3. Propagate v back through the gradient function to get dL/d(R_meas, kappa)
-
-    Uses damping_used (the damping value active at the LAST ACCEPTED GN step —
-    i.e. the damping that actually produced R_star), NOT the solver's initial
-    damping and NOT the scan's final running trust-region state (which can be
-    arbitrarily inflated by trailing rejected steps after convergence — see
-    _rotation_gn_raw's docstring). This backward pass already linearizes
-    around the damped Hessian used in the step that produced R_star (that's
-    why damping*eye appears here at all), so using any other damping value
-    would linearize around a Hessian inconsistent with the one that actually
-    produced R_star: a silent, non-crashing, wrong-gradient bug — confirmed
-    via finite-difference check (see _rotation_gn_raw docstring for numbers).
     """
-    R_star, R_meas, kappa, damping_used = res
+    R_star, R_meas, kappa, n_iters, damping = res
     n = R_star.shape[0]
 
     # Project upstream gradient to axis-angle increments on SO(3).
@@ -326,9 +232,9 @@ def _rotation_gn_ift_bwd(res, g_R_star):
     g_tangent = jax.vmap(project_grad)(R_star, g_R_star)    # (n, 3)
     g_free = g_tangent[1:].reshape(-1)                       # (3(n-1),) — drop anchor
 
-    # IFT: solve L_free @ v = g_free  (same Hessian as forward GN, damping_used)
+    # IFT: solve L_free @ v = g_free  (same Hessian as forward GN)
     L = build_rotation_laplacian(R_meas, kappa, n)
-    L_free = L[3:, 3:] + damping_used * jnp.eye(3 * (n - 1))
+    L_free = L[3:, 3:] + damping * jnp.eye(3 * (n - 1))
     v_free = jnp.linalg.solve(L_free, g_free)               # (3(n-1),)
     v_all = jnp.concatenate([jnp.zeros(3), v_free]).reshape(n, 3)  # (n, 3)
 
@@ -352,8 +258,7 @@ def _rotation_gn_ift_bwd(res, g_R_star):
 
     # Sensitivity to R_init decays exponentially with n_iters — zero is standard
     g_R_init = jnp.zeros_like(R_star)
-    # 9 primal args -> 9-tuple: 3 real grads + 6 None (n_iters + 5 damping-bound scalars)
-    return g_R_init, g_R_meas, g_kappa, None, None, None, None, None, None
+    return g_R_init, g_R_meas, g_kappa, None, None
 
 
 rotation_gn_ift.defvjp(_rotation_gn_ift_fwd, _rotation_gn_ift_bwd)
@@ -438,9 +343,8 @@ def sesync_inner_solve(theta: jnp.ndarray,
     R_init = jnp.concatenate([jnp.eye(3)[None], R_traj], axis=0)  # (n, 3, 3)
 
     # Rotation GN with IFT backward (3(n-1) x 3(n-1) system)
-    R_star = rotation_gn_ift(R_init, R_meas, kappa, cfg.n_iters_rot,
-                              cfg.damping_init, cfg.damping_min, cfg.damping_max,
-                              cfg.damping_down, cfg.damping_up)
+    R_star = rotation_gn_ift(R_init, R_meas, kappa,
+                              cfg.n_iters_rot, cfg.damping)
 
     # Analytic translation recovery (one dense solve, auto-diff backward)
     t_star = recover_translations(R_star, t_meas, omega, n)
@@ -605,13 +509,8 @@ def outer_adam_loop(theta_init: jnp.ndarray,
                                        step_idx - N_T1 - N_R + 1,
                                        step_idx + 1))
 
-        # Learning rate per phase, ramped up over warmup_steps at the start of
-        # each phase — local_t already resets to 1 at every phase boundary, so
-        # the ramp re-triggers automatically at all three transitions. Softens
-        # the maximum-magnitude blind first step described in OuterCfg above.
-        lr_base = jnp.where(in_rot, outer_cfg.lr_rot, outer_cfg.lr_trans)
-        lr_scale = jnp.minimum(1.0, local_t.astype(jnp.float32) / float(outer_cfg.warmup_steps))
-        lr = lr_base * lr_scale
+        # Learning rate per phase
+        lr = jnp.where(in_rot, outer_cfg.lr_rot, outer_cfg.lr_trans)
 
         g = grad_fn(theta)
 
@@ -732,8 +631,10 @@ def relative_poses_from_mats(gt_mats: np.ndarray) -> np.ndarray:
     return np.concatenate([np.array(dt), np.array(dw)], axis=-1)  # (n-1, 6)
 
 
-def _integrate_poses_core(rel_poses: jnp.ndarray) -> jnp.ndarray:
-    """Pure-JAX (n-1,6) -> (n,6) integration. No numpy I/O — safe under vmap/jit."""
+def integrate_poses(rel_poses: np.ndarray) -> np.ndarray:
+    """Integrate (n-1, 6) relative poses to (n, 6) global poses."""
+    rel_j = jnp.array(rel_poses, dtype=jnp.float32)
+
     def step(carry, rel):
         R, t = carry
         dt, dw = rel[:3], rel[3:]
@@ -742,22 +643,10 @@ def _integrate_poses_core(rel_poses: jnp.ndarray) -> jnp.ndarray:
         R_new = R @ dR
         return (R_new, t_new), jnp.concatenate([t_new, so3_log(R_new)])
 
-    init = (jnp.eye(3, dtype=rel_poses.dtype), jnp.zeros(3, dtype=rel_poses.dtype))
-    _, poses_1_to_n = jax.lax.scan(step, init, rel_poses)
-    pose0 = jnp.zeros((1, 6), dtype=rel_poses.dtype)
-    return jnp.concatenate([pose0, poses_1_to_n], axis=0)
-
-
-def integrate_poses(rel_poses: np.ndarray) -> np.ndarray:
-    """Integrate (n-1, 6) relative poses to (n, 6) global poses."""
-    return np.array(_integrate_poses_core(jnp.array(rel_poses, dtype=jnp.float32)))
-
-
-def build_batched_integrator():
-    """jit+vmap _integrate_poses_core over the seed axis — one dispatch for all
-    seeds instead of S serial un-jitted calls. Retraces once per distinct
-    n_poses (scan length), same caching behavior as batched_denoiser_fn."""
-    return jax.jit(jax.vmap(_integrate_poses_core))
+    init = (jnp.eye(3, dtype=jnp.float32), jnp.zeros(3, dtype=jnp.float32))
+    _, poses_1_to_n = jax.lax.scan(step, init, rel_j)
+    pose0 = jnp.zeros((1, 6), dtype=jnp.float32)
+    return np.array(jnp.concatenate([pose0, poses_1_to_n], axis=0))
 
 
 # ---------------------------------------------------------------------------
@@ -892,7 +781,6 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
                               gt_R_mats: np.ndarray,
                               batched_denoiser_fn,
                               prec_batched_fn,
-                              integrator_fn,
                               exp_cfg: ExpCfg) -> list:
     """Slide a window over the sequence, denoising all S seeds simultaneously.
 
@@ -941,10 +829,7 @@ def denoise_sequence_batched(noisy_rels: np.ndarray,
 
         pos += stride
 
-    # One batched dispatch for all S seeds instead of S serial un-jitted calls
-    denoised_globals_j = integrator_fn(jnp.array(denoised_rels))   # (S, n_poses, 6)
-    denoised_globals_np = np.array(denoised_globals_j)             # one host copy
-    return [denoised_globals_np[s] for s in range(S)]
+    return [integrate_poses(denoised_rels[s]) for s in range(S)]
 
 
 # ---------------------------------------------------------------------------
@@ -983,7 +868,7 @@ def main():
     os.makedirs(run_dir, exist_ok=True)
     print(f"Results will be saved to: {run_dir}")
 
-    inner_cfg = InnerCfg(n_iters_rot=15, damping_init=1e-4)
+    inner_cfg = InnerCfg(n_iters_rot=10, damping=1e-4)
     outer_cfg = OuterCfg(
         n_trans1=args.n_trans1,
         n_rot=args.n_rot,
@@ -1004,12 +889,6 @@ def main():
     t0 = time.time()
     denoiser_fn         = build_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
     batched_denoiser_fn = build_batched_denoiser(args.window, inner_cfg, outer_cfg, exp_cfg)
-
-    # Batched trajectory integrator — one dispatch for all seeds instead of S serial
-    # un-jitted calls per sequence. Retraces once per distinct n_poses (scan length),
-    # same caching behavior as batched_denoiser_fn across window sizes; no warmup here
-    # since compile cost depends on n_poses, which varies per KITTI sequence.
-    integrator_fn = build_batched_integrator()
 
     # Build prec_batched_fn once using functools.partial — stable reference, no recompile
     # per sequence. No vmap here: _sigma_and_precision now pools across the seed axis
@@ -1130,8 +1009,7 @@ def main():
             # Denoise all seeds in one batched pass
             t_start = time.time()
             denoised_globals = denoise_sequence_batched(
-                noisy_rels, gt_global, gt_R_mats, batched_denoiser_fn, prec_batched_fn,
-                integrator_fn, exp_cfg
+                noisy_rels, gt_global, gt_R_mats, batched_denoiser_fn, prec_batched_fn, exp_cfg
             )
             elapsed = time.time() - t_start
             poses_per_sec = len(gt_global) * args.seeds / (elapsed + 1e-9)
