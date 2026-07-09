@@ -942,6 +942,69 @@ def denoise_sequence_pooled(noisy_rels: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# Noise-adaptive solver settings
+# ---------------------------------------------------------------------------
+
+def noise_adaptive_inner_outer_cfg(sigma_t: float,
+                                    base_inner_kwargs: dict,
+                                    base_outer_kwargs: dict,
+                                    reference_sigma_t: float = 0.03) -> Tuple[InnerCfg, OuterCfg]:
+    """Scale a few self-checking-solver settings based on noise level, relative
+    to a reference noise level where the fixed settings are already well-tuned.
+
+    Background: comparing exp43 (self-checking GN + adaptive damping + Adam
+    warmup) against the pre-self-checking baseline across sigma_t = 0.01,
+    0.03, 0.05, 0.10 showed a noise-dependent pattern -- exp43 clearly helps
+    at low noise (0.01: +29.2% vs +21.5% baseline), is roughly a wash at
+    sigma_t=0.03 (+38.6% vs +39.1%), but underperforms the baseline at higher
+    noise (0.05: +18.9% vs +31.9%; 0.10: +7.4% vs +12.4%). Hypothesis: the
+    solver's caution (rejecting steps, escalating damping, ramping Adam's LR)
+    costs little when the needed correction is small, but at higher noise the
+    correction needed is larger, and the same FIXED iteration/step budget
+    used at every noise level doesn't leave enough room to both be cautious
+    and fully reach the correction.
+
+    This function keeps settings IDENTICAL to the fixed defaults at or below
+    reference_sigma_t (scale == 1.0 there), and only adjusts three settings
+    as noise grows past that reference:
+      - n_iters_rot:  more attempts for the inner GN solve
+      - damping_up:   escalate caution more gently after a rejected step
+      - warmup_steps: reach full-strength outer Adam steps sooner
+
+    Comparing sigma_t=0.03 (roughly a wash) against 0.05/0.10 (regressions)
+    motivates using 0.03 as the reference point below which nothing changes.
+    """
+    scale = max(1.0, sigma_t / reference_sigma_t)
+
+    base_n_iters = base_inner_kwargs.get("n_iters_rot", 15)
+    n_iters_rot = int(min(40, round(base_n_iters * scale)))
+
+    base_damping_up = base_inner_kwargs.get("damping_up", 4.0)
+    damping_up = max(1.5, base_damping_up / scale)
+
+    base_warmup = base_outer_kwargs.get("warmup_steps", 5)
+    warmup_steps = int(max(1, round(base_warmup / scale)))
+
+    inner_cfg = InnerCfg(
+        n_iters_rot=n_iters_rot,
+        damping_init=base_inner_kwargs.get("damping_init", 1e-4),
+        damping_min=base_inner_kwargs.get("damping_min", 1e-6),
+        damping_max=base_inner_kwargs.get("damping_max", 1e2),
+        damping_down=base_inner_kwargs.get("damping_down", 0.5),
+        damping_up=damping_up,
+    )
+    outer_cfg = OuterCfg(
+        n_trans1=base_outer_kwargs["n_trans1"],
+        n_rot=base_outer_kwargs["n_rot"],
+        n_trans2=base_outer_kwargs["n_trans2"],
+        lr_trans=base_outer_kwargs["lr_trans"],
+        lr_rot=base_outer_kwargs["lr_rot"],
+        warmup_steps=warmup_steps,
+    )
+    return inner_cfg, outer_cfg
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -967,6 +1030,13 @@ def main():
     parser.add_argument("--n-trans2",   type=int,   default=20)
     parser.add_argument("--lr-trans",   type=float, default=1e-3)
     parser.add_argument("--lr-rot",     type=float, default=1e-3)
+    parser.add_argument("--adaptive-solver", action=argparse.BooleanOptionalAction, default=True,
+                        help="Scale n_iters_rot/damping_up/warmup_steps with sigma_t above the "
+                             "reference noise level (default: on). Use --no-adaptive-solver to "
+                             "restore the original fixed settings at every noise level.")
+    parser.add_argument("--adaptive-reference-sigma-t", type=float, default=0.03,
+                        help="Noise level at/below which adaptive settings are identical to the "
+                             "fixed defaults; settings only change above this level.")
     parser.add_argument("--output-dir", type=str,   default=os.path.expanduser("~/exp_res"),
                         help="Directory to write run results (timestamped sub-dir created automatically)")
     args = parser.parse_args()
@@ -977,14 +1047,38 @@ def main():
     os.makedirs(run_dir, exist_ok=True)
     print(f"Results will be saved to: {run_dir}")
 
-    inner_cfg = InnerCfg(n_iters_rot=15, damping_init=1e-4)
-    outer_cfg = OuterCfg(
-        n_trans1=args.n_trans1,
-        n_rot=args.n_rot,
-        n_trans2=args.n_trans2,
-        lr_trans=args.lr_trans,
-        lr_rot=args.lr_rot,
-    )
+    base_inner_kwargs = {"n_iters_rot": 15, "damping_init": 1e-4, "damping_min": 1e-6,
+                         "damping_max": 1e2, "damping_down": 0.5, "damping_up": 4.0}
+    base_outer_kwargs = {"n_trans1": args.n_trans1, "n_rot": args.n_rot, "n_trans2": args.n_trans2,
+                         "lr_trans": args.lr_trans, "lr_rot": args.lr_rot, "warmup_steps": 5}
+
+    if args.adaptive_solver:
+        inner_cfg, outer_cfg = noise_adaptive_inner_outer_cfg(
+            sigma_t=args.sigma_t,
+            base_inner_kwargs=base_inner_kwargs,
+            base_outer_kwargs=base_outer_kwargs,
+            reference_sigma_t=args.adaptive_reference_sigma_t,
+        )
+        print(f"Noise-adaptive solver settings (sigma_t={args.sigma_t}, "
+              f"reference={args.adaptive_reference_sigma_t}): "
+              f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
+              f"warmup_steps={outer_cfg.warmup_steps}")
+    else:
+        inner_cfg = InnerCfg(n_iters_rot=base_inner_kwargs["n_iters_rot"],
+                              damping_init=base_inner_kwargs["damping_init"],
+                              damping_min=base_inner_kwargs["damping_min"],
+                              damping_max=base_inner_kwargs["damping_max"],
+                              damping_down=base_inner_kwargs["damping_down"],
+                              damping_up=base_inner_kwargs["damping_up"])
+        outer_cfg = OuterCfg(n_trans1=base_outer_kwargs["n_trans1"],
+                              n_rot=base_outer_kwargs["n_rot"],
+                              n_trans2=base_outer_kwargs["n_trans2"],
+                              lr_trans=base_outer_kwargs["lr_trans"],
+                              lr_rot=base_outer_kwargs["lr_rot"],
+                              warmup_steps=base_outer_kwargs["warmup_steps"])
+        print(f"Fixed (non-adaptive) solver settings: n_iters_rot={inner_cfg.n_iters_rot}, "
+              f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}")
+
     exp_cfg   = ExpCfg(
         window=args.window,
         overlap=args.overlap,
@@ -1174,6 +1268,11 @@ def main():
             "lr_rot": args.lr_rot,
             "synthetic": args.synthetic,
             "run_ts": run_ts,
+            "adaptive_solver": args.adaptive_solver,
+            "adaptive_reference_sigma_t": args.adaptive_reference_sigma_t,
+            "n_iters_rot_used": inner_cfg.n_iters_rot,
+            "damping_up_used": inner_cfg.damping_up,
+            "warmup_steps_used": outer_cfg.warmup_steps,
         }
         aggregate = {
             "config": config,
