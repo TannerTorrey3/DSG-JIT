@@ -78,6 +78,12 @@ class OuterCfg:
                               # m_hat/sqrt(v_hat) collapse to exactly sign(gradient),
                               # i.e. a maximum-magnitude step regardless of gradient
                               # trustworthiness; this softens that blind first step
+    rot_loss_boost: float = 1.0  # multiplies loss_r in outer_adam_loop's loss_fn.
+                              # loss_t is ~180-200x larger than loss_r at every tested
+                              # noise level (unweighted sum), so the rotation phase's
+                              # masked gradient is dominated by rotation's effect on
+                              # the much bigger translation loss rather than its own
+                              # objective. 1.0 = today's unweighted behavior.
 
 @dataclass(frozen=True)
 class ExpCfg:
@@ -583,6 +589,13 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     # away from Rb. Both Ra (R_star) and Rb (gt_R_rel) are in window-relative
     # frame, so the Frobenius gradient 2*(Ra - Rb) gives the correct denoising
     # direction when Ra ≈ Rb (within noise level).
+    #
+    # loss_r is scaled by outer_cfg.rot_loss_boost before summing with loss_t.
+    # Measured loss_t is ~180-200x larger than loss_r at every tested noise
+    # level, so an unweighted sum lets the rotation phase's masked gradient be
+    # dominated by rotation's effect on the (much bigger) translation loss
+    # rather than its own objective — rot_loss_boost=1.0 reproduces that
+    # original unweighted behavior exactly.
     def loss_fn(theta):
         R_star, t_star = sesync_inner_solve(
             theta, noisy_odom, kappa, omega, n, inner_cfg
@@ -591,7 +604,7 @@ def outer_adam_loop(theta_init: jnp.ndarray,
         loss_r = jnp.mean(jax.vmap(
             lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2)
         )(R_star, gt_R_rel))
-        return loss_t + loss_r
+        return loss_t + outer_cfg.rot_loss_boost * loss_r
 
     grad_fn = jax.grad(loss_fn)
 
@@ -965,14 +978,24 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
     and fully reach the correction.
 
     This function keeps settings IDENTICAL to the fixed defaults at or below
-    reference_sigma_t (scale == 1.0 there), and only adjusts three settings
+    reference_sigma_t (scale == 1.0 there), and only adjusts four settings
     as noise grows past that reference:
-      - n_iters_rot:  more attempts for the inner GN solve
-      - damping_up:   escalate caution more gently after a rejected step
-      - warmup_steps: reach full-strength outer Adam steps sooner
+      - n_iters_rot:    more attempts for the inner GN solve
+      - damping_up:     escalate caution more gently after a rejected step
+      - warmup_steps:   reach full-strength outer Adam steps sooner
+      - rot_loss_boost: weight the outer loss's rotation term more heavily
 
     Comparing sigma_t=0.03 (roughly a wash) against 0.05/0.10 (regressions)
     motivates using 0.03 as the reference point below which nothing changes.
+
+    rot_loss_boost separately validated across all four sweep noise levels:
+    a FIXED boost (e.g. 30.0 at every noise level) reliably helped rotation
+    everywhere but hurt translation more often than not at sigma_t <=
+    reference_sigma_t (where exp43 was already the stronger regime and this
+    rebalancing overcorrects a problem that barely exists yet). Scaling it
+    the same way as the other three settings -- off (1.0) at/below the
+    reference, ramping up above it -- kept the high-noise win (rotation and
+    translation both improved) without the low-noise regression.
     """
     scale = max(1.0, sigma_t / reference_sigma_t)
 
@@ -984,6 +1007,9 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
 
     base_warmup = base_outer_kwargs.get("warmup_steps", 5)
     warmup_steps = int(max(1, round(base_warmup / scale)))
+
+    max_rot_loss_boost = base_outer_kwargs.get("max_rot_loss_boost", 30.0)
+    rot_loss_boost = min(max_rot_loss_boost, 1.0 + (max_rot_loss_boost - 1.0) * (scale - 1.0))
 
     inner_cfg = InnerCfg(
         n_iters_rot=n_iters_rot,
@@ -1000,6 +1026,7 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
         lr_trans=base_outer_kwargs["lr_trans"],
         lr_rot=base_outer_kwargs["lr_rot"],
         warmup_steps=warmup_steps,
+        rot_loss_boost=rot_loss_boost,
     )
     return inner_cfg, outer_cfg
 
@@ -1062,7 +1089,7 @@ def main():
         print(f"Noise-adaptive solver settings (sigma_t={args.sigma_t}, "
               f"reference={args.adaptive_reference_sigma_t}): "
               f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
-              f"warmup_steps={outer_cfg.warmup_steps}")
+              f"warmup_steps={outer_cfg.warmup_steps}, rot_loss_boost={outer_cfg.rot_loss_boost:.2f}")
     else:
         inner_cfg = InnerCfg(n_iters_rot=base_inner_kwargs["n_iters_rot"],
                               damping_init=base_inner_kwargs["damping_init"],
@@ -1075,9 +1102,11 @@ def main():
                               n_trans2=base_outer_kwargs["n_trans2"],
                               lr_trans=base_outer_kwargs["lr_trans"],
                               lr_rot=base_outer_kwargs["lr_rot"],
-                              warmup_steps=base_outer_kwargs["warmup_steps"])
+                              warmup_steps=base_outer_kwargs["warmup_steps"],
+                              rot_loss_boost=1.0)
         print(f"Fixed (non-adaptive) solver settings: n_iters_rot={inner_cfg.n_iters_rot}, "
-              f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}")
+              f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}, "
+              f"rot_loss_boost={outer_cfg.rot_loss_boost:.2f}")
 
     exp_cfg   = ExpCfg(
         window=args.window,
@@ -1273,6 +1302,7 @@ def main():
             "n_iters_rot_used": inner_cfg.n_iters_rot,
             "damping_up_used": inner_cfg.damping_up,
             "warmup_steps_used": outer_cfg.warmup_steps,
+            "rot_loss_boost_used": outer_cfg.rot_loss_boost,
         }
         aggregate = {
             "config": config,
