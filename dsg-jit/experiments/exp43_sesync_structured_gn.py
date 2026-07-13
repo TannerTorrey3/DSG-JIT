@@ -836,15 +836,10 @@ def denoise_sequence(noisy_rel: np.ndarray,
     stride   = exp_cfg.window - exp_cfg.overlap
     denoised_rel = noisy_rel.copy()
 
-    pos = 0
-    while pos + exp_cfg.window <= n_poses - 1:
-        # Extract window
-        lo, hi = pos, pos + exp_cfg.window
+    def solve_and_write(lo, hi, write_lo, write_hi):
         win_odom = jnp.array(noisy_rel[lo:hi - 1])          # (W-1, 6)
         win_gt   = jnp.array(gt_global[lo:hi])               # (W, 6)
         win_gt_R = jnp.array(gt_R_mats[lo:hi])              # (W, 3, 3) raw rotations
-
-        n_edges = win_odom.shape[0]
 
         # Per-edge precision from local windowed variance (eager — small computation)
         sigma_t_est = estimate_noise_mad(np.array(win_odom[:, :3]))
@@ -873,11 +868,39 @@ def denoise_sequence(noisy_rel: np.ndarray,
 
         # Apply corrections — write back to non-overlapping region
         corrected = np.array(win_odom) + np.array(theta_opt)
-        write_lo = exp_cfg.overlap // 2 if pos > 0 else 0
-        write_hi = n_edges - exp_cfg.overlap // 2 if hi < n_poses - 1 else n_edges
         denoised_rel[lo + write_lo: lo + write_hi] = corrected[write_lo:write_hi]
+        return lo + write_hi   # global edge index written up to (exclusive)
 
+    pos = 0
+    last_written = 0
+    while pos + exp_cfg.window <= n_poses - 1:
+        lo, hi = pos, pos + exp_cfg.window
+        n_edges = hi - 1 - lo
+        write_lo = exp_cfg.overlap // 2 if pos > 0 else 0
+        # Core write width is `stride` edges (+ the front half-overlap for window 0),
+        # NOT `n_edges - overlap//2` — n_edges (=window-1) and stride (=window-overlap)
+        # differ by exactly 1, so subtracting overlap//2 from n_edges left a 1-edge gap
+        # between every consecutive pair of windows that never got denoised at all
+        # (confirmed by simulation: exactly `n_windows-1` permanently-raw edges, one at
+        # every window boundary). Writing `stride + overlap//2` instead makes this
+        # window's write region end exactly where the next window's (write_lo=overlap//2)
+        # begins, whenever there IS a next window (hi < n_poses - 1).
+        write_hi = min(n_edges, stride + exp_cfg.overlap // 2) if hi < n_poses - 1 else n_edges
+        last_written = solve_and_write(lo, hi, write_lo, write_hi)
         pos += stride
+
+    # Tail: the fixed-stride loop above stops once no further full-size window fits,
+    # which can leave up to `stride-1` trailing edges never covered by any window
+    # (independent of the gap fix above — this is the loop simply running out before
+    # reaching the sequence end). Shift one more same-sized window backward so it ends
+    # exactly at the last edge, and start its write region exactly where the previous
+    # window left off — closes any remaining gap (1 edge or many) with no overlap.
+    if last_written < n_poses - 1:
+        hi = n_poses   # exclusive pose bound -> reaches the true last edge (n_poses-2)
+        lo = max(0, hi - exp_cfg.window)
+        n_edges = hi - 1 - lo
+        write_lo = last_written - lo
+        solve_and_write(lo, hi, write_lo, n_edges)
 
     return integrate_poses(denoised_rel)
 
@@ -925,11 +948,7 @@ def denoise_sequence_pooled(noisy_rels: np.ndarray,
     gt_global_j  = jnp.array(gt_global)
     gt_R_mats_j  = jnp.array(gt_R_mats)
 
-    pos = 0
-    while pos + exp_cfg.window <= n_poses - 1:
-        lo, hi = pos, pos + exp_cfg.window
-        n_edges = hi - 1 - lo
-
+    def solve_and_write_all_seeds(lo, hi, write_lo, write_hi):
         win_omds = noisy_rels_j[:, lo:hi - 1, :]   # (S, n-1, 6) — JAX slice, no copy
         win_gt   = gt_global_j[lo:hi]               # (n, 6)
         win_gt_R = gt_R_mats_j[lo:hi]               # (n, 3, 3)
@@ -942,14 +961,42 @@ def denoise_sequence_pooled(noisy_rels: np.ndarray,
         # No seed-axis batching: one dispatch per seed, reusing the shared
         # kappa/omega. Fix 1 (jit-compiled integrate_poses) and Fix 2
         # (self-checking GN + Adam warmup) apply identically per seed here.
-        write_lo = exp_cfg.overlap // 2 if pos > 0 else 0
-        write_hi = n_edges - exp_cfg.overlap // 2 if hi < n_poses - 1 else n_edges
         for s in range(S):
             theta_opt = denoiser_fn(win_omds[s], win_gt, win_gt_R, kappa, omega)
             corrected = np.array(win_omds[s] + theta_opt)   # (n-1, 6)
             denoised_rels[s, lo + write_lo:lo + write_hi, :] = corrected[write_lo:write_hi]
+        return lo + write_hi   # global edge index written up to (exclusive)
 
+    pos = 0
+    last_written = 0
+    while pos + exp_cfg.window <= n_poses - 1:
+        lo, hi = pos, pos + exp_cfg.window
+        n_edges = hi - 1 - lo
+        write_lo = exp_cfg.overlap // 2 if pos > 0 else 0
+        # Core write width is `stride` edges (+ front half-overlap for window 0), NOT
+        # `n_edges - overlap//2` — n_edges (=window-1) and stride (=window-overlap) differ
+        # by exactly 1, so subtracting overlap//2 from n_edges left a 1-edge gap between
+        # every consecutive pair of windows that never got denoised at all (confirmed by
+        # simulation: exactly `n_windows-1` permanently-raw edges, one per window boundary).
+        # Writing `stride + overlap//2` instead makes this window's write region end exactly
+        # where the next window's (write_lo=overlap//2) begins, whenever there IS a next
+        # window (hi < n_poses - 1).
+        write_hi = min(n_edges, stride + exp_cfg.overlap // 2) if hi < n_poses - 1 else n_edges
+        last_written = solve_and_write_all_seeds(lo, hi, write_lo, write_hi)
         pos += stride
+
+    # Tail: the fixed-stride loop above stops once no further full-size window fits,
+    # which can leave up to `stride-1` trailing edges never covered by any window
+    # (independent of the gap fix above — this is the loop simply running out before
+    # reaching the sequence end). Shift one more same-sized window backward so it ends
+    # exactly at the last edge, and start its write region exactly where the previous
+    # window left off — closes any remaining gap (1 edge or many) with no overlap.
+    if last_written < n_poses - 1:
+        hi = n_poses   # exclusive pose bound -> reaches the true last edge (n_poses-2)
+        lo = max(0, hi - exp_cfg.window)
+        n_edges = hi - 1 - lo
+        write_lo = last_written - lo
+        solve_and_write_all_seeds(lo, hi, write_lo, n_edges)
 
     return [integrate_poses(denoised_rels[s]) for s in range(S)]
 
