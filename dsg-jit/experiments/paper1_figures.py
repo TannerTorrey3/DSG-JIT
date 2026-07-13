@@ -37,7 +37,8 @@ from scipy import stats
 # ---------------------------------------------------------------------------
 
 def load_run(run_dir: str) -> dict:
-    """Load all seed results from an exp36 run directory.
+    """Load all seed results from a run directory (or a single aggregate
+    JSON file), auto-detecting exp36 vs exp43 output format.
 
     Returns:
         {
@@ -54,10 +55,16 @@ def load_run(run_dir: str) -> dict:
         }
     """
     run_path = Path(run_dir)
-    seed_files = sorted(run_path.glob("seed_*.json"))
-    if not seed_files:
-        raise FileNotFoundError(f"No seed_*.json files in {run_dir}")
+    if run_path.is_dir():
+        seed_files = sorted(run_path.glob("seed_*.json"))
+        if seed_files:
+            return _load_run_exp36(seed_files)
+    return load_run_exp43(run_path)
 
+
+def _load_run_exp36(seed_files: list) -> dict:
+    """Load all seed results from an exp36-style run directory (one
+    seed_*.json per seed, each containing every sequence)."""
     config = None
     sequences = {}
 
@@ -87,6 +94,57 @@ def load_run(run_dir: str) -> dict:
 
     sigma_trans = config.get("sigma_trans", None)
     sigma_rot = config.get("sigma_rot", None)
+
+    return {
+        "config": config,
+        "sigma_trans": sigma_trans,
+        "sigma_rot": sigma_rot,
+        "sequences": sequences,
+    }
+
+
+def load_run_exp43(run_dir) -> dict:
+    """Load an exp43-style run: a single aggregate JSON (config + per-sequence
+    per-seed dT/dR/dC), either passed directly as a file path or as a
+    directory containing one (aggregate.json, or the lone non-"_seed_"
+    *.json dumped by exp43_sesync_structured_gn.py, e.g. t0.05.json).
+    """
+    run_path = Path(run_dir)
+    if run_path.is_file():
+        json_path = run_path
+    else:
+        candidates = sorted(run_path.glob("aggregate.json"))
+        if not candidates:
+            candidates = sorted(
+                p for p in run_path.glob("*.json") if "_seed_" not in p.name
+            )
+        if not candidates:
+            raise FileNotFoundError(
+                f"No exp43 aggregate JSON (aggregate.json or *.json) found in {run_dir}"
+            )
+        json_path = candidates[0]
+
+    with open(json_path) as f:
+        data = json.load(f)
+
+    config = data.get("config", {})
+    sigma_trans = config.get("sigma_t")
+    sigma_rot = config.get("sigma_r")
+
+    sequences = {}
+    for seq_id, seq_data in data.get("sequences", {}).items():
+        seeds = {}
+        for s in seq_data.get("seeds", []):
+            seed_entry = {
+                "trans": s["dT"],
+                "rot": s["dR"],
+                "combined": s["dC"],
+            }
+            if "poses_per_s" in s:
+                seed_entry["throughput"] = {"poses_per_sec": s["poses_per_s"]}
+            seeds[s["seed"]] = seed_entry
+        n_poses = seq_data.get("seeds", [{}])[0].get("n_poses")
+        sequences[seq_id] = {"n_poses": n_poses, "seeds": seeds}
 
     return {
         "config": config,
