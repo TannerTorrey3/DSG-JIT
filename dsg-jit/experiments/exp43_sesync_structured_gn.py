@@ -765,6 +765,47 @@ def integrate_poses(rel_poses: np.ndarray) -> np.ndarray:
     return np.array(integrator(jnp.array(rel_poses, dtype=jnp.float32)))
 
 
+@functools.lru_cache(maxsize=None)
+def _get_jitted_rotation_integrator():
+    """Same accumulation as _get_jitted_integrator, but returns the accumulated
+    ROTATION MATRICES directly instead of an so3_log-encoded vector.
+
+    _integrate_poses_core's per-step output calls so3_log(R_new) on the
+    ACCUMULATED (world-frame) rotation — exactly the operation the seq06 fix
+    (relative_poses_from_mats, commit c915da3) was written to avoid, because
+    so3_log is numerically singular at theta=pi (division by sin(theta)->0,
+    no large-angle safe branch — see dsg_jit.core.math3d.so3_log). Real KITTI
+    sequences do reach theta≈180° (confirmed directly: 15/22 sequences peak
+    at 178.6-180.0°), so integrate_poses' (n,6) rotation column is corrupted
+    by up to ~178° at that exact pose for those sequences. This function
+    exists so callers that only need rotation (the ATE/ARE metrics) can get
+    the correct matrices without ever routing through so3_log.
+    """
+    def _integrate_rotations_core(rel_poses: jnp.ndarray) -> jnp.ndarray:
+        def step(R, rel):
+            dR = so3_exp(rel[3:])
+            R_new = R @ dR
+            return R_new, R_new
+
+        init = jnp.eye(3, dtype=rel_poses.dtype)
+        _, Rs_1_to_n = jax.lax.scan(step, init, rel_poses)
+        R0 = jnp.eye(3, dtype=rel_poses.dtype)[None]
+        return jnp.concatenate([R0, Rs_1_to_n], axis=0)
+
+    return jax.jit(_integrate_rotations_core)
+
+
+def integrate_rotations(rel_poses: np.ndarray) -> np.ndarray:
+    """Integrate (n-1, 6) relative poses' rotation part into (n, 3, 3)
+    accumulated rotation matrices — direct matrix composition, no so3_log
+    anywhere, so no singularity at theta -> pi (unlike integrate_poses'
+    (n, 6) vector output). Use this (not integrate_poses[:, 3:]) whenever
+    the accumulated rotation itself is needed, e.g. for ATE/ARE metrics.
+    """
+    integrator = _get_jitted_rotation_integrator()
+    return np.array(integrator(jnp.array(rel_poses, dtype=jnp.float32)))
+
+
 # ---------------------------------------------------------------------------
 # KITTI-style metrics: delta_T, delta_R, delta_C
 # ---------------------------------------------------------------------------
@@ -774,23 +815,40 @@ def compute_ate(poses_est: np.ndarray, poses_gt: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.sum((poses_est[:, :3] - poses_gt[:, :3]) ** 2, axis=-1))))
 
 
-def compute_are(poses_est: np.ndarray, poses_gt: np.ndarray) -> float:
-    """Absolute rotation error (mean geodesic, degrees)."""
-    ws_e = jnp.array(poses_est[:, 3:], dtype=jnp.float32)
-    ws_g = jnp.array(poses_gt[:, 3:],  dtype=jnp.float32)
-    Rs_e = jax.vmap(so3_exp)(ws_e)
-    Rs_g = jax.vmap(so3_exp)(ws_g)
-    dRs  = jnp.einsum('nij,nik->njk', Rs_e, Rs_g)
-    angles_rad = jnp.linalg.norm(jax.vmap(so3_log)(dRs), axis=-1)
+def compute_are(Rs_est: np.ndarray, Rs_gt: np.ndarray) -> float:
+    """Absolute rotation error (mean geodesic, degrees).
+
+    Takes accumulated ROTATION MATRICES directly (n, 3, 3), not an so3_log-
+    encoded pose vector — the geodesic angle is computed via the trace
+    formula (arccos((trace(Ra^T@Rb)-1)/2)), which has no singularity at any
+    angle, instead of reconstructing via so3_exp(stored vector) and calling
+    so3_log again. so3_log itself has no large-angle-safe branch (only a
+    documented small-angle one — see dsg_jit.core.math3d.so3_log), so it
+    blows up near theta=pi: confirmed directly on real KITTI data, e.g. seq00
+    pose 3128 (true angle 180.00°) round-tripped through so3_log/so3_exp as
+    1.76° — a 178° error at that single pose. 15 of 22 KITTI sequences peak
+    at 178.6-180.0°, so this isn't a rare edge case for this benchmark.
+    """
+    Rs_e = jnp.array(Rs_est, dtype=jnp.float32)
+    Rs_g = jnp.array(Rs_gt,  dtype=jnp.float32)
+    dRs  = jnp.einsum('nij,nik->njk', Rs_e, Rs_g)          # Rs_e^T @ Rs_g per pose
+    tr   = jnp.trace(dRs, axis1=-2, axis2=-1)
+    cos_theta  = jnp.clip((tr - 1.0) / 2.0, -1.0, 1.0)
+    angles_rad = jnp.arccos(cos_theta)
     return float(jnp.mean(jnp.degrees(angles_rad)))
 
 
-def delta_metric(noisy_poses, denoised_poses, gt_poses):
-    """Percent improvement: (noisy_err - denoised_err) / noisy_err * 100."""
+def delta_metric(noisy_poses, denoised_poses, gt_poses, noisy_R, denoised_R, gt_R):
+    """Percent improvement: (noisy_err - denoised_err) / noisy_err * 100.
+
+    noisy_R/denoised_R/gt_R are (n, 3, 3) accumulated rotation matrices from
+    integrate_rotations()/raw GT matrices — see compute_are for why these,
+    not the (n, 6) pose arrays' rotation column, are used for ARE.
+    """
     ate_noisy    = compute_ate(noisy_poses, gt_poses)
     ate_denoised = compute_ate(denoised_poses, gt_poses)
-    are_noisy    = compute_are(noisy_poses, gt_poses)
-    are_denoised = compute_are(denoised_poses, gt_poses)
+    are_noisy    = compute_are(noisy_R, gt_R)
+    are_denoised = compute_are(denoised_R, gt_R)
 
     dT = (ate_noisy - ate_denoised) / (ate_noisy + 1e-10) * 100.0
     dR = (are_noisy - are_denoised) / (are_noisy + 1e-10) * 100.0
@@ -830,7 +888,10 @@ def denoise_sequence(noisy_rel: np.ndarray,
                       exp_cfg: ExpCfg) -> np.ndarray:
     """Slide a window over the sequence, denoise each window, stitch output.
 
-    Returns denoised global trajectory (n_poses, 6).
+    Returns (denoised global trajectory (n_poses, 6), denoised relative poses
+    (n_poses-1, 6)) — callers needing the accumulated rotation (e.g. ARE)
+    should compute integrate_rotations(denoised_rel), not use the global
+    trajectory's so3_log-encoded rotation column (singular at theta=pi).
     """
     n_poses  = gt_global.shape[0]
     stride   = exp_cfg.window - exp_cfg.overlap
@@ -902,7 +963,7 @@ def denoise_sequence(noisy_rel: np.ndarray,
         write_lo = last_written - lo
         solve_and_write(lo, hi, write_lo, n_edges)
 
-    return integrate_poses(denoised_rel)
+    return integrate_poses(denoised_rel), denoised_rel
 
 
 def _add_kitti_noise(gt_rel: np.ndarray, seed: int, seq_hash: int,
@@ -936,7 +997,11 @@ def denoise_sequence_pooled(noisy_rels: np.ndarray,
     gt_global:  (N, 6)      — shared GT global poses
     gt_R_mats:  (N, 3, 3)   — shared GT rotation matrices
 
-    Returns list of S denoised global trajectories, each (N, 6).
+    Returns (list of S denoised global trajectories each (N, 6), denoised
+    relative poses (S, N-1, 6)) — callers needing the accumulated rotation
+    (e.g. ARE) should compute integrate_rotations(denoised_rels[s]), not use
+    the global trajectory's so3_log-encoded rotation column (singular at
+    theta=pi).
     """
     S = noisy_rels.shape[0]
     n_poses = gt_global.shape[0]
@@ -998,7 +1063,7 @@ def denoise_sequence_pooled(noisy_rels: np.ndarray,
         write_lo = last_written - lo
         solve_and_write_all_seeds(lo, hi, write_lo, n_edges)
 
-    return [integrate_poses(denoised_rels[s]) for s in range(S)]
+    return [integrate_poses(denoised_rels[s]) for s in range(S)], denoised_rels
 
 
 # ---------------------------------------------------------------------------
@@ -1225,12 +1290,21 @@ def main():
                 )
                 gt_R_mats = np.array(jax.vmap(so3_exp)(jnp.array(gt_global[:, 3:])))
                 t_start = time.time()
-                denoised_global = denoise_sequence(
+                denoised_global, denoised_rel = denoise_sequence(
                     noisy_rel, gt_global, gt_R_mats, denoiser_fn, exp_cfg
                 )
                 elapsed = time.time() - t_start
                 poses_per_sec = len(gt_global) / (elapsed + 1e-9)
-                dT, dR, dC = delta_metric(noisy_global, denoised_global, gt_global)
+                # ARE metric uses accumulated rotation matrices directly (integrate_rotations),
+                # not gt_global/denoised_global's so3_log-encoded rotation column — see
+                # compute_are's docstring for why (singular at theta=pi, confirmed on real
+                # KITTI sequences; harmless here since synthetic rotations stay tiny, but kept
+                # uniform with the KITTI path so the metric never depends on that assumption).
+                gt_R      = integrate_rotations(gt_rel)
+                noisy_R   = integrate_rotations(noisy_rel)
+                denoised_R = integrate_rotations(denoised_rel)
+                dT, dR, dC = delta_metric(noisy_global, denoised_global, gt_global,
+                                           noisy_R, denoised_R, gt_R)
                 seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
                 print(f"  [{seq_id}|seed={seed}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
                       f"({poses_per_sec:.0f} poses/s)")
@@ -1287,7 +1361,7 @@ def main():
 
             # Denoise each seed independently (no batching), reusing pooled precision
             t_start = time.time()
-            denoised_globals = denoise_sequence_pooled(
+            denoised_globals, denoised_rels = denoise_sequence_pooled(
                 noisy_rels, gt_global, gt_R_mats, denoiser_fn, prec_pooled_fn, exp_cfg
             )
             elapsed = time.time() - t_start
@@ -1297,7 +1371,14 @@ def main():
             pps = len(gt_global) / (per_seed_sec + 1e-9)
             for s in range(args.seeds):
                 noisy_global_s = integrate_poses(noisy_rels[s])
-                dT, dR, dC = delta_metric(noisy_global_s, denoised_globals[s], gt_global)
+                # ARE metric uses accumulated rotation matrices directly, not the (n,6)
+                # trajectories' so3_log-encoded rotation column — see compute_are's
+                # docstring. gt_R_mats is already the raw (safe) matrices from the KITTI
+                # file; noisy/denoised need integrate_rotations for the same reason.
+                noisy_R_s = integrate_rotations(noisy_rels[s])
+                denoised_R_s = integrate_rotations(denoised_rels[s])
+                dT, dR, dC = delta_metric(noisy_global_s, denoised_globals[s], gt_global,
+                                           noisy_R_s, denoised_R_s, gt_R_mats)
                 seq_dT.append(dT); seq_dR.append(dR); seq_dC.append(dC)
                 print(f"  [{seq_id}|seed={s}]  ΔT={dT:+.1f}%  ΔR={dR:+.1f}%  ΔC={dC:+.1f}%  "
                       f"({pps:.0f} poses/s·seed)")
