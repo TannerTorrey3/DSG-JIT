@@ -699,23 +699,6 @@ def estimate_noise_mad(diffs: np.ndarray) -> float:
     return float(np.median(d)) * 1.4826 + 1e-8
 
 
-def relative_poses_from_global(global_poses: np.ndarray) -> np.ndarray:
-    """Compute (n-1, 6) relative poses from (n, 6) global poses."""
-    from dsg_jit.core.math3d import so3_exp as so3_exp_np, so3_log as so3_log_np
-    n = global_poses.shape[0]
-    rel = []
-    for i in range(n - 1):
-        ti, wi = global_poses[i, :3], global_poses[i, 3:]
-        tj, wj = global_poses[i + 1, :3], global_poses[i + 1, 3:]
-        Ri = np.array(so3_exp_np(jnp.array(wi)))
-        Rj = np.array(so3_exp_np(jnp.array(wj)))
-        dt = Ri.T @ (tj - ti)
-        dR = Ri.T @ Rj
-        dw = np.array(so3_log_np(jnp.array(dR)))
-        rel.append(np.concatenate([dt, dw]))
-    return np.stack(rel)                                     # (n-1, 6)
-
-
 def relative_poses_from_mats(gt_mats: np.ndarray) -> np.ndarray:
     """Compute (n-1, 6) relative poses from (n, 4, 4) SE(3) matrices.
 
