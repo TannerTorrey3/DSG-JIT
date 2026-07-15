@@ -376,7 +376,7 @@ def _rotation_gn_raw(R_init: jnp.ndarray,
     return R_star, damping_used
 
 
-@jax.custom_vjp
+@functools.partial(jax.custom_vjp, nondiff_argnums=(6,))
 def rotation_gn_ift(R_init: jnp.ndarray,
                     R_meas: jnp.ndarray,
                     kappa: jnp.ndarray,
@@ -397,6 +397,18 @@ def rotation_gn_ift(R_init: jnp.ndarray,
     anchor_idx/anchor_targets/kappa_anchor: sparse ground-truth rotation
     anchors (see build_rotation_laplacian's docstring for why these exist —
     without them this solve is provably a no-op on a pure chain graph).
+
+    n_iters is nondiff_argnums=(6,): jax.lax.scan's `length` inside
+    _rotation_gn_raw requires a concrete Python int. Without declaring this,
+    custom_vjp's abstract-eval path (used whenever this is traced under jit
+    without an enclosing jax.grad -- e.g. a bare forward-only inner-solve
+    call) abstracts EVERY positional arg uniformly, turning n_iters into a
+    traced array and crashing scan's length check. This previously worked
+    only by the accident that every existing call site routes through
+    jax.grad nested inside jax.lax.scan (outer_adam_loop's adam_step) --
+    confirmed by direct repro: identical calls fail under plain jit (no
+    grad) or jit+grad without a scan, and succeed only in that one exact
+    combination. nondiff_argnums makes it work unconditionally.
     """
     R_star, _ = _rotation_gn_raw(R_init, R_meas, kappa, anchor_idx, anchor_targets,
                                   kappa_anchor, n_iters,
@@ -418,8 +430,12 @@ def _rotation_gn_ift_fwd(R_init, R_meas, kappa, anchor_idx, anchor_targets, kapp
     return R_star, (R_star, R_meas, kappa, anchor_idx, anchor_targets, kappa_anchor, damping_used)
 
 
-def _rotation_gn_ift_bwd(res, g_R_star):
+def _rotation_gn_ift_bwd(n_iters, res, g_R_star):
     """IFT backward pass for rotation GN.
+
+    n_iters is the nondiff_argnums=(6,) value (unused here -- the forward
+    solve already ran with it; it's only in this signature because
+    nondiff_argnums passes nondiff values as bwd's leading positional args).
 
     Given upstream gradient g_R_star (n, 3, 3) w.r.t. R_star:
     1. Project to tangent space: g_free (3(n-1),) — skip anchor
@@ -491,10 +507,12 @@ def _rotation_gn_ift_bwd(res, g_R_star):
     # anchor_idx (index array) and kappa_anchor (fixed hyperparameter, not
     # learned in this pass — see build_rotation_laplacian's docstring) get None.
     g_anchor_targets = jnp.zeros_like(anchor_targets)
-    # 12 primal args -> 12-tuple: 4 real grads + 8 None (anchor_idx, kappa_anchor,
-    # n_iters, 5 damping-bound scalars)
+    # 12 primal args, one (n_iters, index 6) is nondiff_argnums -> 11-tuple
+    # cotangents for the remaining 11: 4 real grads + 7 None (anchor_idx,
+    # kappa_anchor, 5 damping-bound scalars). n_iters gets NO entry at all
+    # (not even None) since nondiff_argnums positions are excluded entirely.
     return (g_R_init, g_R_meas, g_kappa, None, g_anchor_targets, None,
-            None, None, None, None, None, None)
+            None, None, None, None, None)
 
 
 rotation_gn_ift.defvjp(_rotation_gn_ift_fwd, _rotation_gn_ift_bwd)
