@@ -842,7 +842,26 @@ def build_denoiser(n: int,
             theta_init, noisy_odom, gt_poses, gt_R_world,
             kappa, omega, n, inner_cfg, outer_cfg
         )
-        return theta_opt
+
+        # outer_adam_loop's loss is computed on R_star/t_star (the anchored,
+        # GN-refined solve), NOT on theta_opt itself -- theta is one of many
+        # additive corrections that can produce a similar R_star/t_star once
+        # passed back through that non-injective solve (anchor-averaging,
+        # global translation recovery), so returning theta_opt as-is discards
+        # the very quantity the optimization targeted and lets noisy_odom +
+        # theta_opt diverge arbitrarily far from a sane relative pose even
+        # while R_star/t_star (and the loss) look fine. Reconstruct the
+        # corrected relative pose FROM the final R_star/t_star instead --
+        # same reconstruction exp44_inner_solver_only.py's
+        # build_inner_solver_only_denoiser already uses.
+        gt_R0 = gt_R_world[0]
+        gt_R_rel = jax.vmap(lambda R: gt_R0.T @ R)(gt_R_world)
+        R_star, t_star = sesync_inner_solve(theta_opt, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel)
+        dR = jax.vmap(lambda Ri, Rj: Ri.T @ Rj)(R_star[:-1], R_star[1:])
+        dw = jax.vmap(so3_log)(dR)
+        dt = jax.vmap(lambda Ri, ti, tj: Ri.T @ (tj - ti))(R_star[:-1], t_star[:-1], t_star[1:])
+        corrected = jnp.concatenate([dt, dw], axis=-1)
+        return corrected - noisy_odom
 
     return jax.jit(denoise)
 
