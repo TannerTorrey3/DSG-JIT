@@ -67,7 +67,6 @@ from experiments.exp44_anchored_sesync_gn import (
     _add_kitti_noise,
     _sigma_and_precision,
     integrate_poses,
-    integrate_rotations,
     noise_adaptive_inner_outer_cfg,
 )
 
@@ -151,6 +150,23 @@ def instrumented_outer_adam_loop(theta_init, noisy_odom, gt_poses, gt_R_direct,
         adam_step, (theta_init, m_init, v_init), jnp.arange(total)
     )
     return theta_opt, trace
+
+
+def theta0_denoise(win_odom, win_gt_R, kappa, omega, n, inner_cfg):
+    """Anchor-only baseline (theta fixed at 0, no outer loop) -- same math as
+    exp44_inner_solver_only.build_inner_solver_only_denoiser, reimplemented
+    here to avoid importing a second jit-wrapped denoiser closed over a
+    different n/inner_cfg. Isolates what the anchored inner solve alone does
+    to this window, so per-window badness can be attributed to the anchors
+    themselves vs. the outer loop layered on top."""
+    gt_R0 = win_gt_R[0]
+    gt_R_rel = jax.vmap(lambda R: gt_R0.T @ R)(win_gt_R)
+    theta = jnp.zeros_like(win_odom)
+    R_star, t_star = sesync_inner_solve(theta, win_odom, kappa, omega, n, inner_cfg, gt_R_rel)
+    dR = jax.vmap(lambda Ri, Rj: Ri.T @ Rj)(R_star[:-1], R_star[1:])
+    dw = jax.vmap(so3_log)(dR)
+    dt = jax.vmap(lambda Ri, ti, tj: Ri.T @ (tj - ti))(R_star[:-1], t_star[:-1], t_star[1:])
+    return jnp.concatenate([dt, dw], axis=-1)
 
 
 def load_sequence(kitti_root, seq_id):
@@ -267,6 +283,7 @@ def main():
     denoiser_A = jax.jit(functools.partial(instrumented_outer_adam_loop, n=n, inner_cfg=inner_cfg_A, outer_cfg=outer_cfg_A))
     denoiser_B = jax.jit(functools.partial(instrumented_outer_adam_loop, n=n, inner_cfg=inner_cfg_B, outer_cfg=outer_cfg_B))
     denoiser_C = jax.jit(functools.partial(instrumented_outer_adam_loop, n=n, inner_cfg=inner_cfg_C, outer_cfg=outer_cfg_C))
+    denoiser_D = jax.jit(functools.partial(theta0_denoise, n=n, inner_cfg=inner_cfg_A))  # anchors alone, no outer loop
 
     lk, mr = ExpCfg().local_k, ExpCfg().max_kappa_ratio
     prec_pooled_fn = jax.jit(functools.partial(_sigma_and_precision, local_k=lk, max_kappa_ratio=mr))
@@ -312,6 +329,7 @@ def main():
         theta_A, _ = denoiser_A(theta_init, win_odom, win_gt, win_gt_R, kappa, omega)
         theta_B, _ = denoiser_B(theta_init, win_odom, win_gt, win_gt_R, kappa, omega)
         theta_C, _ = denoiser_C(theta_init, win_odom, win_gt, win_gt_R, kappa, omega)
+        corrected_D = np.array(denoiser_D(win_odom, win_gt_R, kappa, omega))  # theta=0, anchors only
 
         corrected_A = np.array(win_odom + theta_A)
         corrected_B = np.array(win_odom + theta_B)
@@ -323,6 +341,7 @@ def main():
         err_t_A, err_r_A = local_edge_error(corrected_A, gt_seg, write_lo, write_hi)
         err_t_B, err_r_B = local_edge_error(corrected_B, gt_seg, write_lo, write_hi)
         err_t_C, err_r_C = local_edge_error(corrected_C, gt_seg, write_lo, write_hi)
+        err_t_D, err_r_D = local_edge_error(corrected_D, gt_seg, write_lo, write_hi)
 
         def pct(before, after):
             return 100.0 * (before - after) / (before + 1e-12)
@@ -333,9 +352,11 @@ def main():
             "dT_A": pct(err_t_before, err_t_A), "dR_A": pct(err_r_before, err_r_A),
             "dT_B": pct(err_t_before, err_t_B), "dR_B": pct(err_r_before, err_r_B),
             "dT_C": pct(err_t_before, err_t_C), "dR_C": pct(err_r_before, err_r_C),
+            "dT_D": pct(err_t_before, err_t_D), "dR_D": pct(err_r_before, err_r_D),
         }
         results.append(row)
         print(f"  win {wi:2d} [{lo:4d}:{hi:4d}]  "
+              f"D(anchors-only): dT={row['dT_D']:+7.1f} dR={row['dR_D']:+7.1f}  |  "
               f"A(actual): dT={row['dT_A']:+7.1f} dR={row['dR_A']:+7.1f}  |  "
               f"B(noboost): dT={row['dT_B']:+7.1f} dR={row['dR_B']:+7.1f}  |  "
               f"C(fixed): dT={row['dT_C']:+7.1f} dR={row['dR_C']:+7.1f}")
@@ -346,8 +367,17 @@ def main():
     worst = min(results, key=lambda r: r["dR_A"] + r["dT_A"])
     print(f"\nWorst window under config A: win {worst['window']} [{worst['lo']}:{worst['hi']}]  "
           f"dT_A={worst['dT_A']:+.1f} dR_A={worst['dR_A']:+.1f}  "
-          f"(vs B dT={worst['dT_B']:+.1f} dR={worst['dR_B']:+.1f}, "
+          f"(vs D anchors-only dT={worst['dT_D']:+.1f} dR={worst['dR_D']:+.1f}, "
+          f"vs B dT={worst['dT_B']:+.1f} dR={worst['dR_B']:+.1f}, "
           f"vs C dT={worst['dT_C']:+.1f} dR={worst['dR_C']:+.1f})")
+
+    mean_D_dR = sum(r["dR_D"] for r in results) / len(results)
+    mean_A_dR = sum(r["dR_A"] for r in results) / len(results)
+    mean_D_dT = sum(r["dT_D"] for r in results) / len(results)
+    mean_A_dT = sum(r["dT_A"] for r in results) / len(results)
+    print(f"\nMean over all {len(results)} windows: "
+          f"D(anchors-only) dT={mean_D_dT:+.1f} dR={mean_D_dR:+.1f}  |  "
+          f"A(actual outer loop) dT={mean_A_dT:+.1f} dR={mean_A_dR:+.1f}")
 
     lo, hi, write_lo, write_hi = worst["lo"], worst["hi"], worst["write_lo"], worst["write_hi"]
     win_omds = noisy_rels_j[:, lo:hi - 1, :]
