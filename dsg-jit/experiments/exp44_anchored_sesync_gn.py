@@ -736,6 +736,18 @@ def sesync_inner_solve(theta: jnp.ndarray,
                                              cfg.damping_down, cfg.damping_up)
             cost_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
             cost_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
+            # TEMP DEBUG -- remove after diagnosing why matched_total's real
+            # Lambda run on seq01 (all 22 seeds) came back byte-identical to
+            # n_starts=1, contradicting diag_exp44_multistart.py's per-window
+            # table for the same seed (which showed anchor winning matched
+            # cost in several windows). jax.debug.print runs at actual
+            # runtime (unlike a plain Python print, which would only fire
+            # once at trace time and show trace-time placeholders, not real
+            # per-window values).
+            jax.debug.print(
+                "[matched_total debug] cost_chain={c1} cost_anchor={c2} picked_anchor={u}",
+                c1=cost_chain, c2=cost_anchor, u=cost_anchor < cost_chain,
+            )
         else:  # "anchor_only" (default)
             R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
                                              cfg.kappa_anchor, cfg.n_iters_rot,
