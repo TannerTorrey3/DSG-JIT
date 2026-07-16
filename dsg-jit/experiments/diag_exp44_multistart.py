@@ -163,6 +163,15 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
 
     cost_anchor_only_chain = anchor_only_cost(R_star_chain)
     cost_anchor_only_anchor = anchor_only_cost(R_star_anchor)
+    # Untested combination: anchor-only cost's SELECTION signal (which
+    # correctly resolved seq01/seed9 and seq13/seed12), but scored on the
+    # anchor candidate given anchor_n_iters_rot to actually converge (not
+    # cut off at inner_cfg.n_iters_rot) -- tests whether the seed4/11/13
+    # window-0 misses were caused by the SHORT iteration budget leaving the
+    # anchor candidate's rotation itself under-converged (not just its
+    # chain-term residual), which anchor-only cost alone can't detect since
+    # it never looks at chain fit at all.
+    cost_anchor_only_anchor_matched = anchor_only_cost(R_star_anchor_matched)
 
     def mean_geodesic_err_deg(R_est, R_gt):
         rel = jax.vmap(lambda Ra, Rb: Ra.T @ Rb)(R_est, R_gt)
@@ -201,6 +210,7 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
         "cost_final_chain": cost_final_chain, "cost_final_anchor": cost_final_anchor,
         "cost_final_anchor_matched": cost_final_anchor_matched,
         "cost_anchor_only_chain": cost_anchor_only_chain, "cost_anchor_only_anchor": cost_anchor_only_anchor,
+        "cost_anchor_only_anchor_matched": cost_anchor_only_anchor_matched,
         "real_err_deg_chain": err_chain, "real_err_deg_anchor": err_anchor,
         "t_rmse_chain": t_err_chain, "t_rmse_anchor": t_err_anchor,
         "t_rmse_anchor_matched": t_err_anchor_matched,
@@ -283,9 +293,9 @@ def main():
         windows.append((lo, hi))
 
     print(f"\n{len(windows)} windows, seq={args.seq} seed={args.seed} sigma_t={args.sigma_t} ...\n")
-    print(f"{'win':>4} {'anchor_only(chain/anchor)':>26} {'matched-cost(chain/anchor)':>26} "
-          f"{'winner(anc-only)':>16} {'winner(matched)':>15} "
-          f"{'t_rmse_m(chain/anchor/matched)':>30} {'winner(trans)':>13}")
+    print(f"{'win':>4} {'anchor_only(chain/anchor/anchor_matched)':>33} "
+          f"{'winner(anc-only)':>10} {'winner(anc-only+matched)':>16} "
+          f"{'t_rmse_m(chain/anchor/matched)':>30} {'winner(trans_matched)':>13}")
 
     results = []
     n_anchor_wins_cost = 0
@@ -293,10 +303,12 @@ def main():
     n_anchor_wins_trans = 0
     n_anchor_wins_anchoronly = 0
     n_anchor_wins_matched = 0
+    n_anchor_wins_anchoronly_matched = 0
     n_disagree_rot = 0
     n_disagree_trans = 0
     n_anchoronly_disagree_trans = 0
     n_matched_disagree_trans = 0
+    n_anchoronly_matched_disagree_trans = 0
     for wi, (lo, hi) in enumerate(windows):
         win_omds = noisy_rels_j[:, lo:hi - 1, :]
         win_gt_R = gt_R_mats_j[lo:hi]
@@ -309,6 +321,8 @@ def main():
         winner_cost = "anchor" if r["cost_final_anchor"] < r["cost_final_chain"] else "chain"
         winner_anchoronly = "anchor" if r["cost_anchor_only_anchor"] < r["cost_anchor_only_chain"] else "chain"
         winner_matched = "anchor" if r["cost_final_anchor_matched"] < r["cost_final_chain"] else "chain"
+        winner_anchoronly_matched = ("anchor" if r["cost_anchor_only_anchor_matched"] < r["cost_anchor_only_chain"]
+                                      else "chain")
         winner_rot = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
         winner_trans = "anchor" if r["t_rmse_anchor"] < r["t_rmse_chain"] else "chain"
         winner_trans_matched = "anchor" if r["t_rmse_anchor_matched"] < r["t_rmse_chain"] else "chain"
@@ -318,6 +332,8 @@ def main():
             n_anchor_wins_anchoronly += 1
         if winner_matched == "anchor":
             n_anchor_wins_matched += 1
+        if winner_anchoronly_matched == "anchor":
+            n_anchor_wins_anchoronly_matched += 1
         if winner_rot == "anchor":
             n_anchor_wins_rot += 1
         if winner_trans == "anchor":
@@ -330,20 +346,23 @@ def main():
             n_anchoronly_disagree_trans += 1
         if winner_matched != winner_trans_matched:
             n_matched_disagree_trans += 1
+        if winner_anchoronly_matched != winner_trans_matched:
+            n_anchoronly_matched_disagree_trans += 1
 
         row = {"window": wi, "lo": lo, "hi": hi, **r,
                "winner_cost": winner_cost, "winner_anchoronly": winner_anchoronly,
-               "winner_matched": winner_matched, "winner_rot": winner_rot,
+               "winner_matched": winner_matched, "winner_anchoronly_matched": winner_anchoronly_matched,
+               "winner_rot": winner_rot,
                "winner_trans": winner_trans, "winner_trans_matched": winner_trans_matched}
         results.append(row)
         flag = ""
-        if winner_matched != winner_trans_matched:
-            flag = "  <-- matched-cost/TRANS DISAGREE"
+        if winner_anchoronly_matched != winner_trans_matched:
+            flag = "  <-- anchor-only+matched/TRANS DISAGREE"
         elif winner_anchoronly != winner_trans:
-            flag = "  <-- anchor-only/TRANS disagree (matched agrees)"
-        print(f"{wi:4d} {r['cost_anchor_only_chain']:>12.3f}/{r['cost_anchor_only_anchor']:<12.3f} "
-              f"{r['cost_final_chain']:>12.2f}/{r['cost_final_anchor_matched']:<12.2f} "
-              f"{winner_anchoronly:>16} {winner_matched:>15} "
+            flag = "  <-- (short-iter anchor-only disagreed, anchor-only+matched agrees)"
+        print(f"{wi:4d} {r['cost_anchor_only_chain']:>10.3f}/{r['cost_anchor_only_anchor']:<10.3f}"
+              f"/{r['cost_anchor_only_anchor_matched']:<10.3f} "
+              f"{winner_anchoronly:>10} {winner_anchoronly_matched:>16} "
               f"{r['t_rmse_chain']:>9.3f}/{r['t_rmse_anchor']:<9.3f}/{r['t_rmse_anchor_matched']:<9.3f} "
               f"{winner_trans_matched:>13}{flag}")
 
@@ -378,6 +397,15 @@ def main():
           f"(compare against anchor-only's {n_anchoronly_disagree_trans}/{len(windows)} -- lower here "
           f"means giving the anchor candidate time to converge, then comparing by total cost, is "
           f"the more reliable fix)")
+    print(f"  --- candidate selection criterion: ANCHOR-ONLY cost, scored on the anchor candidate "
+          f"given anchor_n_iters_rot={args.anchor_n_iters_rot} to converge (untested combination) ---")
+    print(f"  Anchor candidate wins by anchor-only cost (matched-convergence anchor candidate): "
+          f"{n_anchor_wins_anchoronly_matched}/{len(windows)}")
+    print(f"  Windows where this selection disagrees with ITS OWN translation-RMSE-optimal pick: "
+          f"{n_anchoronly_matched_disagree_trans}/{len(windows)}  "
+          f"(compare against short-iteration anchor-only's {n_anchoronly_disagree_trans}/{len(windows)} -- "
+          f"lower here means the seed4/11/13 window-0-style misses were caused by the anchor "
+          f"candidate's ROTATION being under-converged, not just its chain-term cost)")
     print(f"\nSaved per-window results to {out_dir}")
 
 
