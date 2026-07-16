@@ -697,20 +697,47 @@ def sesync_inner_solve(theta: jnp.ndarray,
         R_star = R_star_chain
     else:
         # Multi-start GN (see InnerCfg.n_starts): also solve from an
-        # anchor-interpolated R_init and keep whichever candidate the
-        # self-checking GN actually reaches the lower _rotation_cost from.
-        # cfg.n_starts is a static Python int (InnerCfg fields are closed
-        # over at jax.jit trace time, never traced), so this branch is
-        # resolved once at trace time, same as every other cfg-based branch
-        # in this module -- n_starts=1 recompiles to the exact code path
-        # above, byte-identical.
+        # anchor-interpolated R_init and keep whichever candidate wins by
+        # ANCHOR-TERM-ONLY cost (via _anchor_residual), not total
+        # _rotation_cost. cfg.n_starts is a static Python int (InnerCfg
+        # fields are closed over at jax.jit trace time, never traced), so
+        # this branch is resolved once at trace time, same as every other
+        # cfg-based branch in this module -- n_starts=1 recompiles to the
+        # exact code path above, byte-identical.
+        #
+        # Total _rotation_cost is structurally biased toward the
+        # chain-composed candidate: it starts with the chain term (summed
+        # over ~n-1 edges) at ~zero by construction, while the
+        # anchor-interpolated candidate starts far from chain-consistency
+        # and can't converge that large chain-term residual within a fixed
+        # small iteration budget -- so its total cost looks far worse even
+        # when its rotations are already closer to the truth. Confirmed
+        # directly (diag_exp44_multistart.py, real seq01/seed9 and
+        # seq13/seed12 data): total-cost selection disagreed with the real
+        # translation-RMSE-optimal pick in 6/13 and 17/37 windows
+        # respectively, including misses of 2-6x in translation RMSE (e.g.
+        # seq13 window 35: chain=2.171m vs anchor=0.349m, cost picked chain
+        # by 1.94 vs 226.15). Anchor-only cost ignores that unconverged
+        # chain-term residual entirely and uses no GT beyond what the
+        # anchors already legitimately consume -- it resolved essentially
+        # every consequential disagreement correctly (remaining disagreement
+        # dropped to 3/13 and 13/37, nearly all exact translation-RMSE ties).
+        # An oracle sweep (diag_exp44_multistart_oracle.py, selecting by real
+        # translation RMSE against dense GT -- not deployable, but an upper
+        # bound) confirmed the ceiling is real: seq01/seed9 flips from
+        # dC=-41.7% to +5.5%, seq13/seed12 from -16.9% to +21.3%.
         R_init_anchor = _build_anchor_interpolated_R_init(n, cfg.anchor_spacing, anchor_targets)
         R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
                                          cfg.kappa_anchor, cfg.n_iters_rot,
                                          cfg.damping_init, cfg.damping_min, cfg.damping_max,
                                          cfg.damping_down, cfg.damping_up)
-        cost_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
-        cost_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
+
+        def anchor_only_cost(R):
+            r_anchor = _anchor_residual(R, anchor_idx, anchor_targets)
+            return cfg.kappa_anchor * jnp.sum(r_anchor ** 2)
+
+        cost_chain = anchor_only_cost(R_star_chain)
+        cost_anchor = anchor_only_cost(R_star_anchor)
         R_star = jnp.where(cost_anchor < cost_chain, R_star_anchor, R_star_chain)
 
     # Analytic translation recovery (one dense solve, auto-diff backward)
