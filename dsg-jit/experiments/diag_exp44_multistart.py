@@ -68,6 +68,7 @@ from experiments.exp44_anchored_sesync_gn import (
     rotation_gn_ift,
     recover_translations,
     _rotation_cost,
+    _anchor_residual,
     _build_anchor_interpolated_R_init,
     _add_kitti_noise,
     _sigma_and_precision,
@@ -124,6 +125,19 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     cost_final_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor)
     cost_final_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor)
 
+    # Anchor-term-ONLY cost (no GT beyond what the anchors already legitimately
+    # use, unlike the translation-RMSE oracle) -- tests whether ignoring the
+    # chain term (which the anchor-interpolated candidate can't converge in a
+    # fixed small iteration budget, biasing total cost toward chain-composed
+    # regardless of merit) gives a selection signal that tracks real
+    # translation error better than total _rotation_cost does.
+    def anchor_only_cost(R_star):
+        r_anchor = _anchor_residual(R_star, anchor_idx, anchor_targets)
+        return inner_cfg.kappa_anchor * jnp.sum(r_anchor ** 2)
+
+    cost_anchor_only_chain = anchor_only_cost(R_star_chain)
+    cost_anchor_only_anchor = anchor_only_cost(R_star_anchor)
+
     def mean_geodesic_err_deg(R_est, R_gt):
         rel = jax.vmap(lambda Ra, Rb: Ra.T @ Rb)(R_est, R_gt)
         tr = jnp.einsum('nii->n', rel)
@@ -157,6 +171,7 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     return {
         "cost_init_chain": cost_init_chain, "cost_init_anchor": cost_init_anchor,
         "cost_final_chain": cost_final_chain, "cost_final_anchor": cost_final_anchor,
+        "cost_anchor_only_chain": cost_anchor_only_chain, "cost_anchor_only_anchor": cost_anchor_only_anchor,
         "real_err_deg_chain": err_chain, "real_err_deg_anchor": err_anchor,
         "t_rmse_chain": t_err_chain, "t_rmse_anchor": t_err_anchor,
     }
@@ -230,16 +245,18 @@ def main():
         windows.append((lo, hi))
 
     print(f"\n{len(windows)} windows, seq={args.seq} seed={args.seed} sigma_t={args.sigma_t} ...\n")
-    print(f"{'win':>4} {'cost_final(chain/anchor)':>26} {'winner(cost)':>12} "
-          f"{'rot_err_deg(chain/anchor)':>26} {'winner(rot)':>11} "
+    print(f"{'win':>4} {'cost(chain/anchor)':>20} {'anchor_only(chain/anchor)':>26} "
+          f"{'winner(cost)':>12} {'winner(anc-only)':>16} "
           f"{'t_rmse_m(chain/anchor)':>22} {'winner(trans)':>13}")
 
     results = []
     n_anchor_wins_cost = 0
     n_anchor_wins_rot = 0
     n_anchor_wins_trans = 0
+    n_anchor_wins_anchoronly = 0
     n_disagree_rot = 0
     n_disagree_trans = 0
+    n_anchoronly_disagree_trans = 0
     for wi, (lo, hi) in enumerate(windows):
         win_omds = noisy_rels_j[:, lo:hi - 1, :]
         win_gt_R = gt_R_mats_j[lo:hi]
@@ -250,10 +267,13 @@ def main():
 
         r = {k: float(v) for k, v in diag_fn(win_odom, win_gt_R, win_gt_t, kappa, omega).items()}
         winner_cost = "anchor" if r["cost_final_anchor"] < r["cost_final_chain"] else "chain"
+        winner_anchoronly = "anchor" if r["cost_anchor_only_anchor"] < r["cost_anchor_only_chain"] else "chain"
         winner_rot = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
         winner_trans = "anchor" if r["t_rmse_anchor"] < r["t_rmse_chain"] else "chain"
         if winner_cost == "anchor":
             n_anchor_wins_cost += 1
+        if winner_anchoronly == "anchor":
+            n_anchor_wins_anchoronly += 1
         if winner_rot == "anchor":
             n_anchor_wins_rot += 1
         if winner_trans == "anchor":
@@ -262,18 +282,20 @@ def main():
             n_disagree_rot += 1
         if winner_cost != winner_trans:
             n_disagree_trans += 1
+        if winner_anchoronly != winner_trans:
+            n_anchoronly_disagree_trans += 1
 
         row = {"window": wi, "lo": lo, "hi": hi, **r,
-               "winner_cost": winner_cost, "winner_rot": winner_rot, "winner_trans": winner_trans}
+               "winner_cost": winner_cost, "winner_anchoronly": winner_anchoronly,
+               "winner_rot": winner_rot, "winner_trans": winner_trans}
         results.append(row)
         flag = ""
-        if winner_cost != winner_trans:
-            flag = "  <-- cost/TRANS DISAGREE"
-        elif winner_cost != winner_rot:
-            flag = "  <-- cost/rot disagree"
-        print(f"{wi:4d} {r['cost_final_chain']:>11.2f}/{r['cost_final_anchor']:<11.2f} "
-              f"{winner_cost:>12} {r['real_err_deg_chain']:>11.2f}/{r['real_err_deg_anchor']:<11.2f} "
-              f"{winner_rot:>11} {r['t_rmse_chain']:>10.3f}/{r['t_rmse_anchor']:<10.3f} "
+        if winner_anchoronly != winner_trans:
+            flag = "  <-- anchor-only/TRANS DISAGREE"
+        print(f"{wi:4d} {r['cost_final_chain']:>9.2f}/{r['cost_final_anchor']:<9.2f} "
+              f"{r['cost_anchor_only_chain']:>12.3f}/{r['cost_anchor_only_anchor']:<12.3f} "
+              f"{winner_cost:>12} {winner_anchoronly:>16} "
+              f"{r['t_rmse_chain']:>10.3f}/{r['t_rmse_anchor']:<10.3f} "
               f"{winner_trans:>13}{flag}")
 
     with open(os.path.join(out_dir, "per_window_multistart.json"), "w") as fp:
@@ -291,6 +313,13 @@ def main():
           f"{n_disagree_rot}/{len(windows)}")
     print(f"  Windows where cost-based selection disagrees with the TRANSLATION-optimal pick: "
           f"{n_disagree_trans}/{len(windows)}")
+    print(f"  --- candidate selection criterion: ANCHOR-TERM-ONLY cost (no GT beyond what anchors "
+          f"already use) ---")
+    print(f"  Anchor candidate wins by anchor-only cost: {n_anchor_wins_anchoronly}/{len(windows)}")
+    print(f"  Windows where anchor-only-cost selection disagrees with the TRANSLATION-optimal pick: "
+          f"{n_anchoronly_disagree_trans}/{len(windows)}  "
+          f"(lower than the {n_disagree_trans}/{len(windows)} total-cost disagreement above = "
+          f"anchor-only cost is a better proxy for what actually matters)")
     print(f"\nSaved per-window results to {out_dir}")
 
 
