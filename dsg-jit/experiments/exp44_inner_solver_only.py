@@ -137,6 +137,13 @@ def main():
                              "unchanged behavior). 2 = also try an anchor-interpolated R_init and "
                              "keep whichever the self-checking GN solve reaches lower cost from -- "
                              "targets the deterministic bad-basin seeds (see InnerCfg.n_starts).")
+    parser.add_argument("--multistart-criterion", type=str, default="anchor_only",
+                        choices=["anchor_only", "matched_total"],
+                        help="Selection criterion when --n-starts=2 (see InnerCfg.multistart_criterion "
+                             "for the evidence behind each -- this is a live A/B, not settled).")
+    parser.add_argument("--anchor-n-iters-rot", type=int, default=60,
+                        help="GN iteration budget for the anchor candidate when "
+                             "--multistart-criterion=matched_total (ignored otherwise).")
     parser.add_argument("--adaptive-solver", action=argparse.BooleanOptionalAction, default=True,
                         help="Scale n_iters_rot/damping_up with sigma_t above the reference noise "
                              "level (default: on) -- same scaling exp44 uses for its inner solve.")
@@ -153,7 +160,8 @@ def main():
     base_inner_kwargs = {"n_iters_rot": 15, "damping_init": 1e-4, "damping_min": 1e-6,
                          "damping_max": 1e2, "damping_down": 0.5, "damping_up": 4.0,
                          "anchor_spacing": args.anchor_spacing, "kappa_anchor": args.kappa_anchor,
-                         "n_starts": args.n_starts}
+                         "n_starts": args.n_starts, "multistart_criterion": args.multistart_criterion,
+                         "anchor_n_iters_rot": args.anchor_n_iters_rot}
     # noise_adaptive_inner_outer_cfg returns (InnerCfg, OuterCfg) -- OuterCfg is
     # irrelevant here (no outer loop), only the InnerCfg's noise-scaled
     # n_iters_rot/damping_up matter, kept consistent with what exp44 itself uses.
@@ -171,7 +179,8 @@ def main():
               f"reference={args.adaptive_reference_sigma_t}): "
               f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
-              f"n_starts={inner_cfg.n_starts}")
+              f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
+              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
     else:
         inner_cfg = InnerCfg(n_iters_rot=base_inner_kwargs["n_iters_rot"],
                               damping_init=base_inner_kwargs["damping_init"],
@@ -181,11 +190,14 @@ def main():
                               damping_up=base_inner_kwargs["damping_up"],
                               anchor_spacing=base_inner_kwargs["anchor_spacing"],
                               kappa_anchor=base_inner_kwargs["kappa_anchor"],
-                              n_starts=base_inner_kwargs["n_starts"])
+                              n_starts=base_inner_kwargs["n_starts"],
+                              multistart_criterion=base_inner_kwargs["multistart_criterion"],
+                              anchor_n_iters_rot=base_inner_kwargs["anchor_n_iters_rot"])
         print(f"Fixed (non-adaptive) inner-solve settings: n_iters_rot={inner_cfg.n_iters_rot}, "
               f"damping_up={inner_cfg.damping_up:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
-              f"n_starts={inner_cfg.n_starts}")
+              f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
+              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
 
     exp_cfg = ExpCfg(
         window=args.window,
@@ -369,6 +381,8 @@ def main():
             "anchor_spacing": inner_cfg.anchor_spacing,
             "kappa_anchor": inner_cfg.kappa_anchor,
             "n_starts": inner_cfg.n_starts,
+            "multistart_criterion": inner_cfg.multistart_criterion,
+            "anchor_n_iters_rot": inner_cfg.anchor_n_iters_rot,
         }
         aggregate = {
             "config": config,

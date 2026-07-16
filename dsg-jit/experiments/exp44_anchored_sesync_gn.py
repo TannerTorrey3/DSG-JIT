@@ -113,6 +113,26 @@ class InnerCfg:
                                   # anchor-interpolated candidate isn't derived from noisy
                                   # measurements at all, so it can't inherit that same bias. Values
                                   # other than 1 or 2 are not currently meaningful.
+    multistart_criterion: str = "anchor_only"  # selection criterion when n_starts>1:
+                                  # "anchor_only" (default) -- pick by anchor-term-only cost
+                                  # (_anchor_residual), ignoring the chain-term residual the
+                                  # anchor-interpolated candidate can't converge within n_iters_rot.
+                                  # Fixed seq01/seed9 and seq13/seed12 (dC -41.7%->+5.5%,
+                                  # -16.9%->+21.3%) but is unreliable elsewhere: introduced new
+                                  # regressions on seq01/seed4,11,13 that per-window diagnosis
+                                  # (diag_exp44_multistart.py) traced to anchor-only cost being
+                                  # blind to interior (non-anchored) edges.
+                                  # "matched_total" -- give the anchor candidate anchor_n_iters_rot
+                                  # iterations to better converge, then pick by TOTAL
+                                  # _rotation_cost. Tested as an alternative on the same regressed
+                                  # seeds; per-window disagreement with real translation RMSE was
+                                  # NOT better (8/13->10/13 on seed4, 4/13->7/13 on seed13) by raw
+                                  # count, though it did fix the specific high-leverage window 0
+                                  # miss anchor_only made on all three -- real aggregate dT/dC
+                                  # comparison (not just per-window proxy agreement) needed before
+                                  # trusting either fully. Kept as a config option for that A/B test.
+    anchor_n_iters_rot: int = 60  # GN iteration budget for the anchor-interpolated candidate when
+                                  # multistart_criterion="matched_total" (ignored otherwise).
 
 @dataclass(frozen=True)
 class OuterCfg:
@@ -697,47 +717,38 @@ def sesync_inner_solve(theta: jnp.ndarray,
         R_star = R_star_chain
     else:
         # Multi-start GN (see InnerCfg.n_starts): also solve from an
-        # anchor-interpolated R_init and keep whichever candidate wins by
-        # ANCHOR-TERM-ONLY cost (via _anchor_residual), not total
-        # _rotation_cost. cfg.n_starts is a static Python int (InnerCfg
-        # fields are closed over at jax.jit trace time, never traced), so
-        # this branch is resolved once at trace time, same as every other
-        # cfg-based branch in this module -- n_starts=1 recompiles to the
-        # exact code path above, byte-identical.
-        #
-        # Total _rotation_cost is structurally biased toward the
-        # chain-composed candidate: it starts with the chain term (summed
-        # over ~n-1 edges) at ~zero by construction, while the
-        # anchor-interpolated candidate starts far from chain-consistency
-        # and can't converge that large chain-term residual within a fixed
-        # small iteration budget -- so its total cost looks far worse even
-        # when its rotations are already closer to the truth. Confirmed
-        # directly (diag_exp44_multistart.py, real seq01/seed9 and
-        # seq13/seed12 data): total-cost selection disagreed with the real
-        # translation-RMSE-optimal pick in 6/13 and 17/37 windows
-        # respectively, including misses of 2-6x in translation RMSE (e.g.
-        # seq13 window 35: chain=2.171m vs anchor=0.349m, cost picked chain
-        # by 1.94 vs 226.15). Anchor-only cost ignores that unconverged
-        # chain-term residual entirely and uses no GT beyond what the
-        # anchors already legitimately consume -- it resolved essentially
-        # every consequential disagreement correctly (remaining disagreement
-        # dropped to 3/13 and 13/37, nearly all exact translation-RMSE ties).
-        # An oracle sweep (diag_exp44_multistart_oracle.py, selecting by real
-        # translation RMSE against dense GT -- not deployable, but an upper
-        # bound) confirmed the ceiling is real: seq01/seed9 flips from
-        # dC=-41.7% to +5.5%, seq13/seed12 from -16.9% to +21.3%.
+        # anchor-interpolated R_init and keep whichever candidate wins under
+        # cfg.multistart_criterion (see InnerCfg's docstring for the
+        # evidence behind each option and why neither is unconditionally
+        # better -- this is a live A/B config, not a settled choice yet).
+        # cfg.n_starts and cfg.multistart_criterion are static Python values
+        # (InnerCfg fields are closed over at jax.jit trace time, never
+        # traced), so these branches are resolved once at trace time, same
+        # as every other cfg-based branch in this module -- n_starts=1
+        # recompiles to the exact single-start code path above,
+        # byte-identical.
         R_init_anchor = _build_anchor_interpolated_R_init(n, cfg.anchor_spacing, anchor_targets)
-        R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
-                                         cfg.kappa_anchor, cfg.n_iters_rot,
-                                         cfg.damping_init, cfg.damping_min, cfg.damping_max,
-                                         cfg.damping_down, cfg.damping_up)
 
-        def anchor_only_cost(R):
-            r_anchor = _anchor_residual(R, anchor_idx, anchor_targets)
-            return cfg.kappa_anchor * jnp.sum(r_anchor ** 2)
+        if cfg.multistart_criterion == "matched_total":
+            R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
+                                             cfg.kappa_anchor, cfg.anchor_n_iters_rot,
+                                             cfg.damping_init, cfg.damping_min, cfg.damping_max,
+                                             cfg.damping_down, cfg.damping_up)
+            cost_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
+            cost_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
+        else:  # "anchor_only" (default)
+            R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
+                                             cfg.kappa_anchor, cfg.n_iters_rot,
+                                             cfg.damping_init, cfg.damping_min, cfg.damping_max,
+                                             cfg.damping_down, cfg.damping_up)
 
-        cost_chain = anchor_only_cost(R_star_chain)
-        cost_anchor = anchor_only_cost(R_star_anchor)
+            def anchor_only_cost(R):
+                r_anchor = _anchor_residual(R, anchor_idx, anchor_targets)
+                return cfg.kappa_anchor * jnp.sum(r_anchor ** 2)
+
+            cost_chain = anchor_only_cost(R_star_chain)
+            cost_anchor = anchor_only_cost(R_star_anchor)
+
         R_star = jnp.where(cost_anchor < cost_chain, R_star_anchor, R_star_chain)
 
     # Analytic translation recovery (one dense solve, auto-diff backward)
@@ -1412,12 +1423,15 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
         damping_max=base_inner_kwargs.get("damping_max", 1e2),
         damping_down=base_inner_kwargs.get("damping_down", 0.5),
         damping_up=damping_up,
-        # anchor_spacing/kappa_anchor/n_starts are fixed hyperparameters, not
-        # noise-adaptive (see InnerCfg's docstring) -- pass through unchanged
-        # at every noise level.
+        # anchor_spacing/kappa_anchor/n_starts/multistart_criterion/
+        # anchor_n_iters_rot are fixed hyperparameters, not noise-adaptive
+        # (see InnerCfg's docstring) -- pass through unchanged at every
+        # noise level.
         anchor_spacing=base_inner_kwargs.get("anchor_spacing", 50),
         kappa_anchor=base_inner_kwargs.get("kappa_anchor", 100.0),
         n_starts=base_inner_kwargs.get("n_starts", 1),
+        multistart_criterion=base_inner_kwargs.get("multistart_criterion", "anchor_only"),
+        anchor_n_iters_rot=base_inner_kwargs.get("anchor_n_iters_rot", 60),
     )
     outer_cfg = OuterCfg(
         n_trans1=base_outer_kwargs["n_trans1"],
@@ -1470,6 +1484,13 @@ def main():
                              "unchanged behavior). 2 = also try an anchor-interpolated R_init and "
                              "keep whichever the self-checking GN solve reaches lower cost from -- "
                              "targets the deterministic bad-basin seeds (see InnerCfg.n_starts).")
+    parser.add_argument("--multistart-criterion", type=str, default="anchor_only",
+                        choices=["anchor_only", "matched_total"],
+                        help="Selection criterion when --n-starts=2 (see InnerCfg.multistart_criterion "
+                             "for the evidence behind each -- this is a live A/B, not settled).")
+    parser.add_argument("--anchor-n-iters-rot", type=int, default=60,
+                        help="GN iteration budget for the anchor candidate when "
+                             "--multistart-criterion=matched_total (ignored otherwise).")
     parser.add_argument("--adaptive-solver", action=argparse.BooleanOptionalAction, default=True,
                         help="Scale n_iters_rot/damping_up/warmup_steps with sigma_t above the "
                              "reference noise level (default: on). Use --no-adaptive-solver to "
@@ -1490,7 +1511,8 @@ def main():
     base_inner_kwargs = {"n_iters_rot": 15, "damping_init": 1e-4, "damping_min": 1e-6,
                          "damping_max": 1e2, "damping_down": 0.5, "damping_up": 4.0,
                          "anchor_spacing": args.anchor_spacing, "kappa_anchor": args.kappa_anchor,
-                         "n_starts": args.n_starts}
+                         "n_starts": args.n_starts, "multistart_criterion": args.multistart_criterion,
+                         "anchor_n_iters_rot": args.anchor_n_iters_rot}
     base_outer_kwargs = {"n_trans1": args.n_trans1, "n_rot": args.n_rot, "n_trans2": args.n_trans2,
                          "lr_trans": args.lr_trans, "lr_rot": args.lr_rot, "warmup_steps": 5}
 
@@ -1506,7 +1528,8 @@ def main():
               f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
               f"warmup_steps={outer_cfg.warmup_steps}, rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
-              f"n_starts={inner_cfg.n_starts}")
+              f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
+              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
     else:
         inner_cfg = InnerCfg(n_iters_rot=base_inner_kwargs["n_iters_rot"],
                               damping_init=base_inner_kwargs["damping_init"],
@@ -1516,7 +1539,9 @@ def main():
                               damping_up=base_inner_kwargs["damping_up"],
                               anchor_spacing=base_inner_kwargs["anchor_spacing"],
                               kappa_anchor=base_inner_kwargs["kappa_anchor"],
-                              n_starts=base_inner_kwargs["n_starts"])
+                              n_starts=base_inner_kwargs["n_starts"],
+                              multistart_criterion=base_inner_kwargs["multistart_criterion"],
+                              anchor_n_iters_rot=base_inner_kwargs["anchor_n_iters_rot"])
         outer_cfg = OuterCfg(n_trans1=base_outer_kwargs["n_trans1"],
                               n_rot=base_outer_kwargs["n_rot"],
                               n_trans2=base_outer_kwargs["n_trans2"],
@@ -1528,7 +1553,8 @@ def main():
               f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}, "
               f"rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
-              f"n_starts={inner_cfg.n_starts}")
+              f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
+              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
 
     exp_cfg   = ExpCfg(
         window=args.window,
@@ -1744,6 +1770,8 @@ def main():
             "anchor_spacing": inner_cfg.anchor_spacing,
             "kappa_anchor": inner_cfg.kappa_anchor,
             "n_starts": inner_cfg.n_starts,
+            "multistart_criterion": inner_cfg.multistart_criterion,
+            "anchor_n_iters_rot": inner_cfg.anchor_n_iters_rot,
         }
         aggregate = {
             "config": config,
