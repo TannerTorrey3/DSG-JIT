@@ -133,6 +133,39 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     R_star_chain = solve(R_init_chain)
     R_star_anchor = solve(R_init_anchor)
 
+    # Held-out cross-validation criterion: split chain edges into two
+    # interleaved subsets (A=even, B=odd). For each candidate's R_init,
+    # solve using ONLY A's edges (kappa masked to zero on B) + the anchors,
+    # then score by how well the result predicts the HELD-OUT B edges (never
+    # used to fit it). Breaks the anchor-only/total-cost tautology directly:
+    # chain-composed's R_init trivially matches every edge it was built
+    # from, but has no particular reason to predict edges it never used
+    # unless it's actually tracking the real signal, not just the noise.
+    # Whichever candidate wins this vote, the ACTUAL output used is still
+    # its normal full-data solve (R_star_chain/R_star_anchor above) -- this
+    # is only a smarter selection signal, not a different final answer.
+    n_edges = n - 1
+    edge_idx = jnp.arange(n_edges)
+    mask_A = (edge_idx % 2 == 0).astype(jnp.float32)
+    mask_B = 1.0 - mask_A
+    kappa_A = kappa * mask_A
+    kappa_B = kappa * mask_B
+
+    def solve_masked(R_init, kappa_masked):
+        return rotation_gn_ift(R_init, R_meas, kappa_masked, anchor_idx, anchor_targets, inner_cfg.kappa_anchor,
+                                inner_cfg.n_iters_rot,
+                                inner_cfg.damping_init, inner_cfg.damping_min, inner_cfg.damping_max,
+                                inner_cfg.damping_down, inner_cfg.damping_up)
+
+    def held_out_cost(R_star, kappa_heldout):
+        r = jax.vmap(lambda Ri, Rj, Rij: so3_log(Rij.T @ Ri.T @ Rj))(R_star[:-1], R_star[1:], R_meas)
+        return jnp.sum(kappa_heldout * jnp.sum(r ** 2, axis=-1))
+
+    R_star_chain_A = solve_masked(R_init_chain, kappa_A)
+    R_star_anchor_A = solve_masked(R_init_anchor, kappa_A)
+    cost_heldout_chain = held_out_cost(R_star_chain_A, kappa_B)
+    cost_heldout_anchor = held_out_cost(R_star_anchor_A, kappa_B)
+
     # Anchor candidate solved to (closer to) convergence with a much larger
     # iteration budget -- same starting point, same everything else, just
     # given time to actually reduce its (initially large) chain-term
@@ -211,6 +244,7 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
         "cost_final_anchor_matched": cost_final_anchor_matched,
         "cost_anchor_only_chain": cost_anchor_only_chain, "cost_anchor_only_anchor": cost_anchor_only_anchor,
         "cost_anchor_only_anchor_matched": cost_anchor_only_anchor_matched,
+        "cost_heldout_chain": cost_heldout_chain, "cost_heldout_anchor": cost_heldout_anchor,
         "real_err_deg_chain": err_chain, "real_err_deg_anchor": err_anchor,
         "t_rmse_chain": t_err_chain, "t_rmse_anchor": t_err_anchor,
         "t_rmse_anchor_matched": t_err_anchor_matched,
@@ -293,9 +327,8 @@ def main():
         windows.append((lo, hi))
 
     print(f"\n{len(windows)} windows, seq={args.seq} seed={args.seed} sigma_t={args.sigma_t} ...\n")
-    print(f"{'win':>4} {'anchor_only(chain/anchor/anchor_matched)':>33} "
-          f"{'winner(anc-only)':>10} {'winner(anc-only+matched)':>16} "
-          f"{'t_rmse_m(chain/anchor/matched)':>30} {'winner(trans_matched)':>13}")
+    print(f"{'win':>4} {'heldout(chain/anchor)':>22} {'winner(heldout)':>15} "
+          f"{'t_rmse_m(chain/anchor)':>22} {'winner(trans)':>13}")
 
     results = []
     n_anchor_wins_cost = 0
@@ -304,11 +337,13 @@ def main():
     n_anchor_wins_anchoronly = 0
     n_anchor_wins_matched = 0
     n_anchor_wins_anchoronly_matched = 0
+    n_anchor_wins_heldout = 0
     n_disagree_rot = 0
     n_disagree_trans = 0
     n_anchoronly_disagree_trans = 0
     n_matched_disagree_trans = 0
     n_anchoronly_matched_disagree_trans = 0
+    n_heldout_disagree_trans = 0
     for wi, (lo, hi) in enumerate(windows):
         win_omds = noisy_rels_j[:, lo:hi - 1, :]
         win_gt_R = gt_R_mats_j[lo:hi]
@@ -323,6 +358,7 @@ def main():
         winner_matched = "anchor" if r["cost_final_anchor_matched"] < r["cost_final_chain"] else "chain"
         winner_anchoronly_matched = ("anchor" if r["cost_anchor_only_anchor_matched"] < r["cost_anchor_only_chain"]
                                       else "chain")
+        winner_heldout = "anchor" if r["cost_heldout_anchor"] < r["cost_heldout_chain"] else "chain"
         winner_rot = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
         winner_trans = "anchor" if r["t_rmse_anchor"] < r["t_rmse_chain"] else "chain"
         winner_trans_matched = "anchor" if r["t_rmse_anchor_matched"] < r["t_rmse_chain"] else "chain"
@@ -334,6 +370,8 @@ def main():
             n_anchor_wins_matched += 1
         if winner_anchoronly_matched == "anchor":
             n_anchor_wins_anchoronly_matched += 1
+        if winner_heldout == "anchor":
+            n_anchor_wins_heldout += 1
         if winner_rot == "anchor":
             n_anchor_wins_rot += 1
         if winner_trans == "anchor":
@@ -348,23 +386,26 @@ def main():
             n_matched_disagree_trans += 1
         if winner_anchoronly_matched != winner_trans_matched:
             n_anchoronly_matched_disagree_trans += 1
+        if winner_heldout != winner_trans:
+            n_heldout_disagree_trans += 1
 
         row = {"window": wi, "lo": lo, "hi": hi, **r,
                "winner_cost": winner_cost, "winner_anchoronly": winner_anchoronly,
                "winner_matched": winner_matched, "winner_anchoronly_matched": winner_anchoronly_matched,
-               "winner_rot": winner_rot,
+               "winner_heldout": winner_heldout, "winner_rot": winner_rot,
                "winner_trans": winner_trans, "winner_trans_matched": winner_trans_matched}
         results.append(row)
         flag = ""
-        if winner_anchoronly_matched != winner_trans_matched:
-            flag = "  <-- anchor-only+matched/TRANS DISAGREE"
+        if winner_heldout != winner_trans:
+            flag = "  <-- HELDOUT/TRANS DISAGREE"
+        elif winner_anchoronly_matched != winner_trans_matched:
+            flag = "  <-- anchor-only+matched/TRANS disagree (heldout agrees)"
         elif winner_anchoronly != winner_trans:
-            flag = "  <-- (short-iter anchor-only disagreed, anchor-only+matched agrees)"
-        print(f"{wi:4d} {r['cost_anchor_only_chain']:>10.3f}/{r['cost_anchor_only_anchor']:<10.3f}"
-              f"/{r['cost_anchor_only_anchor_matched']:<10.3f} "
-              f"{winner_anchoronly:>10} {winner_anchoronly_matched:>16} "
-              f"{r['t_rmse_chain']:>9.3f}/{r['t_rmse_anchor']:<9.3f}/{r['t_rmse_anchor_matched']:<9.3f} "
-              f"{winner_trans_matched:>13}{flag}")
+            flag = "  <-- (short-iter anchor-only disagreed, heldout agrees)"
+        print(f"{wi:4d} {r['cost_heldout_chain']:>10.4f}/{r['cost_heldout_anchor']:<10.4f} "
+              f"{winner_heldout:>15} "
+              f"{r['t_rmse_chain']:>9.3f}/{r['t_rmse_anchor']:<9.3f} "
+              f"{winner_trans:>13}{flag}")
 
     with open(os.path.join(out_dir, "per_window_multistart.json"), "w") as fp:
         json.dump(results, fp, indent=2)
@@ -406,6 +447,16 @@ def main():
           f"(compare against short-iteration anchor-only's {n_anchoronly_disagree_trans}/{len(windows)} -- "
           f"lower here means the seed4/11/13 window-0-style misses were caused by the anchor "
           f"candidate's ROTATION being under-converged, not just its chain-term cost)")
+    print(f"  --- candidate selection criterion: HELD-OUT cross-validation (fit on even-indexed "
+          f"edges + anchors, score by prediction of held-out odd-indexed edges; no GT beyond what "
+          f"anchors already use) ---")
+    print(f"  Anchor candidate wins by held-out cross-validation: "
+          f"{n_anchor_wins_heldout}/{len(windows)}")
+    print(f"  Windows where held-out selection disagrees with the TRANSLATION-optimal pick: "
+          f"{n_heldout_disagree_trans}/{len(windows)}  "
+          f"(compare against every prior criterion's disagreement count above -- this is the one "
+          f"that actually breaks the chain-composed-always-wins tautology instead of working "
+          f"around it)")
     print(f"\nSaved per-window results to {out_dir}")
 
 
