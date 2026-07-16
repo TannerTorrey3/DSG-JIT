@@ -101,6 +101,18 @@ class InnerCfg:
                                   # sweep: too small and anchors don't break the trivial-optimum trap
                                   # in practice; too large and every window just clamps to GT,
                                   # defeating the point of learning theta at all.
+    n_starts: int = 1            # multi-start GN: try this many candidate R_inits per window,
+                                  # keep whichever the self-checking GN solve reaches the lowest
+                                  # _rotation_cost from. 1 = today's single-start behavior
+                                  # (chain-composed R_init only), byte-identical. 2 adds one
+                                  # anchor-interpolated candidate (see
+                                  # _build_anchor_interpolated_R_init) -- targets the deterministic
+                                  # bad-basin seeds where the chain-composed R_init is biased in an
+                                  # adversarial direction by that seed's specific noise-draw shape
+                                  # (see project_exp44_bad_seeds_deterministic memory): the
+                                  # anchor-interpolated candidate isn't derived from noisy
+                                  # measurements at all, so it can't inherit that same bias. Values
+                                  # other than 1 or 2 are not currently meaningful.
 
 @dataclass(frozen=True)
 class OuterCfg:
@@ -562,6 +574,69 @@ def recover_translations(R_star: jnp.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# Multi-start GN: anchor-interpolated alternate R_init
+# ---------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=None)
+def _anchor_interp_tables(n: int, anchor_spacing: int):
+    """Static left/right anchor-slot index + SLERP alpha tables, one entry per
+    pose 0..n-1. Slot 0 is the implicit identity anchor at pose 0; slots
+    1..m are anchor_idx's targets in order (see sesync_inner_solve's
+    anchor_idx construction, which this mirrors exactly in plain
+    numpy/Python instead of jnp -- n and anchor_spacing are always concrete
+    Python ints closed over by build_denoiser's jax.jit, never traced, so
+    this table is a trace-time constant, cached per (n, anchor_spacing).
+    """
+    # Returns plain NumPy arrays, NOT jnp arrays: this is cached across calls
+    # (and across many independent JAX traces -- one per window/seed dispatch,
+    # plus retraces inside outer_adam_loop's jax.grad/lax.scan). A jnp array
+    # created the first time this runs while already inside an active trace
+    # would get bound to that trace's now-dead context and leak as a stale
+    # DynamicJaxprTracer on every later call -- confirmed directly: caching
+    # jnp.array(...) here crashed outer_adam_loop with UnexpectedTracerError
+    # ("intermediate value... allowed to escape the scope of the
+    # transformation"). NumPy arrays are host-side/trace-agnostic, so they're
+    # safe to cache and reuse in any trace; _build_anchor_interpolated_R_init
+    # converts them to jnp fresh on every call instead.
+    anchor_positions = list(range(anchor_spacing, n - 1, anchor_spacing)) + [n - 1]
+    positions = np.array([0] + anchor_positions, dtype=np.int64)  # strictly ascending by construction
+
+    js = np.arange(n)
+    seg = np.clip(np.searchsorted(positions, js, side="right") - 1, 0, len(positions) - 1)
+    seg_right = np.clip(seg + 1, 0, len(positions) - 1)
+    lo, hi = positions[seg], positions[seg_right]
+    denom = np.where(hi == lo, 1, hi - lo)
+    alpha = np.where(hi == lo, 0.0, (js - lo) / denom).astype(np.float32)
+
+    return seg.astype(np.int32), seg_right.astype(np.int32), alpha
+
+
+def _build_anchor_interpolated_R_init(n: int, anchor_spacing: int,
+                                       anchor_targets: jnp.ndarray) -> jnp.ndarray:
+    """Alternate R_init candidate for multi-start GN (see InnerCfg.n_starts):
+    piecewise-geodesic SLERP through the sparse GT anchors (pose 0 implicitly
+    anchored at identity, plus anchor_idx/anchor_targets), instead of
+    chain-composing the raw noisy R_meas.
+
+    Unlike the chain-composed R_init, this candidate has zero dependence on
+    noisy measurements, so it cannot inherit whatever adversarial noise-draw
+    direction biases the chain-composed candidate toward a bad GN basin for a
+    given (seq, seed) pair.
+    """
+    left_idx_np, right_idx_np, alpha_np = _anchor_interp_tables(n, anchor_spacing)
+    left_idx, right_idx, alpha = jnp.array(left_idx_np), jnp.array(right_idx_np), jnp.array(alpha_np)
+    anchor_targets_full = jnp.concatenate([jnp.eye(3)[None], anchor_targets], axis=0)  # (m+1, 3, 3)
+    R_lo = anchor_targets_full[left_idx]   # (n, 3, 3)
+    R_hi = anchor_targets_full[right_idx]  # (n, 3, 3)
+
+    def slerp_one(Rlo, Rhi, a):
+        rel = so3_log(Rlo.T @ Rhi)
+        return Rlo @ so3_exp(a * rel)
+
+    return jax.vmap(slerp_one)(R_lo, R_hi, alpha)
+
+
+# ---------------------------------------------------------------------------
 # Full inner solver
 # ---------------------------------------------------------------------------
 
@@ -613,10 +688,30 @@ def sesync_inner_solve(theta: jnp.ndarray,
     anchor_targets = gt_R_rel[anchor_idx]                    # (m, 3, 3)
 
     # Rotation GN with IFT backward (3(n-1) x 3(n-1) system)
-    R_star = rotation_gn_ift(R_init, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor,
-                              cfg.n_iters_rot,
-                              cfg.damping_init, cfg.damping_min, cfg.damping_max,
-                              cfg.damping_down, cfg.damping_up)
+    R_star_chain = rotation_gn_ift(R_init, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor,
+                                    cfg.n_iters_rot,
+                                    cfg.damping_init, cfg.damping_min, cfg.damping_max,
+                                    cfg.damping_down, cfg.damping_up)
+
+    if cfg.n_starts <= 1:
+        R_star = R_star_chain
+    else:
+        # Multi-start GN (see InnerCfg.n_starts): also solve from an
+        # anchor-interpolated R_init and keep whichever candidate the
+        # self-checking GN actually reaches the lower _rotation_cost from.
+        # cfg.n_starts is a static Python int (InnerCfg fields are closed
+        # over at jax.jit trace time, never traced), so this branch is
+        # resolved once at trace time, same as every other cfg-based branch
+        # in this module -- n_starts=1 recompiles to the exact code path
+        # above, byte-identical.
+        R_init_anchor = _build_anchor_interpolated_R_init(n, cfg.anchor_spacing, anchor_targets)
+        R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
+                                         cfg.kappa_anchor, cfg.n_iters_rot,
+                                         cfg.damping_init, cfg.damping_min, cfg.damping_max,
+                                         cfg.damping_down, cfg.damping_up)
+        cost_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
+        cost_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
+        R_star = jnp.where(cost_anchor < cost_chain, R_star_anchor, R_star_chain)
 
     # Analytic translation recovery (one dense solve, auto-diff backward)
     t_star = recover_translations(R_star, t_meas, omega, n)
@@ -1290,10 +1385,12 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
         damping_max=base_inner_kwargs.get("damping_max", 1e2),
         damping_down=base_inner_kwargs.get("damping_down", 0.5),
         damping_up=damping_up,
-        # anchor_spacing/kappa_anchor are fixed hyperparameters, not noise-adaptive
-        # (see InnerCfg's docstring) -- pass through unchanged at every noise level.
+        # anchor_spacing/kappa_anchor/n_starts are fixed hyperparameters, not
+        # noise-adaptive (see InnerCfg's docstring) -- pass through unchanged
+        # at every noise level.
         anchor_spacing=base_inner_kwargs.get("anchor_spacing", 50),
         kappa_anchor=base_inner_kwargs.get("kappa_anchor", 100.0),
+        n_starts=base_inner_kwargs.get("n_starts", 1),
     )
     outer_cfg = OuterCfg(
         n_trans1=base_outer_kwargs["n_trans1"],
@@ -1341,6 +1438,11 @@ def main():
                         help="Fixed anchor precision (not noise-adaptive or learned). Needs "
                              "empirical tuning: too small and anchors don't matter in practice, "
                              "too large and every window just clamps to GT.")
+    parser.add_argument("--n-starts", type=int, default=1,
+                        help="Multi-start GN: 1 = today's single chain-composed R_init (default, "
+                             "unchanged behavior). 2 = also try an anchor-interpolated R_init and "
+                             "keep whichever the self-checking GN solve reaches lower cost from -- "
+                             "targets the deterministic bad-basin seeds (see InnerCfg.n_starts).")
     parser.add_argument("--adaptive-solver", action=argparse.BooleanOptionalAction, default=True,
                         help="Scale n_iters_rot/damping_up/warmup_steps with sigma_t above the "
                              "reference noise level (default: on). Use --no-adaptive-solver to "
@@ -1360,7 +1462,8 @@ def main():
 
     base_inner_kwargs = {"n_iters_rot": 15, "damping_init": 1e-4, "damping_min": 1e-6,
                          "damping_max": 1e2, "damping_down": 0.5, "damping_up": 4.0,
-                         "anchor_spacing": args.anchor_spacing, "kappa_anchor": args.kappa_anchor}
+                         "anchor_spacing": args.anchor_spacing, "kappa_anchor": args.kappa_anchor,
+                         "n_starts": args.n_starts}
     base_outer_kwargs = {"n_trans1": args.n_trans1, "n_rot": args.n_rot, "n_trans2": args.n_trans2,
                          "lr_trans": args.lr_trans, "lr_rot": args.lr_rot, "warmup_steps": 5}
 
@@ -1375,7 +1478,8 @@ def main():
               f"reference={args.adaptive_reference_sigma_t}): "
               f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
               f"warmup_steps={outer_cfg.warmup_steps}, rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
-              f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}")
+              f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
+              f"n_starts={inner_cfg.n_starts}")
     else:
         inner_cfg = InnerCfg(n_iters_rot=base_inner_kwargs["n_iters_rot"],
                               damping_init=base_inner_kwargs["damping_init"],
@@ -1384,7 +1488,8 @@ def main():
                               damping_down=base_inner_kwargs["damping_down"],
                               damping_up=base_inner_kwargs["damping_up"],
                               anchor_spacing=base_inner_kwargs["anchor_spacing"],
-                              kappa_anchor=base_inner_kwargs["kappa_anchor"])
+                              kappa_anchor=base_inner_kwargs["kappa_anchor"],
+                              n_starts=base_inner_kwargs["n_starts"])
         outer_cfg = OuterCfg(n_trans1=base_outer_kwargs["n_trans1"],
                               n_rot=base_outer_kwargs["n_rot"],
                               n_trans2=base_outer_kwargs["n_trans2"],
@@ -1395,7 +1500,8 @@ def main():
         print(f"Fixed (non-adaptive) solver settings: n_iters_rot={inner_cfg.n_iters_rot}, "
               f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}, "
               f"rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
-              f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}")
+              f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
+              f"n_starts={inner_cfg.n_starts}")
 
     exp_cfg   = ExpCfg(
         window=args.window,
@@ -1610,6 +1716,7 @@ def main():
             "rot_loss_boost_used": outer_cfg.rot_loss_boost,
             "anchor_spacing": inner_cfg.anchor_spacing,
             "kappa_anchor": inner_cfg.kappa_anchor,
+            "n_starts": inner_cfg.n_starts,
         }
         aggregate = {
             "config": config,
