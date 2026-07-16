@@ -20,18 +20,28 @@ the truth geometrically. If true, the SELECTION criterion (final
 _rotation_cost) is structurally biased toward the chain-composed candidate,
 independent of whether the anchor-interpolated one would actually help.
 
+A first pass (rotation-only) on real seq13/seed12 data confirmed a severe
+disagreement: the anchor candidate wins by real rotation error in 23/37
+windows but by cost_final in only 6/37 -- the cost proxy is structurally
+biased toward the chain-composed candidate regardless of merit. BUT
+seq01/seed9 and seq13/seed12's actual badness (dT=-89.5%/-33.7%) is almost
+entirely a TRANSLATION collapse, not a rotation one (dR=+6.1%/+0.4%, near
+baseline) -- so this script also reports each candidate's effect on the
+TRANSLATION recovery (recover_translations), which is the metric that
+actually drives dT/dC for these two seeds, not rotation accuracy alone.
+
 This script isolates a single (seq, seed) pair and, for every window,
 reports:
-  - cost_init / cost_final for BOTH candidates (chain-composed, anchor-
-    interpolated) under the self-checking GN solve
-  - which candidate the real n_starts=2 selection logic would pick (lower
-    cost_final)
-  - the REAL local geodesic rotation error (vs ground truth, not a cost
-    proxy) for BOTH candidates' R_star
-  - an ORACLE comparison: what if selection used real error instead of
-    _rotation_cost? If the anchor candidate has lower real error more often
-    than it has lower cost, the candidate design might still be useful --
-    the SELECTION criterion would need fixing, not the candidate itself.
+  - cost_final for BOTH candidates (chain-composed, anchor-interpolated)
+    under the self-checking GN solve, and which one n_starts=2's real
+    selection logic would pick (lower cost_final)
+  - the REAL local geodesic rotation error AND translation RMSE (vs ground
+    truth, not a cost proxy) for BOTH candidates' R_star/t_star
+  - an ORACLE comparison for each: what if selection used real rotation
+    error, or real translation RMSE, instead of _rotation_cost? Since
+    translation is what actually drives these two seeds' badness, the
+    cost/TRANS disagreement count matters more here than the cost/rotation
+    one.
 
 Run (on the machine with real KITTI data):
   python -m experiments.diag_exp44_multistart --kitti-root /path/to/kitti \
@@ -56,6 +66,7 @@ from experiments.exp44_anchored_sesync_gn import (
     so3_exp,
     so3_log,
     rotation_gn_ift,
+    recover_translations,
     _rotation_cost,
     _build_anchor_interpolated_R_init,
     _add_kitti_noise,
@@ -65,12 +76,19 @@ from experiments.exp44_anchored_sesync_gn import (
 from experiments.diag_exp44_outer_regression import load_sequence
 
 
-def per_window_multistart_diagnostics(win_odom, win_gt_R, kappa, omega, n, inner_cfg):
+def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega, n, inner_cfg):
     """Reimplements sesync_inner_solve's math (theta=0, matching
     exp44_inner_solver_only's usage), but returns BOTH candidates and their
     costs instead of collapsing to a single selected R_star.
+
+    win_gt_t: (n, 3) absolute ground-truth translations for this window
+    (world frame) -- needed to check whether a candidate's ROTATION choice
+    actually matters for the TRANSLATION recovery, since seq01/seed9 and
+    seq13/seed12's real badness (dT=-89.5%/-33.7%) is almost entirely a
+    translation collapse, not a rotation one (dR=+6.1%/+0.4%, near baseline)
+    -- comparing candidates by rotation error alone risks measuring a
+    dimension that isn't what's actually broken for these seeds.
     """
-    del omega  # translation recovery isn't needed for this diagnostic
     theta = jnp.zeros_like(win_odom)
     corrected = win_odom + theta
     w_meas = corrected[:, 3:]
@@ -115,6 +133,23 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, kappa, omega, n, inner
     err_chain = mean_geodesic_err_deg(R_star_chain, gt_R_rel)
     err_anchor = mean_geodesic_err_deg(R_star_anchor, gt_R_rel)
 
+    # Translation recovery, same as sesync_inner_solve, driven by each
+    # candidate's R_star -- this is the metric that actually matters for
+    # seq01/seed9 and seq13/seed12, whose badness is almost entirely a
+    # translation collapse (see docstring above).
+    t_meas = corrected[:, :3]
+    gt_t0 = win_gt_t[0]
+    gt_t_rel = jax.vmap(lambda t: gt_R0.T @ (t - gt_t0))(win_gt_t)
+
+    t_star_chain = recover_translations(R_star_chain, t_meas, omega, n)
+    t_star_anchor = recover_translations(R_star_anchor, t_meas, omega, n)
+
+    def rmse_t(t_est, t_gt):
+        return jnp.sqrt(jnp.mean(jnp.sum((t_est - t_gt) ** 2, axis=-1)))
+
+    t_err_chain = rmse_t(t_star_chain, gt_t_rel)
+    t_err_anchor = rmse_t(t_star_anchor, gt_t_rel)
+
     # Return raw jnp scalars, NOT python floats -- this function is called
     # through jax.jit below, and float() on a traced value inside a jitted
     # function raises ConcretizationTypeError. Callers convert to float
@@ -123,6 +158,7 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, kappa, omega, n, inner
         "cost_init_chain": cost_init_chain, "cost_init_anchor": cost_init_anchor,
         "cost_final_chain": cost_final_chain, "cost_final_anchor": cost_final_anchor,
         "real_err_deg_chain": err_chain, "real_err_deg_anchor": err_anchor,
+        "t_rmse_chain": t_err_chain, "t_rmse_anchor": t_err_anchor,
     }
 
 
@@ -180,6 +216,7 @@ def main():
 
     noisy_rels_j = jnp.array(noisy_rels)
     gt_R_mats_j = jnp.array(gt_R_mats)
+    gt_t_j = jnp.array(gt_global[:, :3])
 
     stride = args.window - args.overlap
     windows = []
@@ -193,38 +230,51 @@ def main():
         windows.append((lo, hi))
 
     print(f"\n{len(windows)} windows, seq={args.seq} seed={args.seed} sigma_t={args.sigma_t} ...\n")
-    print(f"{'win':>4} {'cost_init(chain/anchor)':>26} {'cost_final(chain/anchor)':>26} "
-          f"{'winner(cost)':>12} {'real_err_deg(chain/anchor)':>28} {'winner(real)':>12}")
+    print(f"{'win':>4} {'cost_final(chain/anchor)':>26} {'winner(cost)':>12} "
+          f"{'rot_err_deg(chain/anchor)':>26} {'winner(rot)':>11} "
+          f"{'t_rmse_m(chain/anchor)':>22} {'winner(trans)':>13}")
 
     results = []
     n_anchor_wins_cost = 0
-    n_anchor_wins_real = 0
-    n_disagree = 0
+    n_anchor_wins_rot = 0
+    n_anchor_wins_trans = 0
+    n_disagree_rot = 0
+    n_disagree_trans = 0
     for wi, (lo, hi) in enumerate(windows):
         win_omds = noisy_rels_j[:, lo:hi - 1, :]
         win_gt_R = gt_R_mats_j[lo:hi]
+        win_gt_t = gt_t_j[lo:hi]
         kappa = prec_pooled_fn(win_omds[:, :, 3:])
         omega = prec_pooled_fn(win_omds[:, :, :3])
         win_odom = win_omds[args.seed]
 
-        r = {k: float(v) for k, v in diag_fn(win_odom, win_gt_R, kappa, omega).items()}
+        r = {k: float(v) for k, v in diag_fn(win_odom, win_gt_R, win_gt_t, kappa, omega).items()}
         winner_cost = "anchor" if r["cost_final_anchor"] < r["cost_final_chain"] else "chain"
-        winner_real = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
+        winner_rot = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
+        winner_trans = "anchor" if r["t_rmse_anchor"] < r["t_rmse_chain"] else "chain"
         if winner_cost == "anchor":
             n_anchor_wins_cost += 1
-        if winner_real == "anchor":
-            n_anchor_wins_real += 1
-        if winner_cost != winner_real:
-            n_disagree += 1
+        if winner_rot == "anchor":
+            n_anchor_wins_rot += 1
+        if winner_trans == "anchor":
+            n_anchor_wins_trans += 1
+        if winner_cost != winner_rot:
+            n_disagree_rot += 1
+        if winner_cost != winner_trans:
+            n_disagree_trans += 1
 
         row = {"window": wi, "lo": lo, "hi": hi, **r,
-               "winner_cost": winner_cost, "winner_real": winner_real}
+               "winner_cost": winner_cost, "winner_rot": winner_rot, "winner_trans": winner_trans}
         results.append(row)
-        flag = "  <-- cost/real DISAGREE" if winner_cost != winner_real else ""
-        print(f"{wi:4d} {r['cost_init_chain']:>11.2f}/{r['cost_init_anchor']:<11.2f} "
-              f"{r['cost_final_chain']:>11.2f}/{r['cost_final_anchor']:<11.2f} "
-              f"{winner_cost:>12} {r['real_err_deg_chain']:>12.2f}/{r['real_err_deg_anchor']:<12.2f} "
-              f"{winner_real:>12}{flag}")
+        flag = ""
+        if winner_cost != winner_trans:
+            flag = "  <-- cost/TRANS DISAGREE"
+        elif winner_cost != winner_rot:
+            flag = "  <-- cost/rot disagree"
+        print(f"{wi:4d} {r['cost_final_chain']:>11.2f}/{r['cost_final_anchor']:<11.2f} "
+              f"{winner_cost:>12} {r['real_err_deg_chain']:>11.2f}/{r['real_err_deg_anchor']:<11.2f} "
+              f"{winner_rot:>11} {r['t_rmse_chain']:>10.3f}/{r['t_rmse_anchor']:<10.3f} "
+              f"{winner_trans:>13}{flag}")
 
     with open(os.path.join(out_dir, "per_window_multistart.json"), "w") as fp:
         json.dump(results, fp, indent=2)
@@ -233,10 +283,14 @@ def main():
           f"sigma_t={args.sigma_t}) ===")
     print(f"  Anchor candidate wins by cost_final (what n_starts=2 actually selects): "
           f"{n_anchor_wins_cost}/{len(windows)}")
-    print(f"  Anchor candidate wins by REAL geodesic error (oracle, not used by selection): "
-          f"{n_anchor_wins_real}/{len(windows)}")
-    print(f"  Windows where cost-based selection disagrees with the real-error-optimal pick: "
-          f"{n_disagree}/{len(windows)}")
+    print(f"  Anchor candidate wins by rotation geodesic error (oracle, not used by selection): "
+          f"{n_anchor_wins_rot}/{len(windows)}")
+    print(f"  Anchor candidate wins by TRANSLATION RMSE (oracle, the metric that actually drives "
+          f"dT/dC for seq01/seed9 and seq13/seed12): {n_anchor_wins_trans}/{len(windows)}")
+    print(f"  Windows where cost-based selection disagrees with the rotation-optimal pick: "
+          f"{n_disagree_rot}/{len(windows)}")
+    print(f"  Windows where cost-based selection disagrees with the TRANSLATION-optimal pick: "
+          f"{n_disagree_trans}/{len(windows)}")
     print(f"\nSaved per-window results to {out_dir}")
 
 
