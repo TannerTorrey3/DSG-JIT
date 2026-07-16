@@ -138,7 +138,7 @@ def main():
                              "keep whichever the self-checking GN solve reaches lower cost from -- "
                              "targets the deterministic bad-basin seeds (see InnerCfg.n_starts).")
     parser.add_argument("--multistart-criterion", type=str, default="anchor_only",
-                        choices=["anchor_only", "matched_total"],
+                        choices=["anchor_only", "matched_total", "anchor_only_matched"],
                         help="Selection criterion when --n-starts=2 (see InnerCfg.multistart_criterion "
                              "for the evidence behind each -- this is a live A/B, not settled).")
     parser.add_argument("--anchor-n-iters-rot", type=int, default=60,

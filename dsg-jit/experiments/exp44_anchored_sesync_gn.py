@@ -128,11 +128,19 @@ class InnerCfg:
                                   # seeds; per-window disagreement with real translation RMSE was
                                   # NOT better (8/13->10/13 on seed4, 4/13->7/13 on seed13) by raw
                                   # count, though it did fix the specific high-leverage window 0
-                                  # miss anchor_only made on all three -- real aggregate dT/dC
-                                  # comparison (not just per-window proxy agreement) needed before
-                                  # trusting either fully. Kept as a config option for that A/B test.
+                                  # miss anchor_only made on all three. On real Lambda data it's
+                                  # also nearly a no-op (86/286 window/seed picks, but confirmed all
+                                  # in windows where both candidates already converge to the same
+                                  # point -- total cost's chain-term dominance means it essentially
+                                  # never overrides chain in a window that actually matters).
+                                  # "anchor_only_matched" -- anchor-only cost's selection signal,
+                                  # but scored on the anchor candidate after anchor_n_iters_rot
+                                  # iterations instead of n_iters_rot. Untested on real aggregate
+                                  # dT/dC as of this writing -- see diag_exp44_multistart.py's
+                                  # per-window comparison for the evidence gathered so far.
     anchor_n_iters_rot: int = 60  # GN iteration budget for the anchor-interpolated candidate when
-                                  # multistart_criterion="matched_total" (ignored otherwise).
+                                  # multistart_criterion is "matched_total" or "anchor_only_matched"
+                                  # (ignored for "anchor_only").
 
 @dataclass(frozen=True)
 class OuterCfg:
@@ -736,18 +744,26 @@ def sesync_inner_solve(theta: jnp.ndarray,
                                              cfg.damping_down, cfg.damping_up)
             cost_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
             cost_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, cfg.kappa_anchor)
-            # TEMP DEBUG -- remove after diagnosing why matched_total's real
-            # Lambda run on seq01 (all 22 seeds) came back byte-identical to
-            # n_starts=1, contradicting diag_exp44_multistart.py's per-window
-            # table for the same seed (which showed anchor winning matched
-            # cost in several windows). jax.debug.print runs at actual
-            # runtime (unlike a plain Python print, which would only fire
-            # once at trace time and show trace-time placeholders, not real
-            # per-window values).
-            jax.debug.print(
-                "[matched_total debug] cost_chain={c1} cost_anchor={c2} picked_anchor={u}",
-                c1=cost_chain, c2=cost_anchor, u=cost_anchor < cost_chain,
-            )
+        elif cfg.multistart_criterion == "anchor_only_matched":
+            # Anchor-only cost's SELECTION signal (proven to fix seq01/seed9
+            # and seq13/seed12), but scored on the anchor candidate after
+            # anchor_n_iters_rot iterations instead of the short
+            # cfg.n_iters_rot budget -- tests whether the seed4/11/13
+            # window-0-style misses were caused by the anchor candidate's
+            # ROTATION being under-converged (not just its chain-term cost,
+            # which anchor-only cost was already designed to ignore). See
+            # diag_exp44_multistart.py for the per-window evidence.
+            R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
+                                             cfg.kappa_anchor, cfg.anchor_n_iters_rot,
+                                             cfg.damping_init, cfg.damping_min, cfg.damping_max,
+                                             cfg.damping_down, cfg.damping_up)
+
+            def anchor_only_cost_matched(R):
+                r_anchor = _anchor_residual(R, anchor_idx, anchor_targets)
+                return cfg.kappa_anchor * jnp.sum(r_anchor ** 2)
+
+            cost_chain = anchor_only_cost_matched(R_star_chain)
+            cost_anchor = anchor_only_cost_matched(R_star_anchor)
         else:  # "anchor_only" (default)
             R_star_anchor = rotation_gn_ift(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets,
                                              cfg.kappa_anchor, cfg.n_iters_rot,
@@ -1497,7 +1513,7 @@ def main():
                              "keep whichever the self-checking GN solve reaches lower cost from -- "
                              "targets the deterministic bad-basin seeds (see InnerCfg.n_starts).")
     parser.add_argument("--multistart-criterion", type=str, default="anchor_only",
-                        choices=["anchor_only", "matched_total"],
+                        choices=["anchor_only", "matched_total", "anchor_only_matched"],
                         help="Selection criterion when --n-starts=2 (see InnerCfg.multistart_criterion "
                              "for the evidence behind each -- this is a live A/B, not settled).")
     parser.add_argument("--anchor-n-iters-rot", type=int, default=60,
