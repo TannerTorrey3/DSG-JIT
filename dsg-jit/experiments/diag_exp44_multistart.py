@@ -176,10 +176,31 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     _, R_traj_A_only = jax.lax.scan(
         lambda R, Rm: (R @ Rm, R @ Rm), jnp.eye(3), R_meas[:mid]
     )  # (mid, 3, 3) -- poses 1..mid, from A edges ONLY
+    # Poses mid+1..n-1: continue via SLERP from pose mid's A-derived rotation
+    # toward the FINAL anchor target (pose n-1), NOT frozen at a constant
+    # value. Freezing was a confirmed bug, not just a theoretical risk: on
+    # real data (seq13/seed12) it made anchor win held-out in 36/37 windows,
+    # nearly universally (23/37 REAL disagreement -- worse than every other
+    # criterion), because real motion never actually stays frozen, so
+    # freezing silently penalizes chain's B-region prediction regardless of
+    # whether its A-region fit was any good -- while anchor's R_init is
+    # already a smooth SLERP across the whole window and never pays this
+    # penalty. That's an asymmetric handicap, not a genuine generalization
+    # signal. SLERP-continuing from pose mid gives both candidates an
+    # equally reasonable prior for the region neither has A-only edge
+    # information about, isolating what we actually want to measure.
+    # NOTE: assumes exactly two anchors (mid and n-1, i.e. window=100,
+    # anchor_spacing=50) -- does not generalize to intermediate anchors.
+    R_pose_mid = R_traj_A_only[-1]              # (3, 3) -- pose mid's A-only rotation
+    R_target_end = anchor_targets[-1]           # (3, 3) -- last anchor's target, at pose n-1
+    log_rel = so3_log(R_pose_mid.T @ R_target_end)
+    n_tail = n - 1 - mid                        # poses mid+1..n-1
+    tail_alphas = jnp.arange(1, n_tail + 1, dtype=jnp.float32) / n_tail  # (n_tail,), reaches 1.0 at pose n-1
+    tail_rotations = jax.vmap(lambda a: R_pose_mid @ so3_exp(a * log_rel))(tail_alphas)  # (n_tail, 3, 3)
     R_init_chain_A_only = jnp.concatenate([
-        jnp.eye(3)[None],                                    # pose 0
-        R_traj_A_only,                                       # poses 1..mid
-        jnp.repeat(R_traj_A_only[-1:], n - 1 - mid, axis=0),  # poses mid+1..n-1, frozen (no B info)
+        jnp.eye(3)[None],   # pose 0
+        R_traj_A_only,      # poses 1..mid
+        tail_rotations,     # poses mid+1..n-1, SLERP continuation (not frozen)
     ], axis=0)  # (n, 3, 3)
 
     def solve_masked(R_init, kappa_masked):
