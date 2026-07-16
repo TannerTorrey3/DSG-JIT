@@ -115,10 +115,14 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, kappa, omega, n, inner
     err_chain = mean_geodesic_err_deg(R_star_chain, gt_R_rel)
     err_anchor = mean_geodesic_err_deg(R_star_anchor, gt_R_rel)
 
+    # Return raw jnp scalars, NOT python floats -- this function is called
+    # through jax.jit below, and float() on a traced value inside a jitted
+    # function raises ConcretizationTypeError. Callers convert to float
+    # themselves once the jit call has returned concrete values.
     return {
-        "cost_init_chain": float(cost_init_chain), "cost_init_anchor": float(cost_init_anchor),
-        "cost_final_chain": float(cost_final_chain), "cost_final_anchor": float(cost_final_anchor),
-        "real_err_deg_chain": float(err_chain), "real_err_deg_anchor": float(err_anchor),
+        "cost_init_chain": cost_init_chain, "cost_init_anchor": cost_init_anchor,
+        "cost_final_chain": cost_final_chain, "cost_final_anchor": cost_final_anchor,
+        "real_err_deg_chain": err_chain, "real_err_deg_anchor": err_anchor,
     }
 
 
@@ -203,7 +207,7 @@ def main():
         omega = prec_pooled_fn(win_omds[:, :, :3])
         win_odom = win_omds[args.seed]
 
-        r = diag_fn(win_odom, win_gt_R, kappa, omega)
+        r = {k: float(v) for k, v in diag_fn(win_odom, win_gt_R, kappa, omega).items()}
         winner_cost = "anchor" if r["cost_final_anchor"] < r["cost_final_chain"] else "chain"
         winner_real = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
         if winner_cost == "anchor":
