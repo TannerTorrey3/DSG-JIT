@@ -133,23 +133,54 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     R_star_chain = solve(R_init_chain)
     R_star_anchor = solve(R_init_anchor)
 
-    # Held-out cross-validation criterion: split chain edges into two
-    # interleaved subsets (A=even, B=odd). For each candidate's R_init,
-    # solve using ONLY A's edges (kappa masked to zero on B) + the anchors,
-    # then score by how well the result predicts the HELD-OUT B edges (never
-    # used to fit it). Breaks the anchor-only/total-cost tautology directly:
-    # chain-composed's R_init trivially matches every edge it was built
-    # from, but has no particular reason to predict edges it never used
-    # unless it's actually tracking the real signal, not just the noise.
-    # Whichever candidate wins this vote, the ACTUAL output used is still
-    # its normal full-data solve (R_star_chain/R_star_anchor above) -- this
-    # is only a smarter selection signal, not a different final answer.
+    # Held-out cross-validation criterion, v2 -- LEAKAGE-FREE.
+    #
+    # v1 (removed) split chain edges into interleaved even/odd subsets and
+    # masked kappa to zero on the held-out half, but reused the ORIGINAL
+    # R_init_chain (built by composing ALL edges, both halves, before any
+    # masking). Confirmed on real data: this let chain trivially "win" with
+    # cost_heldout_chain=0.0000 in several windows, because R_init_chain
+    # already matched the held-out edges exactly by construction -- the
+    # test never actually held anything out for the chain candidate. In
+    # every one of those windows, real translation RMSE showed anchor was
+    # actually better, so v1's tautological zeros were actively wrong, not
+    # just uninformative (confirmed: seq01/seed4 windows 10-12, all three
+    # showed cost_heldout_chain=0.0000 while anchor had lower real t_rmse).
+    #
+    # v2 fixes this by constructing a genuinely A-only chain candidate:
+    #   - Split at the first anchor (mid = anchor_spacing): A = edges
+    #     [0, mid) connecting poses 0..mid, B = edges [mid, n_edges)
+    #     connecting poses mid..n-1. Contiguous, not interleaved -- so A
+    #     alone is a fully connected sub-chain from pose 0 to pose mid
+    #     (interleaved parity would leave disconnected 2-pose islands).
+    #   - R_init_chain_A_only is composed from ONLY A's edges for poses
+    #     0..mid, then poses mid+1..n-1 are FROZEN at pose mid's rotation
+    #     (no B edge, directly or indirectly, ever contributes to it).
+    #   - R_init_anchor needs no changes: built purely from anchor targets
+    #     via SLERP, it never touches any edge measurement (A or B) in the
+    #     first place, so it was never leaking.
+    #   - Both then solved with kappa masked to A-only (+ the anchors,
+    #     legitimate shared side-information, not part of what's held out)
+    #     and scored by prediction of the held-out B edges only.
+    #   - Whichever candidate wins this vote, the ACTUAL output used is
+    #     still its normal full-data solve (R_star_chain/R_star_anchor
+    #     above) -- this is only a smarter selection signal.
+    mid = inner_cfg.anchor_spacing  # static Python int; assumes 0 < mid < n-1 (true for anchor_spacing=50, n=100)
     n_edges = n - 1
     edge_idx = jnp.arange(n_edges)
-    mask_A = (edge_idx % 2 == 0).astype(jnp.float32)
+    mask_A = (edge_idx < mid).astype(jnp.float32)
     mask_B = 1.0 - mask_A
     kappa_A = kappa * mask_A
     kappa_B = kappa * mask_B
+
+    _, R_traj_A_only = jax.lax.scan(
+        lambda R, Rm: (R @ Rm, R @ Rm), jnp.eye(3), R_meas[:mid]
+    )  # (mid, 3, 3) -- poses 1..mid, from A edges ONLY
+    R_init_chain_A_only = jnp.concatenate([
+        jnp.eye(3)[None],                                    # pose 0
+        R_traj_A_only,                                       # poses 1..mid
+        jnp.repeat(R_traj_A_only[-1:], n - 1 - mid, axis=0),  # poses mid+1..n-1, frozen (no B info)
+    ], axis=0)  # (n, 3, 3)
 
     def solve_masked(R_init, kappa_masked):
         return rotation_gn_ift(R_init, R_meas, kappa_masked, anchor_idx, anchor_targets, inner_cfg.kappa_anchor,
@@ -161,7 +192,7 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
         r = jax.vmap(lambda Ri, Rj, Rij: so3_log(Rij.T @ Ri.T @ Rj))(R_star[:-1], R_star[1:], R_meas)
         return jnp.sum(kappa_heldout * jnp.sum(r ** 2, axis=-1))
 
-    R_star_chain_A = solve_masked(R_init_chain, kappa_A)
+    R_star_chain_A = solve_masked(R_init_chain_A_only, kappa_A)
     R_star_anchor_A = solve_masked(R_init_anchor, kappa_A)
     cost_heldout_chain = held_out_cost(R_star_chain_A, kappa_B)
     cost_heldout_anchor = held_out_cost(R_star_anchor_A, kappa_B)
