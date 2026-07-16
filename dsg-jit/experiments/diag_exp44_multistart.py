@@ -77,7 +77,8 @@ from experiments.exp44_anchored_sesync_gn import (
 from experiments.diag_exp44_outer_regression import load_sequence
 
 
-def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega, n, inner_cfg):
+def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega, n, inner_cfg,
+                                       anchor_n_iters_rot):
     """Reimplements sesync_inner_solve's math (theta=0, matching
     exp44_inner_solver_only's usage), but returns BOTH candidates and their
     costs instead of collapsing to a single selected R_star.
@@ -89,6 +90,18 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     translation collapse, not a rotation one (dR=+6.1%/+0.4%, near baseline)
     -- comparing candidates by rotation error alone risks measuring a
     dimension that isn't what's actually broken for these seeds.
+
+    anchor_n_iters_rot: separate (larger) GN iteration budget for a THIRD
+    candidate -- anchor-interpolated R_init solved to (closer to)
+    convergence, then compared by TOTAL _rotation_cost (not anchor-only).
+    Anchor-only cost fixed seq01/seed9 and seq13/seed12 but was unreliable
+    elsewhere (broad disagreement on seq01/seed4 and seed11, and a wrong
+    pick at window 0 on seed4/11/13 -- likely because anchor-only cost is
+    blind to the ~n-2 interior edges between anchors, so a candidate can
+    nail the sparse anchors while distorting everything in between). If
+    giving the anchor candidate enough iterations to actually converge
+    makes TOTAL cost (which accounts for every edge) track real translation
+    error reliably, that's a better-founded fix than an anchor-only proxy.
     """
     theta = jnp.zeros_like(win_odom)
     corrected = win_odom + theta
@@ -120,10 +133,23 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     R_star_chain = solve(R_init_chain)
     R_star_anchor = solve(R_init_anchor)
 
+    # Anchor candidate solved to (closer to) convergence with a much larger
+    # iteration budget -- same starting point, same everything else, just
+    # given time to actually reduce its (initially large) chain-term
+    # residual instead of being cut off after inner_cfg.n_iters_rot.
+    R_star_anchor_matched = rotation_gn_ift(
+        R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor,
+        anchor_n_iters_rot,
+        inner_cfg.damping_init, inner_cfg.damping_min, inner_cfg.damping_max,
+        inner_cfg.damping_down, inner_cfg.damping_up,
+    )
+
     cost_init_chain = _rotation_cost(R_init_chain, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor)
     cost_init_anchor = _rotation_cost(R_init_anchor, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor)
     cost_final_chain = _rotation_cost(R_star_chain, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor)
     cost_final_anchor = _rotation_cost(R_star_anchor, R_meas, kappa, anchor_idx, anchor_targets, inner_cfg.kappa_anchor)
+    cost_final_anchor_matched = _rotation_cost(R_star_anchor_matched, R_meas, kappa, anchor_idx, anchor_targets,
+                                                inner_cfg.kappa_anchor)
 
     # Anchor-term-ONLY cost (no GT beyond what the anchors already legitimately
     # use, unlike the translation-RMSE oracle) -- tests whether ignoring the
@@ -157,12 +183,14 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
 
     t_star_chain = recover_translations(R_star_chain, t_meas, omega, n)
     t_star_anchor = recover_translations(R_star_anchor, t_meas, omega, n)
+    t_star_anchor_matched = recover_translations(R_star_anchor_matched, t_meas, omega, n)
 
     def rmse_t(t_est, t_gt):
         return jnp.sqrt(jnp.mean(jnp.sum((t_est - t_gt) ** 2, axis=-1)))
 
     t_err_chain = rmse_t(t_star_chain, gt_t_rel)
     t_err_anchor = rmse_t(t_star_anchor, gt_t_rel)
+    t_err_anchor_matched = rmse_t(t_star_anchor_matched, gt_t_rel)
 
     # Return raw jnp scalars, NOT python floats -- this function is called
     # through jax.jit below, and float() on a traced value inside a jitted
@@ -171,9 +199,11 @@ def per_window_multistart_diagnostics(win_odom, win_gt_R, win_gt_t, kappa, omega
     return {
         "cost_init_chain": cost_init_chain, "cost_init_anchor": cost_init_anchor,
         "cost_final_chain": cost_final_chain, "cost_final_anchor": cost_final_anchor,
+        "cost_final_anchor_matched": cost_final_anchor_matched,
         "cost_anchor_only_chain": cost_anchor_only_chain, "cost_anchor_only_anchor": cost_anchor_only_anchor,
         "real_err_deg_chain": err_chain, "real_err_deg_anchor": err_anchor,
         "t_rmse_chain": t_err_chain, "t_rmse_anchor": t_err_anchor,
+        "t_rmse_anchor_matched": t_err_anchor_matched,
     }
 
 
@@ -191,6 +221,11 @@ def main():
     ap.add_argument("--anchor-spacing", type=int, default=50)
     ap.add_argument("--kappa-anchor", type=float, default=100.0)
     ap.add_argument("--adaptive-reference-sigma-t", type=float, default=0.03)
+    ap.add_argument("--anchor-n-iters-rot", type=int, default=60,
+                     help="GN iteration budget for the anchor-interpolated candidate's separate "
+                          "'matched'/converged solve, compared by TOTAL cost -- tests whether "
+                          "giving it time to converge (instead of switching to an anchor-only-cost "
+                          "proxy) makes total cost a reliable selection signal.")
     ap.add_argument("--output-dir", default=os.path.expanduser("~/exp_res"))
     args = ap.parse_args()
 
@@ -224,7 +259,10 @@ def main():
           f"anchor_spacing={inner_cfg.anchor_spacing} kappa_anchor={inner_cfg.kappa_anchor:.2f}")
 
     n = args.window
-    diag_fn = jax.jit(functools.partial(per_window_multistart_diagnostics, n=n, inner_cfg=inner_cfg))
+    diag_fn = jax.jit(functools.partial(per_window_multistart_diagnostics, n=n, inner_cfg=inner_cfg,
+                                         anchor_n_iters_rot=args.anchor_n_iters_rot))
+    print(f"Anchor candidate 'matched' convergence budget: anchor_n_iters_rot={args.anchor_n_iters_rot} "
+          f"(vs {inner_cfg.n_iters_rot} for both candidates in the original comparison)")
 
     lk, mr = ExpCfg().local_k, ExpCfg().max_kappa_ratio
     prec_pooled_fn = jax.jit(functools.partial(_sigma_and_precision, local_k=lk, max_kappa_ratio=mr))
@@ -245,18 +283,20 @@ def main():
         windows.append((lo, hi))
 
     print(f"\n{len(windows)} windows, seq={args.seq} seed={args.seed} sigma_t={args.sigma_t} ...\n")
-    print(f"{'win':>4} {'cost(chain/anchor)':>20} {'anchor_only(chain/anchor)':>26} "
-          f"{'winner(cost)':>12} {'winner(anc-only)':>16} "
-          f"{'t_rmse_m(chain/anchor)':>22} {'winner(trans)':>13}")
+    print(f"{'win':>4} {'anchor_only(chain/anchor)':>26} {'matched-cost(chain/anchor)':>26} "
+          f"{'winner(anc-only)':>16} {'winner(matched)':>15} "
+          f"{'t_rmse_m(chain/anchor/matched)':>30} {'winner(trans)':>13}")
 
     results = []
     n_anchor_wins_cost = 0
     n_anchor_wins_rot = 0
     n_anchor_wins_trans = 0
     n_anchor_wins_anchoronly = 0
+    n_anchor_wins_matched = 0
     n_disagree_rot = 0
     n_disagree_trans = 0
     n_anchoronly_disagree_trans = 0
+    n_matched_disagree_trans = 0
     for wi, (lo, hi) in enumerate(windows):
         win_omds = noisy_rels_j[:, lo:hi - 1, :]
         win_gt_R = gt_R_mats_j[lo:hi]
@@ -268,12 +308,16 @@ def main():
         r = {k: float(v) for k, v in diag_fn(win_odom, win_gt_R, win_gt_t, kappa, omega).items()}
         winner_cost = "anchor" if r["cost_final_anchor"] < r["cost_final_chain"] else "chain"
         winner_anchoronly = "anchor" if r["cost_anchor_only_anchor"] < r["cost_anchor_only_chain"] else "chain"
+        winner_matched = "anchor" if r["cost_final_anchor_matched"] < r["cost_final_chain"] else "chain"
         winner_rot = "anchor" if r["real_err_deg_anchor"] < r["real_err_deg_chain"] else "chain"
         winner_trans = "anchor" if r["t_rmse_anchor"] < r["t_rmse_chain"] else "chain"
+        winner_trans_matched = "anchor" if r["t_rmse_anchor_matched"] < r["t_rmse_chain"] else "chain"
         if winner_cost == "anchor":
             n_anchor_wins_cost += 1
         if winner_anchoronly == "anchor":
             n_anchor_wins_anchoronly += 1
+        if winner_matched == "anchor":
+            n_anchor_wins_matched += 1
         if winner_rot == "anchor":
             n_anchor_wins_rot += 1
         if winner_trans == "anchor":
@@ -284,19 +328,24 @@ def main():
             n_disagree_trans += 1
         if winner_anchoronly != winner_trans:
             n_anchoronly_disagree_trans += 1
+        if winner_matched != winner_trans_matched:
+            n_matched_disagree_trans += 1
 
         row = {"window": wi, "lo": lo, "hi": hi, **r,
                "winner_cost": winner_cost, "winner_anchoronly": winner_anchoronly,
-               "winner_rot": winner_rot, "winner_trans": winner_trans}
+               "winner_matched": winner_matched, "winner_rot": winner_rot,
+               "winner_trans": winner_trans, "winner_trans_matched": winner_trans_matched}
         results.append(row)
         flag = ""
-        if winner_anchoronly != winner_trans:
-            flag = "  <-- anchor-only/TRANS DISAGREE"
-        print(f"{wi:4d} {r['cost_final_chain']:>9.2f}/{r['cost_final_anchor']:<9.2f} "
-              f"{r['cost_anchor_only_chain']:>12.3f}/{r['cost_anchor_only_anchor']:<12.3f} "
-              f"{winner_cost:>12} {winner_anchoronly:>16} "
-              f"{r['t_rmse_chain']:>10.3f}/{r['t_rmse_anchor']:<10.3f} "
-              f"{winner_trans:>13}{flag}")
+        if winner_matched != winner_trans_matched:
+            flag = "  <-- matched-cost/TRANS DISAGREE"
+        elif winner_anchoronly != winner_trans:
+            flag = "  <-- anchor-only/TRANS disagree (matched agrees)"
+        print(f"{wi:4d} {r['cost_anchor_only_chain']:>12.3f}/{r['cost_anchor_only_anchor']:<12.3f} "
+              f"{r['cost_final_chain']:>12.2f}/{r['cost_final_anchor_matched']:<12.2f} "
+              f"{winner_anchoronly:>16} {winner_matched:>15} "
+              f"{r['t_rmse_chain']:>9.3f}/{r['t_rmse_anchor']:<9.3f}/{r['t_rmse_anchor_matched']:<9.3f} "
+              f"{winner_trans_matched:>13}{flag}")
 
     with open(os.path.join(out_dir, "per_window_multistart.json"), "w") as fp:
         json.dump(results, fp, indent=2)
@@ -320,6 +369,15 @@ def main():
           f"{n_anchoronly_disagree_trans}/{len(windows)}  "
           f"(lower than the {n_disagree_trans}/{len(windows)} total-cost disagreement above = "
           f"anchor-only cost is a better proxy for what actually matters)")
+    print(f"  --- candidate selection criterion: TOTAL cost, anchor candidate given "
+          f"anchor_n_iters_rot={args.anchor_n_iters_rot} to converge (vs {inner_cfg.n_iters_rot} above) ---")
+    print(f"  Anchor candidate wins by matched-convergence total cost: "
+          f"{n_anchor_wins_matched}/{len(windows)}")
+    print(f"  Windows where matched-cost selection disagrees with ITS OWN translation-RMSE-optimal "
+          f"pick: {n_matched_disagree_trans}/{len(windows)}  "
+          f"(compare against anchor-only's {n_anchoronly_disagree_trans}/{len(windows)} -- lower here "
+          f"means giving the anchor candidate time to converge, then comparing by total cost, is "
+          f"the more reliable fix)")
     print(f"\nSaved per-window results to {out_dir}")
 
 
