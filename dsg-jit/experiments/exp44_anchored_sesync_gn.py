@@ -67,7 +67,7 @@ import functools
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Tuple
 
 import jax
@@ -1526,6 +1526,20 @@ def main():
     parser.add_argument("--adaptive-reference-sigma-t", type=float, default=0.03,
                         help="Noise level at/below which adaptive settings are identical to the "
                              "fixed defaults; settings only change above this level.")
+    parser.add_argument("--rot-loss-boost-override", type=float, default=None,
+                        help="Force outer_cfg.rot_loss_boost to this value, overriding whatever "
+                             "the adaptive/fixed path computed -- lets you test e.g. the boosted "
+                             "value (used automatically above sigma_t=adaptive_reference_sigma_t) "
+                             "at a LOW noise level, to isolate whether rot_loss_boost specifically "
+                             "(vs n_iters_rot/damping_up, which change at the same threshold) "
+                             "explains a given seed's noise-level-dependent behavior.")
+    parser.add_argument("--n-iters-rot-override", type=int, default=None,
+                        help="Force inner_cfg.n_iters_rot to this value, overriding the "
+                             "adaptive/fixed path -- independent of --rot-loss-boost-override, "
+                             "for isolating which specific adaptive-config change matters.")
+    parser.add_argument("--damping-up-override", type=float, default=None,
+                        help="Force inner_cfg.damping_up to this value, overriding the "
+                             "adaptive/fixed path -- independent of the other overrides above.")
     parser.add_argument("--output-dir", type=str,   default=os.path.expanduser("~/exp_res"),
                         help="Directory to write run results (timestamped sub-dir created automatically)")
     args = parser.parse_args()
@@ -1583,6 +1597,21 @@ def main():
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
               f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
+
+    # Independent manual overrides -- applied AFTER the adaptive/fixed path,
+    # to isolate which specific config change (rot_loss_boost vs n_iters_rot
+    # vs damping_up, all of which shift together at sigma_t=reference) is
+    # actually responsible for a given seed's noise-level-dependent behavior.
+    if args.rot_loss_boost_override is not None:
+        outer_cfg = replace(outer_cfg, rot_loss_boost=args.rot_loss_boost_override)
+    if args.n_iters_rot_override is not None:
+        inner_cfg = replace(inner_cfg, n_iters_rot=args.n_iters_rot_override)
+    if args.damping_up_override is not None:
+        inner_cfg = replace(inner_cfg, damping_up=args.damping_up_override)
+    if (args.rot_loss_boost_override is not None or args.n_iters_rot_override is not None
+            or args.damping_up_override is not None):
+        print(f"Overrides applied: n_iters_rot={inner_cfg.n_iters_rot}, "
+              f"damping_up={inner_cfg.damping_up:.2f}, rot_loss_boost={outer_cfg.rot_loss_boost:.2f}")
 
     exp_cfg   = ExpCfg(
         window=args.window,
