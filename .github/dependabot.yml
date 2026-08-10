@@ -1,4 +1,7 @@
 version: 2
+# Checked against the repo tree: pyproject.toml and requirements.txt at the
+# root for pip, 3 workflow files for github-actions. Note
+# pypa/gh-action-pypi-publish@release/v1 is a branch ref and is not updatable.
 updates:
   - package-ecosystem: github-actions
     directory: /
