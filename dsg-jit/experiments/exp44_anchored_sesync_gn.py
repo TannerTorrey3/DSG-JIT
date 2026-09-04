@@ -163,6 +163,26 @@ class OuterCfg:
                               # masked gradient is dominated by rotation's effect on
                               # the much bigger translation loss rather than its own
                               # objective. 1.0 = today's unweighted behavior.
+    loss_mode: str = "dense_gt"  # "dense_gt" (default, unchanged behavior): loss_fn
+                              # regresses R_star/t_star against GT at EVERY pose in
+                              # the window -- an oracle/ceiling result, since real
+                              # deployment never has dense per-pose ground truth.
+                              # "anchor_only": GT enters only at the same sparse
+                              # anchor_idx positions the inner rotation solve already
+                              # uses (see InnerCfg.anchor_spacing) -- matches exp41's
+                              # deployability model. See project_exp44_dense_gt_leakage.
+    anchor_trans_weight: float = 100.0  # anchor_only mode: weight on the sparse
+                              # translation-anchor term (t_star[anchor_idx] vs GT).
+                              # No analog exists in dense_gt mode -- recover_translations
+                              # has no translation-anchor mechanism of its own, so this
+                              # is currently the ONLY translation-correcting signal in
+                              # anchor_only mode. Unvalidated starting guess, mirrors
+                              # InnerCfg.kappa_anchor's scale; needs its own sweep.
+    fidelity_weight: float = 1.0  # anchor_only mode: penalizes theta straying from
+                              # zero (no correction) -- exp41's "dev = theta - noisy_meas"
+                              # regularizer, adapted to exp44's additive-theta convention.
+    smoothness_weight: float = 1.0  # anchor_only mode: penalizes consecutive theta
+                              # values differing -- exp41's s_loss.
 
 @dataclass(frozen=True)
 class ExpCfg:
@@ -919,11 +939,32 @@ def outer_adam_loop(theta_init: jnp.ndarray,
         R_star, t_star = sesync_inner_solve(
             theta, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel
         )
-        loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
-        loss_r = jnp.mean(jax.vmap(
-            lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2)
-        )(R_star, gt_R_rel))
-        return loss_t + outer_cfg.rot_loss_boost * loss_r
+        if outer_cfg.loss_mode == "anchor_only":
+            # Same anchor_idx sesync_inner_solve derives internally from
+            # inner_cfg.anchor_spacing (not returned from there, so recomputed
+            # here) -- GT enters ONLY at these sparse positions, for both the
+            # rotation and translation terms below.
+            anchor_idx = jnp.concatenate([
+                jnp.arange(inner_cfg.anchor_spacing, n - 1, inner_cfg.anchor_spacing,
+                           dtype=jnp.int32),
+                jnp.array([n - 1], dtype=jnp.int32),
+            ])
+            r_anchor_rot = _anchor_residual(R_star, anchor_idx, gt_R_rel[anchor_idx])
+            a_loss_rot = inner_cfg.kappa_anchor * jnp.sum(r_anchor_rot ** 2)
+            a_loss_trans = outer_cfg.anchor_trans_weight * jnp.sum(
+                (t_star[anchor_idx] - gt_t_rel[anchor_idx]) ** 2
+            )
+            r_loss = outer_cfg.fidelity_weight * jnp.sum(theta ** 2)
+            s_loss = outer_cfg.smoothness_weight * jnp.sum(
+                (theta[1:] - theta[:-1]) ** 2
+            )
+            return a_loss_rot + a_loss_trans + r_loss + s_loss
+        else:  # "dense_gt" (default, unchanged -- oracle/ceiling behavior)
+            loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
+            loss_r = jnp.mean(jax.vmap(
+                lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2)
+            )(R_star, gt_R_rel))
+            return loss_t + outer_cfg.rot_loss_boost * loss_r
 
     grad_fn = jax.grad(loss_fn)
 
@@ -1469,6 +1510,13 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
         lr_rot=base_outer_kwargs["lr_rot"],
         warmup_steps=warmup_steps,
         rot_loss_boost=rot_loss_boost,
+        # loss_mode and its weights are a fixed, non-noise-adaptive structural
+        # choice (same treatment as InnerCfg.anchor_spacing/kappa_anchor above)
+        # -- passed through unchanged at every noise level.
+        loss_mode=base_outer_kwargs.get("loss_mode", "dense_gt"),
+        anchor_trans_weight=base_outer_kwargs.get("anchor_trans_weight", 100.0),
+        fidelity_weight=base_outer_kwargs.get("fidelity_weight", 1.0),
+        smoothness_weight=base_outer_kwargs.get("smoothness_weight", 1.0),
     )
     return inner_cfg, outer_cfg
 
@@ -1540,6 +1588,25 @@ def main():
     parser.add_argument("--damping-up-override", type=float, default=None,
                         help="Force inner_cfg.damping_up to this value, overriding the "
                              "adaptive/fixed path -- independent of the other overrides above.")
+    parser.add_argument("--loss-mode", type=str, default="dense_gt",
+                        choices=["dense_gt", "anchor_only"],
+                        help="'dense_gt' (default, unchanged): outer loss regresses against "
+                             "ground truth at every pose in the window -- an oracle/ceiling "
+                             "result, not deployable (real inference has no dense GT). "
+                             "'anchor_only': GT enters only at the same sparse anchor "
+                             "positions the inner rotation solve already uses, matching "
+                             "exp41's deployability model. See OuterCfg.loss_mode.")
+    parser.add_argument("--anchor-trans-weight", type=float, default=100.0,
+                        help="loss_mode=anchor_only only: weight on the sparse translation-"
+                             "anchor term -- the only translation-correcting signal in this "
+                             "mode, since recover_translations has no anchor mechanism of its "
+                             "own. Unvalidated starting guess; needs its own sweep.")
+    parser.add_argument("--fidelity-weight", type=float, default=1.0,
+                        help="loss_mode=anchor_only only: weight on the theta-toward-zero "
+                             "regularizer (exp41's measurement-fidelity term).")
+    parser.add_argument("--smoothness-weight", type=float, default=1.0,
+                        help="loss_mode=anchor_only only: weight on the consecutive-theta "
+                             "smoothness regularizer (exp41's s_loss).")
     parser.add_argument("--output-dir", type=str,   default=os.path.expanduser("~/exp_res"),
                         help="Directory to write run results (timestamped sub-dir created automatically)")
     args = parser.parse_args()
@@ -1556,7 +1623,9 @@ def main():
                          "n_starts": args.n_starts, "multistart_criterion": args.multistart_criterion,
                          "anchor_n_iters_rot": args.anchor_n_iters_rot}
     base_outer_kwargs = {"n_trans1": args.n_trans1, "n_rot": args.n_rot, "n_trans2": args.n_trans2,
-                         "lr_trans": args.lr_trans, "lr_rot": args.lr_rot, "warmup_steps": 5}
+                         "lr_trans": args.lr_trans, "lr_rot": args.lr_rot, "warmup_steps": 5,
+                         "loss_mode": args.loss_mode, "anchor_trans_weight": args.anchor_trans_weight,
+                         "fidelity_weight": args.fidelity_weight, "smoothness_weight": args.smoothness_weight}
 
     if args.adaptive_solver:
         inner_cfg, outer_cfg = noise_adaptive_inner_outer_cfg(
@@ -1571,7 +1640,7 @@ def main():
               f"warmup_steps={outer_cfg.warmup_steps}, rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
-              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
+              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}, loss_mode={outer_cfg.loss_mode}")
     else:
         inner_cfg = InnerCfg(n_iters_rot=base_inner_kwargs["n_iters_rot"],
                               damping_init=base_inner_kwargs["damping_init"],
@@ -1590,13 +1659,17 @@ def main():
                               lr_trans=base_outer_kwargs["lr_trans"],
                               lr_rot=base_outer_kwargs["lr_rot"],
                               warmup_steps=base_outer_kwargs["warmup_steps"],
-                              rot_loss_boost=1.0)
+                              rot_loss_boost=1.0,
+                              loss_mode=base_outer_kwargs["loss_mode"],
+                              anchor_trans_weight=base_outer_kwargs["anchor_trans_weight"],
+                              fidelity_weight=base_outer_kwargs["fidelity_weight"],
+                              smoothness_weight=base_outer_kwargs["smoothness_weight"])
         print(f"Fixed (non-adaptive) solver settings: n_iters_rot={inner_cfg.n_iters_rot}, "
               f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}, "
               f"rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
-              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
+              f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}, loss_mode={outer_cfg.loss_mode}")
 
     # Independent manual overrides -- applied AFTER the adaptive/fixed path,
     # to isolate which specific config change (rot_loss_boost vs n_iters_rot
@@ -1829,6 +1902,10 @@ def main():
             "n_starts": inner_cfg.n_starts,
             "multistart_criterion": inner_cfg.multistart_criterion,
             "anchor_n_iters_rot": inner_cfg.anchor_n_iters_rot,
+            "loss_mode": outer_cfg.loss_mode,
+            "anchor_trans_weight": outer_cfg.anchor_trans_weight,
+            "fidelity_weight": outer_cfg.fidelity_weight,
+            "smoothness_weight": outer_cfg.smoothness_weight,
         }
         aggregate = {
             "config": config,
