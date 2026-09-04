@@ -1044,6 +1044,14 @@ def build_denoiser(n: int,
             theta_init, noisy_odom, gt_poses, gt_R_world,
             kappa, omega, n, inner_cfg, outer_cfg
         )
+        # TEMP DEBUG: confirm loss_mode actually changes the optimized theta
+        # (diagnosing why dense_gt/anchor_only produced bit-identical ΔC).
+        # loss_mode is a static Python string (closed over, not traced) --
+        # baked directly into the format string rather than passed as an arg.
+        jax.debug.print(
+            f"TEMP_DEBUG loss_mode={outer_cfg.loss_mode} ||theta_opt||=" + "{n}",
+            n=jnp.linalg.norm(theta_opt),
+        )
 
         # outer_adam_loop's loss is computed on R_star/t_star (the anchored,
         # GN-refined solve), NOT on theta_opt itself -- theta is one of many
