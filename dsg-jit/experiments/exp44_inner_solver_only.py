@@ -79,16 +79,20 @@ def build_inner_solver_only_denoiser(n: int, inner_cfg: InnerCfg):
     arithmetic in denoise_sequence[_pooled] needs no changes.
     """
     def denoise(noisy_odom, gt_poses, gt_R_world, kappa, omega):
-        del gt_poses  # unused: the inner solve only consumes rotation anchors
         theta = jnp.zeros_like(noisy_odom)
 
-        # Window-relative GT rotations, anchored at pose 0 (identity) -- same
-        # construction outer_adam_loop uses to build gt_R_rel for anchor targets.
+        # Window-relative GT rotations AND translations, anchored at pose 0 --
+        # same construction outer_adam_loop uses to build gt_R_rel/gt_t_rel for
+        # anchor targets. Previously gt_poses was discarded here (translation
+        # had no anchor mechanism at all in the inner solve); now both rotation
+        # and translation get the same sparse-GT-anchor treatment.
         gt_R0 = gt_R_world[0]
+        gt_t0 = gt_poses[0, :3]
         gt_R_rel = jax.vmap(lambda R: gt_R0.T @ R)(gt_R_world)
+        gt_t_rel = jax.vmap(lambda t: gt_R0.T @ (t - gt_t0))(gt_poses[:, :3])
 
         R_star, t_star = sesync_inner_solve(
-            theta, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel
+            theta, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel, gt_t_rel
         )
 
         # R_star/t_star are absolute window-relative poses (R_star[0]=I,
@@ -132,6 +136,10 @@ def main():
                         help="Fixed anchor precision. Needs empirical tuning: too small and "
                              "anchors don't matter in practice, too large and every window just "
                              "clamps to GT (which, with NO outer loop here, is the entire output).")
+    parser.add_argument("--kappa-t-anchor", type=float, default=100.0,
+                        help="Sparse GT TRANSLATION anchor precision, same treatment as "
+                             "--kappa-anchor but for recover_translations (see exp44's "
+                             "InnerCfg.kappa_t_anchor docstring). Unvalidated starting guess.")
     parser.add_argument("--n-starts", type=int, default=1,
                         help="Multi-start GN: 1 = today's single chain-composed R_init (default, "
                              "unchanged behavior). 2 = also try an anchor-interpolated R_init and "
@@ -160,6 +168,7 @@ def main():
     base_inner_kwargs = {"n_iters_rot": 15, "damping_init": 1e-4, "damping_min": 1e-6,
                          "damping_max": 1e2, "damping_down": 0.5, "damping_up": 4.0,
                          "anchor_spacing": args.anchor_spacing, "kappa_anchor": args.kappa_anchor,
+                         "kappa_t_anchor": args.kappa_t_anchor,
                          "n_starts": args.n_starts, "multistart_criterion": args.multistart_criterion,
                          "anchor_n_iters_rot": args.anchor_n_iters_rot}
     # noise_adaptive_inner_outer_cfg returns (InnerCfg, OuterCfg) -- OuterCfg is
@@ -179,6 +188,7 @@ def main():
               f"reference={args.adaptive_reference_sigma_t}): "
               f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
+              f"kappa_t_anchor={inner_cfg.kappa_t_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
               f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
     else:
@@ -190,12 +200,14 @@ def main():
                               damping_up=base_inner_kwargs["damping_up"],
                               anchor_spacing=base_inner_kwargs["anchor_spacing"],
                               kappa_anchor=base_inner_kwargs["kappa_anchor"],
+                              kappa_t_anchor=base_inner_kwargs["kappa_t_anchor"],
                               n_starts=base_inner_kwargs["n_starts"],
                               multistart_criterion=base_inner_kwargs["multistart_criterion"],
                               anchor_n_iters_rot=base_inner_kwargs["anchor_n_iters_rot"])
         print(f"Fixed (non-adaptive) inner-solve settings: n_iters_rot={inner_cfg.n_iters_rot}, "
               f"damping_up={inner_cfg.damping_up:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
+              f"kappa_t_anchor={inner_cfg.kappa_t_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
               f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}")
 
@@ -380,6 +392,7 @@ def main():
             "damping_up_used": inner_cfg.damping_up,
             "anchor_spacing": inner_cfg.anchor_spacing,
             "kappa_anchor": inner_cfg.kappa_anchor,
+            "kappa_t_anchor": inner_cfg.kappa_t_anchor,
             "n_starts": inner_cfg.n_starts,
             "multistart_criterion": inner_cfg.multistart_criterion,
             "anchor_n_iters_rot": inner_cfg.anchor_n_iters_rot,
@@ -401,6 +414,7 @@ def main():
             f"  sigma_t={args.sigma_t}  sigma_r={args.sigma_r}",
             f"  window={args.window}  overlap={args.overlap}  seeds={args.seeds}",
             f"  anchor_spacing={inner_cfg.anchor_spacing}  kappa_anchor={inner_cfg.kappa_anchor}  "
+            f"kappa_t_anchor={inner_cfg.kappa_t_anchor}  "
             f"n_starts={inner_cfg.n_starts}",
             "",
         ]

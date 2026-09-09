@@ -143,6 +143,8 @@ def main():
     parser.add_argument("--overlap", type=int, default=10)
     parser.add_argument("--anchor-spacing", type=int, default=50)
     parser.add_argument("--kappa-anchor", type=float, default=100.0)
+    parser.add_argument("--kappa-t-anchor", type=float, default=100.0,
+                        help="Sparse GT translation anchor precision (see InnerCfg.kappa_t_anchor).")
     parser.add_argument("--max-poses", type=int, default=None)
     parser.add_argument("--anchor-trans-weights", type=str, default="50,100,200",
                         help="Comma-separated grid values for OuterCfg.anchor_trans_weight")
@@ -185,6 +187,7 @@ def main():
         n_iters_rot=15, damping_init=1e-4, damping_min=1e-6, damping_max=1e2,
         damping_down=0.5, damping_up=4.0,
         anchor_spacing=args.anchor_spacing, kappa_anchor=args.kappa_anchor,
+        kappa_t_anchor=args.kappa_t_anchor,
         n_starts=1, multistart_criterion="anchor_only", anchor_n_iters_rot=60,
     )
 

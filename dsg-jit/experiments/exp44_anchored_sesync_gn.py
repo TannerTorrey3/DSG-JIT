@@ -141,6 +141,19 @@ class InnerCfg:
     anchor_n_iters_rot: int = 60  # GN iteration budget for the anchor-interpolated candidate when
                                   # multistart_criterion is "matched_total" or "anchor_only_matched"
                                   # (ignored for "anchor_only").
+    kappa_t_anchor: float = 100.0  # sparse GT TRANSLATION anchor precision, baked directly into
+                                  # recover_translations' linear solve at the same anchor_idx
+                                  # positions kappa_anchor already anchors rotation at -- makes
+                                  # translation anchoring structurally symmetric with rotation's.
+                                  # Previously translation had NO anchor mechanism anywhere in the
+                                  # inner solve (recover_translations only pinned t[0]=0); all
+                                  # translation-correcting signal in loss_mode=anchor_only came from
+                                  # a soft, Adam-optimized outer-loop penalty (OuterCfg.
+                                  # anchor_trans_weight) -- weight-sweeping that alone hit a wall
+                                  # (flat 3-5/26 negative seeds across anchor_trans_weight=25..35,
+                                  # regardless of fidelity/smoothness weight) because the mechanism
+                                  # itself was too weak, not because the weight was wrong. Unvalidated
+                                  # starting guess, mirrors kappa_anchor's scale; needs its own sweep.
 
 @dataclass(frozen=True)
 class OuterCfg:
@@ -163,10 +176,17 @@ class OuterCfg:
                               # masked gradient is dominated by rotation's effect on
                               # the much bigger translation loss rather than its own
                               # objective. 1.0 = today's unweighted behavior.
-    loss_mode: str = "dense_gt"  # "dense_gt" (default, unchanged behavior): loss_fn
-                              # regresses R_star/t_star against GT at EVERY pose in
-                              # the window -- an oracle/ceiling result, since real
-                              # deployment never has dense per-pose ground truth.
+    loss_mode: str = "dense_gt"  # "dense_gt" (default): outer loss_fn regresses
+                              # R_star/t_star against GT at EVERY pose in the window --
+                              # an oracle/ceiling result, since real deployment never
+                              # has dense per-pose ground truth. NOTE: no longer
+                              # byte-identical to pre-kappa_t_anchor behavior --
+                              # sesync_inner_solve's translation anchor (InnerCfg.
+                              # kappa_t_anchor) is unconditional, applied identically
+                              # under both loss_mode values (matching how rotation's
+                              # kappa_anchor always was), so this mode's numbers now
+                              # also reflect that added translation-anchor pull, on
+                              # top of the dense outer loss.
                               # "anchor_only": GT enters only at the same sparse
                               # anchor_idx positions the inner rotation solve already
                               # uses (see InnerCfg.anchor_spacing) -- matches exp41's
@@ -585,16 +605,28 @@ rotation_gn_ift.defvjp(_rotation_gn_ift_fwd, _rotation_gn_ift_bwd)
 def recover_translations(R_star: jnp.ndarray,
                           t_meas: jnp.ndarray,
                           omega: jnp.ndarray,
-                          n: int) -> jnp.ndarray:
+                          n: int,
+                          anchor_idx: jnp.ndarray,
+                          anchor_targets_t: jnp.ndarray,
+                          kappa_t_anchor: float) -> jnp.ndarray:
     """Recover translations analytically given converged R_star.
 
     Solves: L_t_free @ t_free = b_free
-    where b_free accumulates omega[i] * R_star[i] @ t_meas[i] per edge.
+    where b_free accumulates omega[i] * R_star[i] @ t_meas[i] per edge, PLUS a
+    sparse GT translation-anchor term at anchor_idx (same positions rotation is
+    already anchored at via kappa_anchor) -- kappa_t_anchor * ||t[idx] - target||^2
+    contributes +kappa_t_anchor to the diagonal and +kappa_t_anchor*target to the
+    RHS at each anchored pose's free-index block, exactly mirroring how
+    build_rotation_laplacian adds kappa_anchor for rotation. Without this,
+    translation had no anchor mechanism anywhere in the inner solve -- pass
+    kappa_t_anchor=0.0 to recover the original (no translation anchor) behavior.
 
     Uses jnp.linalg.solve (dense, cuBLAS on GPU).
     JAX's built-in VJP for linalg.solve handles the backward pass automatically.
 
-    Anchor: t[0] = 0  (window anchor pose fixed at origin)
+    Anchor: t[0] = 0  (window anchor pose fixed at origin, always -- separate
+    from the sparse GT anchors above, which start at anchor_spacing per the
+    same convention rotation anchoring uses).
     """
     # RHS contributions per free pose (j=1..n-1)
     # b[j] = omega[j-1] * R*[j-1] @ t_meas[j-1]  (from left edge)
@@ -615,6 +647,16 @@ def recover_translations(R_star: jnp.ndarray,
     # Dense translation Laplacian (free block)
     L_t = build_translation_laplacian(omega, n)
     L_t_free = L_t[3:, 3:]                                  # (3(n-1), 3(n-1))
+
+    # Sparse GT translation anchors: kappa_t_anchor * ||t[idx] - target||^2 per
+    # anchored pose. anchor_idx is in absolute pose-index space (1..n-1, pose 0
+    # excluded since it's already hard-fixed); map to free-index space by -1.
+    free_idx = anchor_idx - 1                                # (m,)
+    free_flat_idx = (free_idx[:, None] * 3 + jnp.arange(3)[None, :]).reshape(-1)  # (3m,)
+    L_t_free = L_t_free.at[free_flat_idx, free_flat_idx].add(kappa_t_anchor)
+    b_free = b_free.at[free_flat_idx].add(
+        kappa_t_anchor * anchor_targets_t.reshape(-1)
+    )
 
     t_free = jnp.linalg.solve(L_t_free, b_free)             # (3(n-1),)
     t_star = jnp.concatenate([jnp.zeros(3), t_free]).reshape(n, 3)
@@ -694,7 +736,8 @@ def sesync_inner_solve(theta: jnp.ndarray,
                         omega: jnp.ndarray,
                         n: int,
                         cfg: InnerCfg,
-                        gt_R_rel: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                        gt_R_rel: jnp.ndarray,
+                        gt_t_rel: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """SE-Sync structured inner solve.
 
     theta:      (n-1, 6) learned corrections to odometry
@@ -706,6 +749,11 @@ def sesync_inner_solve(theta: jnp.ndarray,
                 this is the same gt_R_rel outer_adam_loop already computes for
                 the outer loss; anchors are just a new consumer of already-
                 available data, not a new dependency.
+    gt_t_rel:   (n, 3) window-relative ground-truth translations, same
+                treatment as gt_R_rel above but for recover_translations'
+                sparse translation anchor (cfg.kappa_t_anchor) -- previously
+                translation had no anchor mechanism anywhere in the inner
+                solve at all.
     Returns: (R_star (n,3,3), t_star (n,3))
     """
     corrected = noisy_odom + theta                           # (n-1, 6)
@@ -799,8 +847,14 @@ def sesync_inner_solve(theta: jnp.ndarray,
 
         R_star = jnp.where(cost_anchor < cost_chain, R_star_anchor, R_star_chain)
 
+    # Sparse GT translation anchors -- same anchor_idx rotation already uses,
+    # now also giving translation a hard-anchored term in the linear solve
+    # below instead of relying solely on a soft outer-loop penalty.
+    anchor_targets_t = gt_t_rel[anchor_idx]                  # (m, 3)
+
     # Analytic translation recovery (one dense solve, auto-diff backward)
-    t_star = recover_translations(R_star, t_meas, omega, n)
+    t_star = recover_translations(R_star, t_meas, omega, n,
+                                   anchor_idx, anchor_targets_t, cfg.kappa_t_anchor)
 
     return R_star, t_star
 
@@ -937,7 +991,7 @@ def outer_adam_loop(theta_init: jnp.ndarray,
     # original unweighted behavior exactly.
     def loss_fn(theta):
         R_star, t_star = sesync_inner_solve(
-            theta, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel
+            theta, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel, gt_t_rel
         )
         if outer_cfg.loss_mode == "anchor_only":
             # Same anchor_idx sesync_inner_solve derives internally from
@@ -959,7 +1013,8 @@ def outer_adam_loop(theta_init: jnp.ndarray,
                 (theta[1:] - theta[:-1]) ** 2
             )
             return a_loss_rot + a_loss_trans + r_loss + s_loss
-        else:  # "dense_gt" (default, unchanged -- oracle/ceiling behavior)
+        else:  # "dense_gt" (default, oracle/ceiling behavior -- see OuterCfg.loss_mode's
+                # docstring for why this is no longer byte-identical to before kappa_t_anchor)
             loss_t = jnp.mean(jnp.sum((t_star - gt_t_rel) ** 2, axis=-1))
             loss_r = jnp.mean(jax.vmap(
                 lambda Ra, Rb: jnp.sum((Ra - Rb) ** 2)
@@ -1057,8 +1112,10 @@ def build_denoiser(n: int,
         # same reconstruction exp44_inner_solver_only.py's
         # build_inner_solver_only_denoiser already uses.
         gt_R0 = gt_R_world[0]
+        gt_t0 = gt_poses[0, :3]
         gt_R_rel = jax.vmap(lambda R: gt_R0.T @ R)(gt_R_world)
-        R_star, t_star = sesync_inner_solve(theta_opt, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel)
+        gt_t_rel = jax.vmap(lambda t: gt_R0.T @ (t - gt_t0))(gt_poses[:, :3])
+        R_star, t_star = sesync_inner_solve(theta_opt, noisy_odom, kappa, omega, n, inner_cfg, gt_R_rel, gt_t_rel)
         dR = jax.vmap(lambda Ri, Rj: Ri.T @ Rj)(R_star[:-1], R_star[1:])
         dw = jax.vmap(so3_log)(dR)
         dt = jax.vmap(lambda Ri, ti, tj: Ri.T @ (tj - ti))(R_star[:-1], t_star[:-1], t_star[1:])
@@ -1498,6 +1555,7 @@ def noise_adaptive_inner_outer_cfg(sigma_t: float,
         # noise level.
         anchor_spacing=base_inner_kwargs.get("anchor_spacing", 50),
         kappa_anchor=base_inner_kwargs.get("kappa_anchor", 100.0),
+        kappa_t_anchor=base_inner_kwargs.get("kappa_t_anchor", 100.0),
         n_starts=base_inner_kwargs.get("n_starts", 1),
         multistart_criterion=base_inner_kwargs.get("multistart_criterion", "anchor_only"),
         anchor_n_iters_rot=base_inner_kwargs.get("anchor_n_iters_rot", 60),
@@ -1555,6 +1613,11 @@ def main():
                         help="Fixed anchor precision (not noise-adaptive or learned). Needs "
                              "empirical tuning: too small and anchors don't matter in practice, "
                              "too large and every window just clamps to GT.")
+    parser.add_argument("--kappa-t-anchor", type=float, default=100.0,
+                        help="Sparse GT TRANSLATION anchor precision, baked into recover_translations' "
+                             "linear solve at the same anchor_idx positions kappa_anchor already "
+                             "anchors rotation at (see InnerCfg.kappa_t_anchor). Unvalidated starting "
+                             "guess; needs its own sweep.")
     parser.add_argument("--n-starts", type=int, default=1,
                         help="Multi-start GN: 1 = today's single chain-composed R_init (default, "
                              "unchanged behavior). 2 = also try an anchor-interpolated R_init and "
@@ -1620,6 +1683,7 @@ def main():
     base_inner_kwargs = {"n_iters_rot": 15, "damping_init": 1e-4, "damping_min": 1e-6,
                          "damping_max": 1e2, "damping_down": 0.5, "damping_up": 4.0,
                          "anchor_spacing": args.anchor_spacing, "kappa_anchor": args.kappa_anchor,
+                         "kappa_t_anchor": args.kappa_t_anchor,
                          "n_starts": args.n_starts, "multistart_criterion": args.multistart_criterion,
                          "anchor_n_iters_rot": args.anchor_n_iters_rot}
     base_outer_kwargs = {"n_trans1": args.n_trans1, "n_rot": args.n_rot, "n_trans2": args.n_trans2,
@@ -1639,6 +1703,7 @@ def main():
               f"n_iters_rot={inner_cfg.n_iters_rot}, damping_up={inner_cfg.damping_up:.2f}, "
               f"warmup_steps={outer_cfg.warmup_steps}, rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
+              f"kappa_t_anchor={inner_cfg.kappa_t_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
               f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}, loss_mode={outer_cfg.loss_mode}")
     else:
@@ -1650,6 +1715,7 @@ def main():
                               damping_up=base_inner_kwargs["damping_up"],
                               anchor_spacing=base_inner_kwargs["anchor_spacing"],
                               kappa_anchor=base_inner_kwargs["kappa_anchor"],
+                              kappa_t_anchor=base_inner_kwargs["kappa_t_anchor"],
                               n_starts=base_inner_kwargs["n_starts"],
                               multistart_criterion=base_inner_kwargs["multistart_criterion"],
                               anchor_n_iters_rot=base_inner_kwargs["anchor_n_iters_rot"])
@@ -1668,6 +1734,7 @@ def main():
               f"damping_up={inner_cfg.damping_up:.2f}, warmup_steps={outer_cfg.warmup_steps}, "
               f"rot_loss_boost={outer_cfg.rot_loss_boost:.2f}, "
               f"anchor_spacing={inner_cfg.anchor_spacing}, kappa_anchor={inner_cfg.kappa_anchor:.2f}, "
+              f"kappa_t_anchor={inner_cfg.kappa_t_anchor:.2f}, "
               f"n_starts={inner_cfg.n_starts}, multistart_criterion={inner_cfg.multistart_criterion}, "
               f"anchor_n_iters_rot={inner_cfg.anchor_n_iters_rot}, loss_mode={outer_cfg.loss_mode}")
 
@@ -1899,6 +1966,7 @@ def main():
             "rot_loss_boost_used": outer_cfg.rot_loss_boost,
             "anchor_spacing": inner_cfg.anchor_spacing,
             "kappa_anchor": inner_cfg.kappa_anchor,
+            "kappa_t_anchor": inner_cfg.kappa_t_anchor,
             "n_starts": inner_cfg.n_starts,
             "multistart_criterion": inner_cfg.multistart_criterion,
             "anchor_n_iters_rot": inner_cfg.anchor_n_iters_rot,
